@@ -120,7 +120,7 @@
   .fynav button { padding: 2px 8px; }
   .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: var(--muted); margin: -4px 0 8px; }
   .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
-  .hbars { display: grid; grid-template-columns: minmax(90px, max-content) 1fr; gap: 6px 10px; align-items: center; font-size: 13px; }
+  .hbars { display: grid; grid-template-columns: fit-content(40%) minmax(0, 1fr); gap: 6px 10px; align-items: center; font-size: 13px; }
   .hbars .lbl { color: var(--muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-align: right; cursor: pointer; }
   .hbars .track { display: flex; align-items: center; gap: 8px; cursor: pointer; min-width: 0; padding: 3px 0; }
   .hbars .bar { height: 20px; background: var(--s1); border-radius: 0 4px 4px 0; min-width: 2px; flex: none; }
@@ -145,10 +145,12 @@
   .pastdue { color: var(--err); }
   @media (max-width: 1000px) {
     .tiles { grid-template-columns: repeat(2, 1fr); } .tile.hero { grid-column: 1 / -1; }
+    .tiles.even { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .charts { grid-template-columns: 1fr; }
   }
 
   @media (max-width: 760px) {
+    .tiles.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
     main { grid-template-columns: 1fr; height: auto; }
     #list { max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
   }
@@ -1192,15 +1194,16 @@ function renderTime() {
   const { hoursOpts, hours, date } = timeChoice();
   const by = d.userFields.find((f) => f.name === d.by) || d.userFields[0];
 
-  // Which fields count: picked here, remembered on this machine.
+  // Which fields count: picked here, remembered on this machine. Each shows how many of your records fill it.
+  const counted = (f) => f.count != null ? ` · ${plural(f.count, 'record').replace(/^\d+/, f.count.toLocaleString())}` : '';
   const pick = (labelText, opts, value, onPick) => {
     const s = el('select', {}, opts.map(([v, t]) => el('option', { value: v, selected: v === value }, t)));
     s.addEventListener('change', () => onPick(s.value));
     return el('label', {}, labelText, s);
   };
   document.getElementById('timePicks').replaceChildren(
-    pick('Mine by', d.userFields.map((f) => [f.name, f.label]), by.name, (v) => { saveTimePrefs({ by: v }); loadTime(); }),
-    pick('Hours from', hoursOpts.map((o) => [o.key, o.unit === 'text' ? o.label : `${o.label} (${o.unit})`]), hours.key,
+    pick('Mine by', d.userFields.map((f) => [f.name, f.label + counted(f)]), by.name, (v) => { saveTimePrefs({ by: v }); loadTime(); }),
+    pick('Hours from', hoursOpts.map((o) => [o.key, (o.unit === 'text' ? o.label : `${o.label} (${o.unit})`) + counted(o)]), hours.key,
       (v) => { saveTimePrefs({ hours: v }); renderTime(); }),
     d.dateFields.length > 1 ? pick('Date', d.dateFields.map((f) => [f.name, f.label]), date.name,
       (v) => { saveTimePrefs({ date: v }); renderTime(); }) : null,
@@ -1297,7 +1300,7 @@ function renderOppTime(all, today) {
     const choose = () => { time.opp = time.opp === o.id ? null : o.id; renderTime(); };
     const dim = time.opp !== null && time.opp !== o.id ? ' dim' : '';
     const track = el('div', { class: 'track' + dim, onclick: choose },
-      el('div', { class: 'bar', style: `width: calc((100% - 96px) * ${o.hours / max})` }),
+      el('div', { class: 'bar', style: `width: calc((100% - 110px) * ${o.hours / max})` }),
       el('div', { class: 'val' }, fmtH(o.hours), el('span', {}, ` · ${o.entries.length}`)));
     hover(track, () => tipHtml(o.name, [['Account', o.account || '—'], ['Hours', fmtH(o.hours)], ['Activities', o.entries.length],
       ['Share of period', Math.round(o.hours / Math.max(0.01, hoursOf(list)) * 100) + '%']]));

@@ -692,11 +692,23 @@ const TIME_HOURS_FIELD = process.env.SF_TIME_HOURS_FIELD || '';
 const TIME_USER_FIELD = process.env.SF_TIME_USER_FIELD || '';
 
 // Highest score first; fields scoring 0 aren't offered.
-const pickFields = (fields, score, pinned) => {
+const pickFields = (fields, score, pinned, max = 8) => {
   const ranked = fields.map((f) => ({ f, s: pinned && f.name.toLowerCase() === pinned.toLowerCase() ? 100 : score(f) }))
     .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).map((x) => x.f);
-  return ranked.slice(0, 8);
+  return ranked.slice(0, max);
 };
+
+// Reorder candidates by how many of my records fill them (most first, score breaking ties), dropping
+// the empty ones unless all are empty. A pinned field stays first. Counts that fail leave the order as is.
+function byCount(fields, counts, pinned) {
+  if (!counts) return fields;
+  const withCount = fields.map((f, i) => ({ f, i, n: counts[i] ?? -1 }));
+  const isPinned = (f) => pinned && f.name.toLowerCase() === pinned.toLowerCase();
+  const filled = withCount.filter((x) => x.n !== 0 || isPinned(x.f));
+  return (filled.length ? filled : withCount)
+    .sort((a, b) => isPinned(b.f) - isPinned(a.f) || b.n - a.n || a.i - b.i)
+    .map((x) => ({ ...x.f, count: x.n >= 0 ? x.n : null }));
+}
 
 // What a time field is measured in: numbers are hours unless the field says minutes; text is parsed.
 function timeUnit(f) {
@@ -719,27 +731,41 @@ async function timeMeta(req) {
       : /activity/i.test(text(f)) && /date/i.test(text(f)) ? 8
       : f.custom && f.type === 'date' ? 5
       : f.name === 'CreatedDate' ? 2 : 0, TIME_DATE_FIELD);
-  const hours = pickFields(d.fields.filter((f) => ['double', 'int', 'picklist', 'string'].includes(f.type)), (f) => {
+  // Hours: numeric or text fields named like time spent; never rates, costs or amounts.
+  const hourCands = pickFields(d.fields.filter((f) => ['double', 'int', 'picklist', 'string'].includes(f.type) &&
+    !/\brate\b|usd|\bcost|price|amount|revenue|percent|\$/i.test(text(f))), (f) => {
     const t = text(f), num = ['double', 'int'].includes(f.type) ? 0.5 : 0;
     if (/total/i.test(t) && /hour|hrs|time/i.test(t)) return 9 + num;
     if (f.name === 'Meeting_Duration__c') return 8 + num;
     if (/hour|hrs/i.test(t)) return 6 + num;
-    if (/duration|time spent|minutes|customer facing time|effort/i.test(t)) return 4 + num;
+    if (/duration|time spent|minutes|customer facing time|prep time|travel time|effort/i.test(t)) return 4 + num;
     return 0;
-  }, TIME_HOURS_FIELD);
-  const users = pickFields(d.fields.filter((f) => f.type === 'reference' && f.referenceTo?.includes('User') && f.name !== 'LastModifiedById'), (f) =>
-    f.custom && /\bSE\b|sales engineer|engineer|consultant|resource|assigned|performed|specialist/i.test(f.label) ? 9
+  }, TIME_HOURS_FIELD, 20);
+  // Mine: every user lookup, ranked by how many records have me in it.
+  const userCands = pickFields(d.fields.filter((f) => f.type === 'reference' && f.referenceTo?.includes('User') && f.name !== 'LastModifiedById'), (f) =>
+    f.custom && /assigned\s*se\b/i.test(f.label) ? 10
+      : f.custom && /\bSE\b|sales engineer|engineer|consultant|resource|assigned|performed|specialist/i.test(f.label) ? 9
       : f.name === 'OwnerId' ? 7
       : f.custom ? 5
-      : f.name === 'CreatedById' ? 3 : 0, TIME_USER_FIELD);
-  if (!hours.length) {
+      : f.name === 'CreatedById' ? 3 : 0, TIME_USER_FIELD, 40);
+  if (!hourCands.length) {
     throw new HttpError(404, `No hours or duration field found on ${d.label}. ` +
       'Set SF_TIME_HOURS_FIELD in .env to the field that holds the time spent and restart.');
   }
-  if (!users.length) throw new HttpError(404, `No user lookup found on ${d.label} to tell which records are yours.`);
+  if (!userCands.length) throw new HttpError(404, `No user lookup found on ${d.label} to tell which records are yours.`);
+  const me = sfId(req.session.sf.user.id);
+  const total = (soql) => sf(req, 'GET', `/services/data/${API}/query?q=${encodeURIComponent(soql)}`);
+  const userCounts = await Promise.all(userCands.map((f) =>
+    total(`SELECT COUNT() FROM ${d.name} WHERE ${f.name} = '${me}'`).then((r) => r.totalSize, () => -1)));
+  const users = byCount(userCands, userCounts, TIME_USER_FIELD).slice(0, 8);
+  // How many of my records (by the top user field) have each hours field filled.
+  const hourCounts = await total(`SELECT ${hourCands.map((f, i) => `COUNT(${f.name}) c${i}`).join(', ')} ` +
+    `FROM ${d.name} WHERE ${users[0].name} = '${me}'`)
+    .then((r) => hourCands.map((f, i) => r.records[0]?.['c' + i] ?? -1), () => null);
+  const hours = byCount(hourCands, hourCounts, TIME_HOURS_FIELD).slice(0, 8);
   const role = d.fields.find((f) => f.name === 'Role__c') || d.fields.find((f) => /^role$/i.test(f.label));
   // "Owner ID" reads better as "Owner".
-  const info = (f) => ({ name: f.name, label: f.type === 'reference' ? f.label.replace(/\s+ID$/, '') : f.label, type: f.type });
+  const info = (f) => ({ name: f.name, label: f.type === 'reference' ? f.label.replace(/\s+ID$/, '') : f.label, type: f.type, count: f.count ?? null });
 
   const meta = {
     object: d.name,
