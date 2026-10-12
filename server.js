@@ -32,7 +32,7 @@ const SF_TARGET_ORG = process.env.SF_TARGET_ORG || '';
 const ACCOUNT_FIELDS = ['Name', 'Type', 'Industry', 'Phone', 'Website', 'AnnualRevenue',
   'NumberOfEmployees', 'BillingCity', 'BillingState', 'Description'];
 const OPP_FIELDS = ['Name', 'StageName', 'Amount', 'CloseDate', 'Probability', 'NextStep', 'Description'];
-const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'Owner.Name', 'LastModifiedDate'];
+const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'OwnerId', 'Owner.Name', 'LastModifiedDate'];
 const OPP_READ = ['Id', 'AccountId', ...OPP_FIELDS, 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
 
 // The "Deal Support" object attached to opportunities. Found by its label unless these name it:
@@ -426,9 +426,12 @@ api.get('/accounts', wrap(async (req, res) => {
   const where = [];
   const q = String(req.query.q || '').trim().slice(0, 80);
   if (q) where.push(`Name LIKE '%${soqlLike(q)}%'`);
+  // Sales rep filter: the account owner.
+  const owner = req.query.owner ? sfId(req.query.owner) : '';
+  if (owner) where.push(`OwnerId = '${owner}'`);
   // Read the Lead SE fields too, so the saved copy can apply the same filter offline.
   const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
-  const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'Owner.Name', 'LastModifiedDate'],
+  const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate'],
     (await knownLeadSeFields(req)).Account);
   const soql = (extra = []) => {
     const w = [...where, ...extra];
@@ -460,6 +463,7 @@ api.get('/accounts', wrap(async (req, res) => {
     const side = (f) => f && { field: f.name, value: leadSeValue(req, f) };
     const saved = store.listAccounts(orgOf(req), {
       q,
+      ownerId: owner,
       leadSe: lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) },
     });
     return { data: saved.records, syncedAt: saved.syncedAt };

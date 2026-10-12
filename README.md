@@ -8,6 +8,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
 
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
+- Filters the account list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)
+- Shows only open opportunities on an account by default; tick **Show closed** to see all of them
 - Edits account fields and opportunity fields inline; changed fields are highlighted before saving
 - Creates new opportunities on an account
 - **Open** on an opportunity focuses on it: edit its fields, see its Deal Support records (click one for all
