@@ -31,8 +31,12 @@ if (!CLIENT_ID) {
 const ACCOUNT_FIELDS = ['Name', 'Type', 'Industry', 'Phone', 'Website', 'AnnualRevenue',
   'NumberOfEmployees', 'BillingCity', 'BillingState', 'Description'];
 const OPP_FIELDS = ['Name', 'StageName', 'Amount', 'CloseDate', 'Probability', 'NextStep', 'Description'];
-const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'OwnerId', 'Owner.Name', 'LastModifiedDate'];
+const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'Owner.Name', 'LastModifiedDate'];
 const OPP_READ = ['Id', 'AccountId', ...OPP_FIELDS, 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
+
+// The "Lead SE" field used for the "only where I'm Lead SE" filter. Set SF_LEAD_SE_FIELD to its API
+// name (e.g. Lead_SE__c) if auto-detection by its label "Lead SE" doesn't find it.
+const LEAD_SE_FIELD = process.env.SF_LEAD_SE_FIELD || '';
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -230,6 +234,65 @@ async function withCacheFallback(req, res, live, cached) {
   }
 }
 
+// ---------- Lead SE filter ----------
+
+// Find the Lead SE field on an object: by API name if configured, else by its label.
+function findLeadSe(describe) {
+  const f = describe.fields.find((x) => LEAD_SE_FIELD
+    ? x.name.toLowerCase() === LEAD_SE_FIELD.toLowerCase()
+    : /^lead\s*se$/i.test(x.label.trim()));
+  return f ? { name: f.name, isUser: f.type === 'reference' } : null;
+}
+
+// Look up (once per session, falling back to the saved copy offline) which fields are Lead SE.
+async function knownLeadSeFields(req) {
+  if (!req.session.leadSe) {
+    try {
+      const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
+      const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
+      req.session.leadSe = { Account: findLeadSe(acct), Opportunity: findLeadSe(opp) };
+      store.saveSetting(orgOf(req), 'leadSe', req.session.leadSe);
+    } catch (err) {
+      if (!(err.status >= 502)) throw err;
+      // Offline and never looked up: reads still work, only the filter itself can't run.
+      return store.getSetting(orgOf(req), 'leadSe') || { offline: true };
+    }
+  }
+  return req.session.leadSe;
+}
+
+async function leadSeFields(req) {
+  const fields = await knownLeadSeFields(req);
+  if (fields.offline) throw new HttpError(503, "Can't reach Salesforce to find the Lead SE field. Untick the filter to browse your saved copy.");
+  if (!fields.Account && !fields.Opportunity) {
+    throw new HttpError(400, 'No "Lead SE" field found on Account or Opportunity. ' +
+      'Set SF_LEAD_SE_FIELD in .env to its API name (e.g. Lead_SE__c) and restart.');
+  }
+  return fields;
+}
+
+// The value a Lead SE field holds when it is the signed-in user: User Id for a lookup, else full name.
+const leadSeValue = (req, field) => (field.isUser ? req.session.sf.user.id : String(req.session.sf.user.name));
+
+// SOQL condition matching the signed-in user.
+function leadSeIsMe(req, field) {
+  return field.isUser
+    ? `${field.name} = '${sfId(leadSeValue(req, field))}'`
+    : `${field.name} = '${leadSeValue(req, field).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+// Fields to read for each object, plus its Lead SE field when there is one, so saved records
+// carry it and the filter also works on the saved copy offline.
+const withField = (base, f) => (f && !base.includes(f.name) ? [...base, f.name] : base);
+const accountRead = (lse) => withField(ACCOUNT_READ, lse?.Account);
+const oppRead = (lse) => withField(OPP_READ, lse?.Opportunity);
+
+// The same test in JS, for records already loaded (SOQL text comparison ignores case).
+function leadSeMatches(req, field, rec) {
+  const v = rec[field.name];
+  return v != null && String(v).toLowerCase() === leadSeValue(req, field).toLowerCase();
+}
+
 // ---------- JSON API used by the page ----------
 
 const api = express.Router();
@@ -262,7 +325,7 @@ api.use((req, res, next) => (req.session.sf ? next() : next(new HttpError(401, '
 api.get('/meta', wrap(async (req, res) => {
   if (req.session.meta) return res.json(req.session.meta);
   const meta = await withCacheFallback(req, res, () => loadMeta(req), () => {
-    const saved = store.getMeta(orgOf(req));
+    const saved = store.getSetting(orgOf(req), 'meta');
     return saved && { data: saved };
   });
   if (!res.get('X-SFDesk-Cached')) req.session.meta = meta;
@@ -287,7 +350,7 @@ async function loadMeta(req) {
     editable: { Account: editable(acct, ACCOUNT_FIELDS), Opportunity: editable(opp, OPP_FIELDS) },
     canCreateOpportunity: opp.createable && creatable(opp, ['Name', 'StageName', 'CloseDate']).length === 3,
   };
-  store.saveMeta(orgOf(req), meta);
+  store.saveSetting(orgOf(req), 'meta', meta);
   return meta;
 }
 
@@ -295,43 +358,76 @@ api.get('/accounts', wrap(async (req, res) => {
   const where = [];
   const q = String(req.query.q || '').trim().slice(0, 80);
   if (q) where.push(`Name LIKE '%${soqlLike(q)}%'`);
-  if (req.query.mine === '1') where.push(`OwnerId = '${sfId(req.session.sf.user.id)}'`);
-  const soql = 'SELECT Id, Name, Type, Industry, BillingCity, BillingState, OwnerId, Owner.Name, LastModifiedDate ' +
-    `FROM Account ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ` +
-    'ORDER BY LastModifiedDate DESC LIMIT 200';
+  // Read the Lead SE fields too, so the saved copy can apply the same filter offline.
+  const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
+  const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'Owner.Name', 'LastModifiedDate'],
+    (await knownLeadSeFields(req)).Account);
+  const soql = (extra = []) => {
+    const w = [...where, ...extra];
+    return `SELECT ${fields.join(', ')} ` +
+      `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY LastModifiedDate DESC LIMIT 200`;
+  };
+
   res.json(await withCacheFallback(req, res, async () => {
-    const accounts = await query(req, soql);
+    let accounts;
+    if (!lse) {
+      accounts = await query(req, soql());
+    } else {
+      // An account is "mine" if I'm its Lead SE, or Lead SE on any of its opportunities.
+      // SOQL can't OR a sub-select, so run one query per field and merge.
+      const queries = [];
+      if (lse.Account) queries.push(query(req, soql([leadSeIsMe(req, lse.Account)])));
+      if (lse.Opportunity) {
+        queries.push(query(req, soql([`Id IN (SELECT AccountId FROM Opportunity WHERE ${leadSeIsMe(req, lse.Opportunity)})`])));
+      }
+      const byId = new Map();
+      for (const rec of (await Promise.all(queries)).flat()) byId.set(rec.Id, rec);
+      accounts = [...byId.values()]
+        .sort((a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate)))
+        .slice(0, 200);
+    }
     store.saveAccounts(orgOf(req), accounts);
     return accounts;
   }, () => {
-    const saved = store.listAccounts(orgOf(req), { q, ownerId: req.query.mine === '1' ? req.session.sf.user.id : null });
+    const side = (f) => f && { field: f.name, value: leadSeValue(req, f) };
+    const saved = store.listAccounts(orgOf(req), {
+      q,
+      leadSe: lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) },
+    });
     return { data: saved.records, syncedAt: saved.syncedAt };
   }));
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
+  const known = await knownLeadSeFields(req);
+  const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
+  // Load and save every opportunity on the account, so the saved copy stays complete whichever
+  // way the filter is set, then apply the Lead SE filter here.
+  const onlyMine = (detail) => (lse?.Opportunity
+    ? { ...detail, opportunities: detail.opportunities.filter((o) => leadSeMatches(req, lse.Opportunity, o)) }
+    : detail);
   res.json(await withCacheFallback(req, res, async () => {
-    const [account] = await query(req, `SELECT ${ACCOUNT_READ.join(', ')} FROM Account WHERE Id = '${id}'`);
+    const [account] = await query(req, `SELECT ${accountRead(known).join(', ')} FROM Account WHERE Id = '${id}'`);
     if (!account) throw new HttpError(404, 'Account not found');
     const opportunities = await query(req,
-      `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE AccountId = '${id}' ORDER BY IsClosed ASC, CloseDate ASC`);
+      `SELECT ${oppRead(known).join(', ')} FROM Opportunity WHERE AccountId = '${id}' ORDER BY IsClosed ASC, CloseDate ASC`);
     store.saveAccountDetail(orgOf(req), account, opportunities);
-    return { account, opportunities };
+    return onlyMine({ account, opportunities });
   }, () => {
     const saved = store.getAccountDetail(orgOf(req), id);
-    return saved && { data: { account: saved.account, opportunities: saved.opportunities }, syncedAt: saved.syncedAt };
+    return saved && { data: onlyMine({ account: saved.account, opportunities: saved.opportunities }), syncedAt: saved.syncedAt };
   }));
 }));
 
 api.patch('/accounts/:id', wrap(async (req, res) => {
-  const rec = await updateRecord(req, 'Account', ACCOUNT_FIELDS, ACCOUNT_READ);
+  const rec = await updateRecord(req, 'Account', ACCOUNT_FIELDS, accountRead(await knownLeadSeFields(req)));
   store.saveAccounts(orgOf(req), [rec], { replace: true });
   res.json(rec);
 }));
 
 api.patch('/opportunities/:id', wrap(async (req, res) => {
-  const rec = await updateRecord(req, 'Opportunity', OPP_FIELDS, OPP_READ);
+  const rec = await updateRecord(req, 'Opportunity', OPP_FIELDS, oppRead(await knownLeadSeFields(req)));
   store.saveOpportunities(orgOf(req), [rec]);
   res.json(rec);
 }));
@@ -342,7 +438,7 @@ api.post('/opportunities', wrap(async (req, res) => {
   for (const k of OPP_FIELDS) if (fields[k] !== undefined && fields[k] !== '' && fields[k] !== null) body[k] = fields[k];
   for (const k of ['Name', 'StageName', 'CloseDate']) if (!body[k]) throw new HttpError(400, `${k} is required`);
   const created = await sf(req, 'POST', `/services/data/${API}/sobjects/Opportunity`, { body });
-  const [rec] = await query(req, `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE Id = '${sfId(created.id)}'`);
+  const [rec] = await query(req, `SELECT ${oppRead(await knownLeadSeFields(req)).join(', ')} FROM Opportunity WHERE Id = '${sfId(created.id)}'`);
   store.saveOpportunities(orgOf(req), [rec]);
   res.status(201).json(rec);
 }));
