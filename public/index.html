@@ -184,6 +184,7 @@
   .opp-pick button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 6px 8px; }
   .opp-pick button:last-child { border-bottom: 0; }
   .opp-pick button.on { background: var(--accent-soft); }
+  .opp-pick button.active { outline: 2px solid var(--accent); outline-offset: -2px; }
   .opp-pick .m { color: var(--muted); font-size: 12px; }
   .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   @media (max-width: 1000px) { .cal.with-panel { grid-template-columns: minmax(0, 1fr); } }
@@ -1446,7 +1447,8 @@ function renderTimeList(all, today) {
 // Your Salesforce calendar (Events you own), a week at a time. Events covered by a Deal Support are
 // green, the rest red (grey once marked "No Deal Support needed"). Pick an event to create a Deal
 // Support from it: choose the opportunity, and the form is prefilled from the event.
-const cal = { week: null, data: null, sel: null, loading: 0 };
+const cal = { week: null, data: null, sel: null, loading: 0, sources: null, source: null };
+const CAL_SOURCE = 'sfdesk.calSource';
 const evTime = (s) => new Date(String(s).replace(/\+0000$/, 'Z'));
 const hhmm = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 const evStatus = (e) => e.supports.length ? 'covered' : e.skipped ? 'skipped' : 'open';
@@ -1466,6 +1468,7 @@ function showCalendar() {
           el('span', { id: 'calWeek' }),
           el('button', { onclick: () => moveWeek(7), title: 'Next week', 'aria-label': 'Next week' }, '›')),
         el('button', { onclick: () => { cal.week = mondayOf(todayStr()); loadCalendar(); } }, 'This week'),
+        el('select', { id: 'calSource', 'aria-label': 'Calendar', style: 'width:auto;max-width:280px', hidden: true }),
         el('span', { class: 'cal-legend' },
           el('span', {}, el('i', { style: 'background:var(--covered);border-color:var(--covered-line)' }), 'Has a Deal Support'),
           el('span', {}, el('i', { style: 'background:var(--open);border-color:var(--open-line)' }), 'No Deal Support'),
@@ -1478,7 +1481,39 @@ function showCalendar() {
     ),
     el('div', { class: 'cal-panel', id: 'calPanel', hidden: true }),
   ));
-  loadCalendar();
+  loadSources().then(loadCalendar);
+}
+
+// Calendars to show: your Salesforce events, or (when SF Desk runs on a Mac) any calendar from the Mac's
+// Internet Accounts. The choice is remembered on this machine; the first time, the Exchange account's
+// main calendar is picked if there is one.
+async function loadSources() {
+  try { cal.sources ||= await api('/calendar/sources'); } catch { cal.sources = { mac: false, calendars: [] }; }
+  const { calendars, error } = cal.sources;
+  let saved = null;
+  try { saved = localStorage.getItem(CAL_SOURCE); } catch {}
+  const exchange = calendars.filter((c) => c.type === 'exchange');
+  const pick = (saved === 'salesforce' || calendars.some((c) => c.id === saved)) ? saved
+    : (exchange.find((c) => /^calendar$/i.test(c.title)) || exchange[0])?.id || 'salesforce';
+  cal.source ||= pick;
+  cal.sourceNote = error || '';
+  const select = document.getElementById('calSource');
+  if (!select) return;
+  const groups = new Map();
+  for (const c of calendars) {
+    if (!groups.has(c.account)) groups.set(c.account, []);
+    groups.get(c.account).push(c);
+  }
+  select.replaceChildren(el('option', { value: 'salesforce' }, 'Salesforce events'),
+    ...[...groups].map(([account, list]) => el('optgroup', { label: `${account}${list[0].type === 'exchange' ? ' (Exchange)' : ''}` },
+      list.map((c) => el('option', { value: c.id }, c.title)))));
+  select.value = cal.source;
+  select.hidden = !cal.sources.mac;
+  select.onchange = () => {
+    cal.source = select.value; cal.sel = null;
+    try { localStorage.setItem(CAL_SOURCE, cal.source); } catch {}
+    loadCalendar();
+  };
 }
 
 function moveWeek(days) { cal.week = addDays(cal.week, days); cal.sel = null; loadCalendar(); }
@@ -1488,7 +1523,8 @@ async function loadCalendar() {
   const end = addDays(week, 7);
   document.getElementById('calWeek').textContent = `${monDay(week)} – ${monDay(addDays(week, 6))}, ${addDays(week, 6).slice(0, 4)}`;
   const params = new URLSearchParams({ from: localDate(week).toISOString(), to: localDate(end).toISOString(),
-    d0: week, d1: addDays(week, 6), tz: new Date().getTimezoneOffset() });
+    d0: week, d1: addDays(week, 6), tz: new Date().getTimezoneOffset(), source: cal.source || 'salesforce' });
+  document.getElementById('calSub').textContent = 'Loading…';
   try {
     const [data] = await Promise.all([api('/calendar?' + params), dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; })]);
     if (ticket !== cal.loading || !document.getElementById('calBody')) return;
@@ -1496,6 +1532,14 @@ async function loadCalendar() {
     renderCalendar();
   } catch (e) {
     if (ticket !== cal.loading) return;
+    // The Mac calendar refused (no permission yet) or failed: say why and show Salesforce events instead.
+    if (cal.source !== 'salesforce' && e.status !== 401) {
+      cal.sourceNote = e.message;
+      cal.source = 'salesforce';
+      const select = document.getElementById('calSource');
+      if (select) select.value = 'salesforce';
+      return loadCalendar();
+    }
     const sub = document.getElementById('calSub');
     if (sub) sub.textContent = e.message;
     document.getElementById('calBody')?.replaceChildren();
@@ -1506,11 +1550,12 @@ function renderCalendar() {
   const { events } = cal.data;
   const by = { covered: 0, open: 0, skipped: 0 };
   for (const e of events) by[evStatus(e)]++;
-  document.getElementById('calSub').textContent = events.length
+  const fromMac = cal.data.source && cal.data.source !== 'salesforce';
+  document.getElementById('calSub').textContent = (cal.sourceNote && !fromMac ? `${cal.sourceNote} Showing Salesforce events. · ` : '') + (events.length
     ? `${plural(events.length, 'event')} this week · ${by.covered} with a ${dsMeta.label} · ${by.open} without` +
       (by.skipped ? ` · ${by.skipped} marked not needed` : '') + ' · Click an event to see it or create a ' + dsMeta.label
-    : 'No Salesforce events this week. If your Outlook or Google calendar reaches Salesforce through Einstein Activity Capture, ' +
-      'those meetings may not be stored as Salesforce events, so they can\'t be shown here.';
+    : fromMac ? 'No events in this calendar this week.' : 'No Salesforce events this week. If your Outlook or Google calendar reaches Salesforce through Einstein Activity Capture, ' +
+      'those meetings may not be stored as Salesforce events, so they can\'t be shown here.');
 
   // Monday to Friday, plus the weekend days that have something on them.
   const days = Array.from({ length: 7 }, (_, i) => addDays(cal.week, i))
@@ -1642,15 +1687,16 @@ function renderEventPanel() {
       el('div', { style: 'margin:-6px 0 10px' }, el('span', { class: 'status-pill ' + st }, STATUS_TEXT[st])),
       el('dl', {},
         el('dt', {}, 'When'), el('dd', {}, when),
+        e.calendar ? [el('dt', {}, 'Calendar'), el('dd', {}, e.calendar)] : null,
         e.location ? [el('dt', {}, 'Where'), el('dd', {}, e.location)] : null,
         e.who ? [el('dt', {}, 'With'), el('dd', {}, e.who)] : null,
         e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
         e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
           sfLink(r.Id, r.Name || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, with the same opportunity, account or name' }, 'matched') : null)))] : null,
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null)))] : null,
       ),
       e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
-      el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, sfLink(e.id, 'Open event in Salesforce ↗')),
+      el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, e.sfEvent === false ? null : sfLink(e.id, 'Open event in Salesforce ↗')),
     ),
     formBox,
   );
@@ -1659,34 +1705,13 @@ function renderEventPanel() {
 // The "create from event" form: pick an opportunity, then the Deal Support fields, prefilled from the event.
 function createFromEvent(e, close) {
   let picked = e.what?.type === 'Opportunity' ? { Id: e.what.id, Name: e.what.name } : null;
-  const search = el('input', { type: 'search', placeholder: 'Search opportunities or accounts…', 'aria-label': 'Search opportunities' });
-  const list = el('div', { class: 'opp-pick' }, el('div', { class: 'empty' }, 'Loading…'));
-  const chosen = el('div', { class: 'sub', style: 'margin:8px 0 0' });
-  const showChosen = () => { chosen.textContent = picked ? `Opportunity: ${picked.Name}${picked.Account?.Name ? ` (${picked.Account.Name})` : ''}` : 'Pick an opportunity.'; };
-  let results = [];
-  const renderList = () => {
-    const rows = picked && !results.some((o) => o.Id === picked.Id) ? [picked, ...results] : results;
-    list.replaceChildren(...(rows.length ? rows.map((o) => el('button', { class: picked?.Id === o.Id ? 'on' : null,
-      onclick: () => { picked = o; showChosen(); renderList(); } },
-      el('div', {}, o.Name), el('div', { class: 'm' }, [o.Account?.Name, o.StageName, o.CloseDate && `closes ${o.CloseDate}`].filter(Boolean).join(' · '))))
-      : [el('div', { class: 'empty' }, 'No opportunities found.')]));
-  };
-  let ticket = 0;
-  const load = async () => {
-    const q = search.value.trim(), my = ++ticket;
-    const params = new URLSearchParams();
-    if (q) params.set('q', q);
-    else if (e.what?.type === 'Account') params.set('account', e.what.id);
-    try {
-      const r = await api('/opportunities/search?' + params);
-      if (my === ticket) { results = r; renderList(); }
-    } catch (err) { list.replaceChildren(el('div', { class: 'empty' }, err.message)); }
-  };
-  let timer;
-  search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 300); });
-  showChosen();
-  load();
-
+  const picker = oppCombobox({
+    picked,
+    // Opportunities on the event's account, or on accounts named in its title, are listed first.
+    accounts: [e.what?.type === 'Account' && e.what.id].filter(Boolean),
+    title: e.title || e.subject,
+    onPick: (o) => { picked = o; },
+  });
   const form = dealSupportForm(null, close, {
     title: `New ${dsMeta.label} from this event`,
     values: eventPrefill(e),
@@ -1699,8 +1724,65 @@ function createFromEvent(e, close) {
   });
   // The opportunity picker goes at the top of the form.
   form.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
-    el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), search)), list, chosen));
+    el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), picker.input)),
+    picker.list, picker.status));
   return form;
+}
+
+// Type to filter all open opportunities (searched on the server's local copy, sorted by name).
+// Arrow keys move through the list and Enter picks; suggested ones (see /opportunities/open) come first.
+function oppCombobox({ picked, accounts = [], title = '', onPick }) {
+  const input = el('input', { type: 'search', placeholder: 'Type to find an open opportunity or account…', autocomplete: 'off',
+    role: 'combobox', 'aria-label': 'Opportunity', 'aria-expanded': 'true' });
+  const list = el('div', { class: 'opp-pick', role: 'listbox' }, el('div', { class: 'empty' }, 'Loading open opportunities…'));
+  const status = el('div', { class: 'sub', style: 'margin:6px 0 0' });
+  let rows = [], active = -1, ticket = 0, info = null;
+  const showStatus = () => {
+    status.textContent = (picked ? `Picked: ${picked.Name}${picked.Account?.Name ? ` (${picked.Account.Name})` : ''}` : 'Nothing picked yet.') +
+      (info ? ` · ${info.matched.toLocaleString()} of ${info.total.toLocaleString()} open opportunities match` +
+        (info.matched > rows.length ? `, showing the first ${rows.length}` : '') : '');
+  };
+  const choose = (o) => { picked = o; onPick(o); render(); };
+  const render = () => {
+    const shown = picked && !input.value.trim() && !rows.some((o) => o.Id === picked.Id) ? [picked, ...rows] : rows;
+    list.replaceChildren(...(shown.length ? shown.map((o, i) => el('button', {
+      type: 'button', role: 'option', 'aria-selected': String(picked?.Id === o.Id),
+      class: [picked?.Id === o.Id && 'on', i === active && 'active'].filter(Boolean).join(' ') || null,
+      onclick: () => choose(o),
+    }, el('div', {}, o.Name, o.suggested ? el('span', { class: 'tag' }, 'suggested') : null),
+      el('div', { class: 'm' }, [o.Account?.Name, o.StageName, o.CloseDate && `closes ${o.CloseDate}`, o.Owner?.Name].filter(Boolean).join(' · '))))
+      : [el('div', { class: 'empty' }, input.value.trim() ? 'No open opportunities match.' : 'No open opportunities.')]));
+    list.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+    showStatus();
+  };
+  const load = async () => {
+    const my = ++ticket;
+    const params = new URLSearchParams({ q: input.value.trim(), limit: 100 });
+    if (accounts.length) params.set('accounts', accounts.join(','));
+    if (title) params.set('title', title);
+    try {
+      const r = await api('/opportunities/open?' + params);
+      if (my !== ticket) return;
+      rows = r.records; info = r; active = -1;
+      render();
+    } catch (err) { if (my === ticket) list.replaceChildren(el('div', { class: 'empty' }, err.message)); }
+  };
+  let timer;
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 120); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const n = list.querySelectorAll('button').length;
+      if (n) { active = (active + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n; render(); }
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      const btn = list.querySelectorAll('button')[active < 0 ? 0 : active];
+      btn?.click();
+    }
+  });
+  showStatus();
+  load();
+  return { input, list, status };
 }
 
 let resizeTimer;

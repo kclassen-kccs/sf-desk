@@ -17,16 +17,22 @@ your Salesforce user is already allowed to, and it only writes when you click **
 - **Export to Excel** on the Pipeline deal list and the My Time activity list downloads the rows shown (after
   filters, hidden records and any clicked bar, tile or opportunity) as an .xlsx with typed dates, amounts and
   hours, a total row and a link to each record
-- **My Calendar** shows your Salesforce calendar (the Event records you own) a week at a time. Events with a
-  Deal Support are green, events without one are red, and ones you mark **No Deal Support needed** turn grey.
-  Click an event to see its details, then **Create Deal Support**: pick the opportunity (the event's own one is
-  preselected when it has one) and the form is prefilled from the event: name from the subject, activity date
-  from the start, meeting duration in hours, the event description in the details field, and you as the
-  Assigned SE. An event counts as covered when a Deal Support was created from it here (remembered in the local
-  database), or when one of yours has the same activity date and the event's opportunity, account or subject.
-  The same meeting logged twice at the same time (e.g. by Outreach, once on the account and once on the
-  opportunity) is shown once. Meetings
-  that reach Salesforce only through Einstein Activity Capture aren't stored as Events, so they can't be shown
+- **My Calendar** shows your calendar a week at a time. On a Mac it reads the calendars from your Internet
+  Accounts (System Settings > Internet Accounts), starting with the Exchange account's calendar if there is
+  one; pick another calendar, or **Salesforce events** (the Event records you own), from the list at the top.
+  The first time, macOS asks to let the app you run SF Desk from (e.g. Terminal) access your calendars; if you
+  say no, the tab says so and shows Salesforce events. SF Desk builds a small calendar reader (`mac/calendar.swift`)
+  with the Xcode Command Line Tools on first use; without them it asks Calendar.app instead, which is slower.
+  Events with a Deal Support are green, events without one are red, and ones you mark **No Deal Support needed**
+  turn grey. Click an event to see its details, then **Create Deal Support**: type to find the opportunity among
+  all open opportunities (opportunities on accounts named in the meeting title come first), and the form is
+  prefilled from the event: name from the title, activity date from the start, meeting duration in hours, the
+  event description in the details field, and you as the Assigned SE. An event counts as covered when a Deal
+  Support was created from it here (remembered in the local database), or when one of yours has the same
+  activity date and the same opportunity, account or name. For Mac calendar events the account is found from
+  the meeting title and the attendees' email domains. Salesforce events logged twice at the same time (e.g. by
+  Outreach, on the account and on the opportunity) are shown once. The open opportunity list is kept in the
+  local database and refreshed from Salesforce every 4 hours
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
 - Lists accounts A–Z by name (or most recently modified first); filters the list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)

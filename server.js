@@ -13,6 +13,7 @@ import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
+import { isMac, macCalendar } from './macCalendar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -57,6 +58,7 @@ const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 const b64url = (buf) => buf.toString('base64url');
 
 const store = openDb(DB_FILE);
+const macCal = isMac ? macCalendar(__dirname, path.dirname(DB_FILE)) : null;
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
@@ -655,24 +657,6 @@ api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
   res.status(201).json(await createDealSupport(req, meta, id, req.body?.fields));
 }));
 
-// Opportunities to attach a Deal Support to: by name or account name with q, an account's with
-// account, else the open ones where I'm Lead SE (or recently modified ones if there's no Lead SE field).
-api.get('/opportunities/search', wrap(async (req, res) => {
-  const q = String(req.query.q || '').trim().slice(0, 80);
-  const account = req.query.account ? sfId(req.query.account) : '';
-  const fields = 'Id, Name, AccountId, Account.Name, StageName, CloseDate, IsClosed';
-  let where, order = 'IsClosed ASC, CloseDate DESC';
-  if (q) where = `(Name LIKE '%${soqlLike(q)}%' OR Account.Name LIKE '%${soqlLike(q)}%')`;
-  else if (account) where = `AccountId = '${account}'`;
-  else {
-    const lse = await knownLeadSeFields(req).catch(() => ({}));
-    if (lse.Opportunity) where = `IsClosed = false AND ${leadSeIsMe(req, lse.Opportunity)}`;
-    else if (lse.Account) where = `IsClosed = false AND ${leadSeIsMe(req, { ...lse.Account, name: 'Account.' + lse.Account.name })}`;
-    else { where = 'IsClosed = false'; order = 'LastModifiedDate DESC'; }
-  }
-  res.json(await query(req, `SELECT ${fields} FROM Opportunity WHERE ${where} ORDER BY ${order} LIMIT 50`, 50));
-}));
-
 // ---------- Pipeline dashboard ----------
 
 // Every open opportunity in the Lead SE view (or all you can see with leadse=0), for the dashboard.
@@ -893,6 +877,7 @@ async function calendarMeta(req) {
     matchDate: (dateField || tm?.dateFields[0])?.name || null,
     matchUser: userField || tm?.userFields?.[0]?.name || null,
     matchAccount: acctField?.name || null,
+    matchAccountRel: acctField?.relationshipName || null,
   };
   req.session.calendarMeta = meta;
   return meta;
@@ -911,23 +896,36 @@ const isoDate = (v) => {
   return s;
 };
 
-// My Deal Supports dated within [d0, d1], for matching events to them.
+// My Deal Supports dated within [d0, d1], for matching events to them, with their accounts' Ids,
+// names and websites (events from the Mac's calendar only have a title and attendees to go on).
 async function myDealSupportsBetween(req, ds, cm, d0, d1) {
   if (!cm.matchDate) return [];
   const me = sfId(req.session.sf.user.id);
   const opp = (await timeMeta(req).catch(() => null))?.oppRel;
-  const fields = ['Id', 'Name', cm.matchDate, ds.oppField, ...(opp ? [`${opp}.Name`, `${opp}.AccountId`] : []),
-    ...(cm.matchAccount ? [cm.matchAccount] : [])];
+  const acct = cm.matchAccount && cm.matchAccountRel;
+  const fields = ['Id', 'Name', cm.matchDate, ds.oppField,
+    ...(opp ? [`${opp}.Name`, `${opp}.AccountId`, `${opp}.Account.Name`, `${opp}.Account.Website`] : []),
+    ...(cm.matchAccount ? [cm.matchAccount] : []), ...(acct ? [`${acct}.Name`, `${acct}.Website`] : [])];
   const dateType = cm.dateField?.name === cm.matchDate ? cm.dateField.type : 'date';
   const range = dateType === 'datetime'
     ? `${cm.matchDate} >= ${d0}T00:00:00Z AND ${cm.matchDate} <= ${d1}T23:59:59Z`
     : `${cm.matchDate} >= ${d0} AND ${cm.matchDate} <= ${d1}`;
   const who = [cm.matchUser && `${cm.matchUser} = '${me}'`, `CreatedById = '${me}'`].filter(Boolean);
-  const recs = await query(req, `SELECT ${[...new Set(fields)].join(', ')} FROM ${ds.object} ` +
+  const run = (f) => query(req, `SELECT ${[...new Set(f)].join(', ')} FROM ${ds.object} ` +
     `WHERE ${range} AND (${[...new Set(who)].join(' OR ')})`, 2000);
-  return recs.map((r) => ({ Id: r.Id, Name: r.Name, date: String(r[cm.matchDate] || '').slice(0, 10),
-    oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null,
-    accountIds: [cm.matchAccount && r[cm.matchAccount], opp && r[opp]?.AccountId].filter(Boolean) }));
+  // Website can be hidden by field security; carry on without it.
+  const recs = await run(fields).catch((err) => {
+    if (err.status !== 400) throw err;
+    return run(fields.filter((f) => !f.endsWith('.Website')));
+  });
+  return recs.map((r) => {
+    const accts = [acct && r[acct], opp && r[opp]?.Account].filter(Boolean);
+    return { Id: r.Id, Name: r.Name, date: String(r[cm.matchDate] || '').slice(0, 10),
+      oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null,
+      accountIds: [cm.matchAccount && r[cm.matchAccount], opp && r[opp]?.AccountId].filter(Boolean),
+      accountNames: accts.map((a) => a.Name).filter(Boolean),
+      domains: accts.map((a) => domainOf(a.Website)).filter(Boolean) };
+  });
 }
 
 // Deal Supports by Id (to check the linked ones still exist), with their opportunity.
@@ -942,68 +940,141 @@ async function dealSupportsById(req, ds, ids) {
 // The subject without an Outreach "[Backstory | ...]" prefix, for spotting duplicates and naming Deal Supports.
 const cleanSubject = (s) => String(s || '').replace(/^\s*\[backstory\b[^\]]*\]\s*/i, '').trim();
 
-// The local calendar date an event falls on, given the page's UTC offset in minutes (from getTimezoneOffset).
+// "https://www.kochind.com/about" -> "kochind.com"
+function domainOf(url) {
+  const host = String(url || '').trim().toLowerCase().replace(/^[a-z]+:\/\//, '').split(/[/?#:]/)[0].replace(/^www\./, '');
+  return /\.[a-z]{2,}$/.test(host) ? host : null;
+}
+// The registrable part of a domain, roughly: "mail.kochind.com" -> "kochind", "bnb.co.uk" -> "bnb".
+const domainLabel = (d) => d.split('.').filter((x, i, all) => i < all.length - 1 && !(all.length > 2 && i === all.length - 2 && x.length <= 3)).pop() || d;
+
+// Words too common in account names or meeting titles to tie a meeting to an account.
+const NAME_STOP = new Set(['the', 'and', 'inc', 'corp', 'corporation', 'company', 'llc', 'ltd', 'plc', 'group', 'holdings',
+  'international', 'industries', 'global', 'services', 'solutions', 'technologies', 'technology', 'systems', 'bank',
+  'university', 'health', 'healthcare', 'financial', 'insurance', 'national', 'american', 'united', 'sailpoint',
+  'meeting', 'call', 'sync', 'touchpoint', 'demo', 'review', 'monthly', 'weekly', 'strategy', 'identity', 'security']);
+const nameWords = (s) => String(s || '').toLowerCase().split(/[^a-z0-9&]+/).filter(Boolean);
+
+// Does a meeting title name this account? The whole name (less "Inc", "Corp"...) as words, or any
+// distinctive word of it ("Koch" in "Koch Industries", "B&B" in "B&B Hotels").
+function titleNamesAccount(title, account) {
+  const t = ` ${nameWords(title).join(' ')} `;
+  const words = nameWords(account);
+  const core = words.filter((w) => !['inc', 'corp', 'corporation', 'company', 'llc', 'ltd', 'plc', 'the'].includes(w)).join(' ');
+  if (core.length >= 2 && t.includes(` ${core} `)) return true;
+  return words.some((w) => !NAME_STOP.has(w) && (w.length >= 4 || w.includes('&')) && t.includes(` ${w} `));
+}
+
+// The local calendar date a Salesforce event falls on, given the page's UTC offset in minutes (from getTimezoneOffset).
 function eventDate(e, tzOffset) {
   if (e.IsAllDayEvent) return e.ActivityDate;
   const t = Date.parse(String(e.StartDateTime).replace(/\+0000$/, 'Z')) - tzOffset * 60_000;
   return new Date(t).toISOString().slice(0, 10);
 }
 
-// from/to: the range's start and end as UTC instants; d0/d1: its first and last local dates.
+// Salesforce Events I own, as calendar events. Copies of one meeting (same start, same subject once
+// the Backstory prefix is gone) are collapsed, keeping the opportunity copy.
+async function salesforceEvents(req, { from, to, d0, d1, tz }) {
+  const me = sfId(req.session.sf.user.id);
+  const where = `OwnerId = '${me}' AND IsRecurrence = false AND (` +
+    `(IsAllDayEvent = false AND StartDateTime < ${to} AND EndDateTime > ${from}) OR ` +
+    `(IsAllDayEvent = true AND ActivityDate >= ${d0} AND ActivityDate <= ${d1}))`;
+  const events = await query(req, `SELECT ${EVENT_READ.join(', ')} FROM Event WHERE ${where} ORDER BY StartDateTime ASC`, 1000);
+  const norm = (s) => cleanSubject(s).toLowerCase();
+  const groups = new Map();
+  for (const e of events) {
+    const key = `${e.IsAllDayEvent ? e.ActivityDate : e.StartDateTime}|${norm(e.Subject)}`;
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(e);
+  }
+  const isOpp = (e) => e.What?.Type === 'Opportunity';
+  return [...groups.values()].map((copies) => {
+    const e = copies.find(isOpp) || copies[0];
+    return {
+      id: e.Id, copies: copies.filter((c) => c !== e).map((c) => c.Id), sfEvent: true,
+      subject: e.Subject || '(no subject)', title: cleanSubject(e.Subject) || '(no subject)', start: e.StartDateTime, end: e.EndDateTime,
+      allDay: !!e.IsAllDayEvent, date: eventDate(e, tz), minutes: e.DurationInMinutes ?? null, location: e.Location || '',
+      description: e.Description || '', who: e.Who?.Name || '', showAs: e.ShowAs || '',
+      what: e.WhatId ? { id: e.WhatId, name: e.What?.Name || '', type: e.What?.Type || '' } : null,
+      oppId: isOpp(e) ? e.WhatId : null,
+      accountIds: [...new Set(copies.flatMap((c) => [c.AccountId, c.What?.Type === 'Account' && c.WhatId]).filter(Boolean))],
+      domains: [],
+    };
+  });
+}
+
+// Events from one of the Mac's calendars. Attendee domains other than my own help find the account.
+async function macEvents(req, calendarId, { from, to }) {
+  const myDomain = String(req.session.sf.user.username || '').split('@')[1]?.toLowerCase();
+  const events = await macCal.events(from, to, [calendarId]);
+  return events.map((e) => {
+    const others = (e.attendees || []).filter((a) => !a.me && a.email && !a.email.toLowerCase().endsWith('@' + myDomain));
+    return {
+      id: e.id, copies: [], sfEvent: false,
+      subject: e.title || '(no subject)', title: cleanSubject(e.title) || '(no subject)', start: e.start, end: e.end,
+      allDay: !!e.allDay, date: e.date, minutes: null, location: e.location || '',
+      description: e.notes || '', who: others.map((a) => a.name || a.email).join(', '), showAs: e.free ? 'Free' : '',
+      what: null, oppId: null, accountIds: [], calendar: e.calendar,
+      domains: [...new Set(others.map((a) => a.email.split('@')[1]?.toLowerCase()).filter(Boolean))],
+    };
+  }).sort((a, b) => String(a.start).localeCompare(String(b.start)));
+}
+
+// The Mac's calendars, for the source picker. Empty when not on a Mac; an error message when access
+// was refused, so the page can say so and stay on Salesforce events.
+api.get('/calendar/sources', wrap(async (req, res) => {
+  if (!macCal) return res.json({ mac: false, calendars: [] });
+  try {
+    res.json({ mac: true, calendars: await macCal.calendars() });
+  } catch (err) {
+    res.json({ mac: true, calendars: [], error: err.message });
+  }
+}));
+
+// Calendar events for a range, each marked as covered by a Deal Support or not. source is
+// "salesforce" (default) or a Mac calendar Id. from/to: the range's start and end as UTC instants;
+// d0/d1: its first and last local dates.
 api.get('/calendar', wrap(async (req, res) => {
-  const from = isoDateTime(req.query.from), to = isoDateTime(req.query.to);
-  const d0 = isoDate(req.query.d0), d1 = isoDate(req.query.d1);
-  const tz = Math.max(-840, Math.min(840, Number(req.query.tz) || 0));
-  const kind = `calendar:${d0}:${d1}`;
+  const range = {
+    from: isoDateTime(req.query.from), to: isoDateTime(req.query.to),
+    d0: isoDate(req.query.d0), d1: isoDate(req.query.d1),
+    tz: Math.max(-840, Math.min(840, Number(req.query.tz) || 0)),
+  };
+  const source = String(req.query.source || 'salesforce').slice(0, 300);
+  if (source !== 'salesforce' && !macCal) throw new HttpError(400, 'The Mac calendar is only available when SF Desk runs on a Mac.');
+  const kind = `calendar:${source}:${range.d0}:${range.d1}`;
   res.json(await withCacheFallback(req, res, async () => {
-    const me = sfId(req.session.sf.user.id);
     const ds = await dealSupportMeta(req);
     const cm = await calendarMeta(req);
-    const where = `OwnerId = '${me}' AND IsRecurrence = false AND (` +
-      `(IsAllDayEvent = false AND StartDateTime < ${to} AND EndDateTime > ${from}) OR ` +
-      `(IsAllDayEvent = true AND ActivityDate >= ${d0} AND ActivityDate <= ${d1}))`;
-    const events = await query(req, `SELECT ${EVENT_READ.join(', ')} FROM Event WHERE ${where} ORDER BY StartDateTime ASC`, 1000);
+    const events = source === 'salesforce' ? await salesforceEvents(req, range) : await macEvents(req, source, range);
 
-    const marks = store.eventMarks(orgOf(req), events.map((e) => e.Id));
+    const marks = store.eventMarks(orgOf(req), events.flatMap((e) => [e.id, ...e.copies]));
     const linkedIds = [...new Set(Object.values(marks).map((m) => m.dsId).filter(Boolean))];
-    const [linked, mine] = await Promise.all([dealSupportsById(req, ds, linkedIds), myDealSupportsBetween(req, ds, cm, d0, d1)]);
+    const [linked, mine] = await Promise.all([dealSupportsById(req, ds, linkedIds), myDealSupportsBetween(req, ds, cm, range.d0, range.d1)]);
     const linkedById = new Map(linked.map((r) => [r.Id, r]));
     const norm = (s) => cleanSubject(s).toLowerCase();
 
-    // Collapse copies of one meeting: same start and same subject once the Backstory prefix is gone.
-    // The opportunity copy is kept; links and marks on any copy count for the one shown.
-    const groups = new Map();
-    for (const e of events) {
-      const key = `${e.IsAllDayEvent ? e.ActivityDate : e.StartDateTime}|${norm(e.Subject)}`;
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key).push(e);
-    }
-    const isOpp = (e) => e.What?.Type === 'Opportunity';
-    const out = [...groups.values()].map((copies) => {
-      const e = copies.find(isOpp) || copies[0];
-      const date = eventDate(e, tz);
-      const oppId = isOpp(e) ? e.WhatId : null;
-      const accountIds = new Set(copies.flatMap((c) => [c.AccountId, c.What?.Type === 'Account' && c.WhatId]).filter(Boolean));
+    // Covered: a Deal Support created from the event (or a copy of it), or one of mine on the same date
+    // with the event's opportunity, the event's account, or the event's title as its name. Mac events
+    // have no Salesforce links, so for those the account is found from the title and attendee domains.
+    const out = events.map((e) => {
       const supports = [];
-      for (const c of copies) {
-        const m = marks[c.Id];
+      for (const id of [e.id, ...e.copies]) {
+        const m = marks[id];
         if (m?.dsId && linkedById.has(m.dsId) && !supports.some((x) => x.Id === m.dsId)) supports.push({ ...linkedById.get(m.dsId), how: 'created' });
       }
       for (const r of mine) {
-        if (r.date !== date || supports.some((x) => x.Id === r.Id)) continue;
-        if ((oppId && r.oppId === oppId) || (e.Subject && norm(r.Name) === norm(e.Subject)) ||
-          r.accountIds.some((a) => accountIds.has(a))) supports.push({ ...r, how: 'matched' });
+        if (r.date !== e.date || supports.some((x) => x.Id === r.Id)) continue;
+        const hit = (e.oppId && r.oppId === e.oppId) || norm(r.Name) === norm(e.subject) ||
+          r.accountIds.some((a) => e.accountIds.includes(a)) ||
+          (!e.sfEvent && (r.accountNames.some((n) => titleNamesAccount(e.title, n)) ||
+            r.domains.some((d) => e.domains.some((x) => x === d || x.endsWith('.' + d) || domainLabel(x) === domainLabel(d)))));
+        if (hit) supports.push({ ...r, how: 'matched' });
       }
-      return {
-        id: e.Id, copies: copies.filter((c) => c !== e).map((c) => c.Id),
-        subject: e.Subject || '(no subject)', title: cleanSubject(e.Subject) || '(no subject)', start: e.StartDateTime, end: e.EndDateTime,
-        allDay: !!e.IsAllDayEvent, date, minutes: e.DurationInMinutes ?? null, location: e.Location || '',
-        description: e.Description || '', who: e.Who?.Name || '', showAs: e.ShowAs || '',
-        what: e.WhatId ? { id: e.WhatId, name: e.What?.Name || '', type: e.What?.Type || '' } : null,
-        supports, skipped: copies.some((c) => marks[c.Id]?.skipped),
-      };
+      const { accountIds, oppId, ...shown } = e;
+      return { ...shown, supports, skipped: [e.id, ...e.copies].some((id) => marks[id]?.skipped) };
     });
-    const data = { events: out, prefill: cm, dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } };
+    const data = { source, events: out, prefill: cm, dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } };
     store.saveSetting(orgOf(req), kind, data);
     return data;
   }, () => {
@@ -1012,18 +1083,27 @@ api.get('/calendar', wrap(async (req, res) => {
   }));
 }));
 
+// Event Ids: Salesforce Ids, or "mac_" plus a hash for events from the Mac's calendar.
+function eventId(value) {
+  const id = String(value || '');
+  if (/^mac_[0-9a-f]{24}$/.test(id)) return id;
+  return sfId(id);
+}
+
 // Create a Deal Support from an event, on the opportunity the page picked, and remember the link.
 api.post('/calendar/events/:id/deal-support', wrap(async (req, res) => {
-  const eventId = sfId(req.params.id);
+  const evId = eventId(req.params.id);
   const oppId = sfId(req.body?.opportunityId);
   const me = sfId(req.session.sf.user.id);
-  const [ev] = await query(req, `SELECT Id FROM Event WHERE Id = '${eventId}' AND OwnerId = '${me}'`);
-  if (!ev) throw new HttpError(404, 'That event is not on your calendar.');
+  if (!evId.startsWith('mac_')) {
+    const [ev] = await query(req, `SELECT Id FROM Event WHERE Id = '${evId}' AND OwnerId = '${me}'`);
+    if (!ev) throw new HttpError(404, 'That event is not on your calendar.');
+  }
   const ds = await dealSupportMeta(req);
   const cm = await calendarMeta(req);
   const extra = cm.userField && !cm.userField.onForm ? { [cm.userField.name]: me } : {};
   const rec = await createDealSupport(req, ds, oppId, req.body?.fields, extra);
-  store.linkEvent(orgOf(req), eventId, rec.Id);
+  store.linkEvent(orgOf(req), evId, rec.Id);
   res.status(201).json(rec);
 }));
 
@@ -1031,9 +1111,54 @@ api.post('/calendar/events/:id/deal-support', wrap(async (req, res) => {
 api.post('/calendar/events/:id/skip', (req, res) => {
   // copies: the other records of the same meeting the page shows as one event.
   const copies = Array.isArray(req.body?.copies) ? req.body.copies.slice(0, 20) : [];
-  for (const id of [req.params.id, ...copies]) store.skipEvent(orgOf(req), sfId(id), !!req.body?.skip);
+  for (const id of [req.params.id, ...copies]) store.skipEvent(orgOf(req), eventId(id), !!req.body?.skip);
   res.json({ ok: true });
 });
+
+// ---------- Open opportunities (Deal Support picker) ----------
+
+// Every open opportunity you can see, kept in the local database and refreshed from Salesforce
+// when older than OPEN_OPPS_MAX_AGE (or on refresh=1). Type-ahead searches run on this copy.
+const OPEN_OPPS_MAX_AGE = 4 * 3600_000;
+const openOpps = new Map(); // org Id -> { at, records }
+
+async function openOpportunities(req, refresh) {
+  const org = orgOf(req);
+  let cached = openOpps.get(org) || store.getSetting(org, 'openOpps');
+  if (cached && !openOpps.has(org)) openOpps.set(org, cached);
+  if (cached && !refresh && Date.now() - Date.parse(cached.at) < OPEN_OPPS_MAX_AGE) return cached;
+  try {
+    const recs = await query(req, 'SELECT Id, Name, AccountId, Account.Name, StageName, CloseDate, Owner.Name ' +
+      'FROM Opportunity WHERE IsClosed = false ORDER BY Name ASC', 50000);
+    cached = {
+      at: new Date().toISOString(),
+      records: recs.map((o) => ({ Id: o.Id, Name: o.Name, AccountId: o.AccountId, Account: { Name: o.Account?.Name || '' },
+        StageName: o.StageName, CloseDate: o.CloseDate, Owner: { Name: o.Owner?.Name || '' } })),
+    };
+    store.saveSetting(org, 'openOpps', cached);
+    openOpps.set(org, cached);
+  } catch (err) {
+    if (!(err.status >= 502) || !cached) throw err; // offline: keep using the saved copy
+  }
+  return cached;
+}
+
+// Type-ahead over the open opportunities: every word typed must appear in the opportunity or account
+// name. Sorted by name; opportunities on the accounts in `accounts` (Ids) or named in `title` come first.
+api.get('/opportunities/open', wrap(async (req, res) => {
+  const { at, records } = await openOpportunities(req, req.query.refresh === '1');
+  const words = String(req.query.q || '').toLowerCase().split(/\s+/).filter(Boolean).slice(0, 8);
+  const accounts = new Set(String(req.query.accounts || '').split(',').filter(Boolean));
+  const title = String(req.query.title || '').slice(0, 300);
+  const limit = Math.min(Number(req.query.limit) || 50, 200);
+  const matches = words.length
+    ? records.filter((o) => { const t = `${o.Name} ${o.Account.Name}`.toLowerCase(); return words.every((w) => t.includes(w)); })
+    : records;
+  const suggested = (o) => accounts.has(o.AccountId) || (title && o.Account.Name && titleNamesAccount(title, o.Account.Name));
+  const top = (accounts.size || title) ? [...matches.filter(suggested), ...matches.filter((o) => !suggested(o))] : matches;
+  res.json({ total: records.length, matched: matches.length, syncedAt: at,
+    records: top.slice(0, limit).map((o) => ({ ...o, suggested: !!suggested(o) || undefined })) });
+}));
 
 // Hidden records: local to this machine, never written to Salesforce. The page filters its
 // lists with these ids and can show them again with "Show hidden".

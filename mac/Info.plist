@@ -1,0 +1,10 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>CFBundleIdentifier</key><string>local.sf-desk.calendar</string>
+  <key>CFBundleName</key><string>SF Desk Calendar</string>
+  <key>NSCalendarsUsageDescription</key><string>SF Desk shows your meetings so you can log Deal Supports for them.</string>
+  <key>NSCalendarsFullAccessUsageDescription</key><string>SF Desk shows your meetings so you can log Deal Supports for them.</string>
+</dict>
+</plist>
