@@ -29,7 +29,7 @@ This works with SSO, because the CLI signs you in through your normal browser lo
    for a My Domain/SSO login, or `--alias work` to name it).
 3. Leave `SF_CLIENT_ID` empty in `.env`. If you used an alias, set `SF_TARGET_ORG=work`.
 
-SF Desk runs `sf org display --json` when you click **Connect** and whenever the token expires.
+SF Desk runs `sf org display` (and `sf org auth show-access-token` on CLI versions that hide the token there) when you click **Connect** and whenever the token expires.
 **Disconnect** only signs SF Desk out; your CLI login stays as it is (`sf org logout` ends that).
 
 ### Option B: Create an app in Salesforce

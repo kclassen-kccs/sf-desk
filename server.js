@@ -55,25 +55,36 @@ app.use(express.static(path.join(__dirname, 'public')));
 
 // ---------- Salesforce CLI login ----------
 
-// Ask the sf CLI for a current access token. The CLI refreshes it first if it has expired.
-function cliToken() {
-  const args = ['org', 'display', '--json', ...(SF_TARGET_ORG ? ['--target-org', SF_TARGET_ORG] : [])];
+// Run an sf CLI command with --json and return its parsed output (errors become HttpErrors).
+function runCli(args) {
+  const target = SF_TARGET_ORG ? ['--target-org', SF_TARGET_ORG] : [];
   return new Promise((resolve, reject) => {
-    execFile(SF_CLI, args, { timeout: 60_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+    execFile(SF_CLI, [...args, '--json', ...target], { timeout: 60_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
       if (err?.code === 'ENOENT') {
         return reject(new HttpError(400, 'Salesforce CLI (sf) not found. Install it, or set SF_CLI_PATH in .env. See README.md.'));
       }
       let out = null;
       try { out = JSON.parse(stdout); } catch { /* handled below */ }
-      const r = out?.result;
-      if (!r?.accessToken || !r?.instanceUrl) {
-        const why = out?.message || err?.message || 'no access token returned';
+      if (!out?.result) {
+        const why = out?.message || err?.message || 'no result returned';
         return reject(new HttpError(401, `Salesforce CLI login not available: ${why}. ` +
           `Run "sf org login web${SF_TARGET_ORG ? ` --alias ${SF_TARGET_ORG}` : ' --set-default'}" and try again.`));
       }
-      resolve({ access_token: r.accessToken, instance_url: r.instanceUrl.replace(/\/$/, '') });
+      resolve(out.result);
     });
   });
+}
+
+// Ask the sf CLI for a current access token. `org display` refreshes an expired token first.
+// Newer CLI versions redact the token there, so fetch it with `org auth show-access-token` instead.
+async function cliToken() {
+  const org = await runCli(['org', 'display']);
+  let token = org.accessToken;
+  if (!token || /REDACTED/i.test(token)) token = (await runCli(['org', 'auth', 'show-access-token'])).accessToken;
+  if (!token || !org.instanceUrl) {
+    throw new HttpError(401, 'Salesforce CLI returned no access token. Run "sf org login web" and try again.');
+  }
+  return { access_token: token, instance_url: org.instanceUrl.replace(/\/$/, '') };
 }
 
 // ---------- OAuth (Web Server flow + PKCE) ----------
