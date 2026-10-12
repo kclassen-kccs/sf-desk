@@ -6,6 +6,10 @@ your Salesforce user is already allowed to, and it only writes when you click **
 
 ## What it does
 
+- Opens on a **Dashboard** of your open pipeline (the opportunities where you are Lead SE, minus anything you
+  hid): total and weighted pipeline, totals by stage, and a forecast by close date per fiscal month, quarter or
+  year, stacked by forecast category. Click a bar to list its deals, and a deal to open it. The fiscal year
+  starts Feb 1 and is named for the calendar year it ends in (FY27 = Feb 2026 – Jan 2027)
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
 - Lists accounts A–Z by name (or most recently modified first); filters the list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)

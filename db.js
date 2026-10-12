@@ -105,8 +105,12 @@ export function openDb(file) {
     }
   });
 
-  const saveOpportunities = db.transaction((orgId, recs) => {
-    for (const rec of recs) {
+  // `merge` lays a partial record (e.g. the dashboard's fields) over the stored copy instead of replacing it.
+  const getOppData = db.prepare('SELECT data FROM opportunities WHERE org_id = ? AND id = ?');
+  const saveOpportunities = db.transaction((orgId, recs, { merge = false } = {}) => {
+    for (let rec of recs) {
+      const prev = merge ? getOppData.get(orgId, rec.Id) : null;
+      if (prev) rec = { ...JSON.parse(prev.data), ...rec };
       upsertOpp.run({
         org_id: orgId,
         id: rec.Id,
@@ -173,6 +177,32 @@ export function openDb(file) {
         account: JSON.parse(acct.data),
         opportunities: opps.map((r) => JSON.parse(r.data)),
         syncedAt: oldest([acct, ...opps]),
+      };
+    },
+
+    // Open opportunities for the dashboard, with the same Lead SE rule as the live query: on the
+    // opportunity when that side has a field, otherwise on its account.
+    listOpenOpportunities(orgId, leadSe = null) {
+      const opp = leadSe?.opportunity, acct = opp ? null : leadSe?.account;
+      const rows = db.prepare(`
+        SELECT o.data, o.synced_at, a.name AS account_name FROM opportunities o
+        LEFT JOIN accounts a ON a.org_id = o.org_id AND a.id = o.account_id
+        WHERE o.org_id = @orgId
+          AND NOT coalesce(json_extract(o.data, '$.IsClosed'), 0)
+          AND (@oppPath IS NULL OR lower(json_extract(o.data, @oppPath)) = lower(@oppValue))
+          AND (@acctPath IS NULL OR lower(json_extract(a.data, @acctPath)) = lower(@acctValue))
+        ORDER BY json_extract(o.data, '$.CloseDate') ASC
+      `).all({
+        orgId,
+        oppPath: opp ? '$.' + opp.field : null, oppValue: opp?.value ?? null,
+        acctPath: acct ? '$.' + acct.field : null, acctValue: acct?.value ?? null,
+      });
+      return {
+        records: rows.map((r) => {
+          const rec = JSON.parse(r.data);
+          return rec.Account?.Name || !r.account_name ? rec : { ...rec, Account: { Name: r.account_name } };
+        }),
+        syncedAt: oldest(rows),
       };
     },
 
