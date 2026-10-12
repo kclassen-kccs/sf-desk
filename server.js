@@ -1202,19 +1202,23 @@ api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
   const tm = await timeMeta(req);
   const cm = await calendarMeta(req).catch(() => ({}));
   const date = tm.dateFields[0], hours = tm.hoursFields[0], who = tm.userFields.find((f) => f.rel) || null;
+  // The activity done: Requested Activity in Kerry's org, else a field labelled like it.
+  const activity = ds.fields.find((f) => f.name === 'Requested_SaaS_Activity__c') ||
+    ds.fields.find((f) => /^(requested )?activity( type)?$/i.test(f.label.trim()) && f.type !== 'date' && f.type !== 'datetime');
   const onAccount = [cm.matchAccount && `${cm.matchAccount} = '${id}'`, tm.oppRel && `${tm.oppRel}.AccountId = '${id}'`].filter(Boolean);
   if (!onAccount.length) throw new HttpError(404, `Can't tell which ${ds.labelPlural} belong to an account.`);
   const fields = ['Id', 'Name', date.name, hours.name, ds.oppField, ...(tm.oppRel ? [`${tm.oppRel}.Name`] : []),
-    ...(who ? [`${who.rel}.Name`] : []), ...(tm.roleField ? [tm.roleField] : [])];
+    ...(who ? [`${who.rel}.Name`] : []), ...(tm.roleField ? [tm.roleField] : []), ...(activity ? [activity.name] : [])];
   const from = date.type === 'datetime' ? `${since}T00:00:00Z` : since;
   const recs = await query(req, `SELECT ${[...new Set(fields)].join(', ')} FROM ${ds.object} ` +
     `WHERE (${onAccount.join(' OR ')}) AND ${date.name} >= ${from} ORDER BY ${date.name} DESC`, 5000);
   res.json({
     label: ds.label, labelPlural: ds.labelPlural, dateLabel: date.label, hoursLabel: hours.label, hoursUnit: hours.unit,
-    whoLabel: who?.label || null,
+    whoLabel: who?.label || null, activityLabel: activity?.label || null,
     records: recs.map((r) => ({ Id: r.Id, Name: r.Name, date: String(r[date.name] || '').slice(0, 10), hours: r[hours.name] ?? null,
       oppId: r[ds.oppField] || null, oppName: tm.oppRel ? r[tm.oppRel]?.Name || '' : '', who: who ? r[who.rel]?.Name || '' : '',
-      role: tm.roleField ? r[tm.roleField] || '' : '' })),
+      role: tm.roleField ? r[tm.roleField] || '' : '',
+      activity: activity ? String(r[activity.name] ?? '').split(';').join(', ') : '' })),
   });
 }));
 
