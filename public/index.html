@@ -49,6 +49,9 @@
   #detail { overflow: auto; padding: 18px 22px 40px; min-width: 0; }
   .title-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
   .title-row h2 { margin: 0; font-size: 20px; }
+  .rep-pill { align-self: center; display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 12px; border-radius: 999px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; }
+  .rep-pill .k { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .4px; opacity: .85; }
   .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; }
   section h3 { margin: 0 0 12px; font-size: 14px; display: flex; align-items: center; gap: 10px; }
@@ -508,6 +511,7 @@ function renderDetail() {
   document.getElementById('detail').replaceChildren(
     el('div', { class: 'title-row' },
       el('h2', {}, a.Name),
+      el('span', { class: 'rep-pill', title: 'Sales rep (account owner)' }, el('span', { class: 'k' }, 'Sales rep'), a.Owner?.Name || '—'),
       el('a', { href: `${me.instanceUrl}/${a.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
       el('button', { onclick: () => openAccount(a.Id) }, 'Reload'),
     ),
@@ -524,7 +528,7 @@ function renderSub() {
   const openOpps = current.opportunities.filter((o) => !o.IsClosed && !isHidden(o.Id));
   const pipeline = openOpps.reduce((s, o) => s + (o.Amount || 0), 0);
   document.getElementById('acctSub').textContent =
-    `Sales rep (owner): ${a.Owner?.Name || '—'} · ${openOpps.length} open opportunities · ${money(pipeline)} open pipeline` +
+    `${openOpps.length} open opportunities · ${money(pipeline)} open pipeline` +
     (current.opportunities.some((o) => isHidden(o.Id)) ? ' (hidden ones not counted)' : '');
 }
 
