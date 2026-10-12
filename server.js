@@ -571,15 +571,19 @@ async function dealSupportMeta(req) {
 // else the fields on the page layout for the user's default record type. Null means "all fields".
 async function dealSupportLayout(req, object) {
   if (DEAL_SUPPORT_FIELDS.length) return DEAL_SUPPORT_FIELDS.map((name) => ({ name, required: false }));
-  let desc;
-  try {
-    desc = await sf(req, 'GET', `/services/data/${API}/sobjects/${object}/describe/layouts`);
-  } catch (err) {
-    if (err.status === 401 || err.status >= 502) throw err;
-    return null;
-  }
-  const mapping = desc.recordTypeMappings?.find((m) => m.defaultRecordTypeMapping && m.available);
-  const layout = (mapping && desc.layouts?.find((l) => l.id === mapping.layoutId)) || desc.layouts?.[0];
+  const get = async (suffix = '') => {
+    try {
+      return await sf(req, 'GET', `/services/data/${API}/sobjects/${object}/describe/layouts${suffix}`);
+    } catch (err) {
+      if (err.status === 401 || err.status >= 502) throw err;
+      return null;
+    }
+  };
+  const desc = await get();
+  const mapping = desc?.recordTypeMappings?.find((m) => m.defaultRecordTypeMapping && m.available);
+  let layout = (mapping && desc.layouts?.find((l) => l.id === mapping.layoutId)) || desc?.layouts?.[0];
+  // Objects with record types list no layouts here; fetch the default record type's layout by its Id.
+  if (!layout && mapping?.recordTypeId) layout = await get('/' + sfId(mapping.recordTypeId));
   if (!layout) return null;
   const out = [];
   for (const section of layout.editLayoutSections || []) {
