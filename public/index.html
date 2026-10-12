@@ -35,6 +35,15 @@
   .group { padding: 6px 12px; background: var(--bg); border-bottom: 1px solid var(--line); font-size: 12px; font-weight: 600; color: var(--muted); position: sticky; top: 0; }
   section h3 label { display: flex; gap: 6px; align-items: center; font-weight: 400; font-size: 13px; color: var(--muted); }
   section h3 input[type=checkbox] { width: auto; }
+  .acct { display: flex; gap: 8px; align-items: flex-start; }
+  .acct .body { flex: 1; min-width: 0; }
+  .acct input[type=checkbox], td.pick input { width: auto; margin-top: 3px; }
+  .is-hidden { opacity: .55; }
+  .tag { font-size: 11px; color: var(--muted); border: 1px solid var(--line); border-radius: 4px; padding: 0 5px; margin-left: 6px; font-weight: 400; }
+  .selbar { display: flex; gap: 8px; align-items: center; font-size: 13px; color: var(--muted); }
+  .selbar[hidden] { display: none; }
+  .selbar input { width: auto; } label.selbar { white-space: nowrap; font-weight: 400; }
+  td.pick, th.pick { width: 1%; }
   .empty { padding: 24px 16px; color: var(--muted); }
 
   #detail { overflow: auto; padding: 18px 22px 40px; min-width: 0; }
@@ -111,7 +120,28 @@ let me = null, meta = null, current = null, accounts = [], leadSeOnly = true, ds
 // Account list: filter to one sales rep (account owner) and/or group the list by rep.
 // Opportunities: closed ones are hidden unless showClosed is ticked.
 let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
-const reps = new Map(); // OwnerId -> name, from every account list loaded this session
+const acctOwners = new Map(); // account Id -> { id, name } of its owner, for every account loaded this session
+
+// Hidden records live in the local database (never in Salesforce). Lists leave them out
+// unless "Show hidden" is ticked; ticked rows can be hidden or unhidden in one go.
+let hidden = new Map();          // id -> { id, type, name, hiddenAt }
+let showHiddenAccts = false, showHiddenOpps = false;
+const pickedAccts = new Set(), pickedOpps = new Set();
+const isHidden = (id) => hidden.has(id);
+
+async function loadHidden() {
+  setHidden(await api('/hidden'));
+}
+function setHidden(list) {
+  hidden = new Map(list.map((h) => [h.id, h]));
+}
+async function setHiddenState(type, recs, hide) {
+  const ids = recs.map((r) => r.Id);
+  const names = Object.fromEntries(recs.map((r) => [r.Id, r.Name]));
+  setHidden(await api(hide ? '/hidden' : '/hidden/remove', { method: 'POST', body: { type, ids, names } }));
+  const what = `${ids.length} ${type === 'Account' ? 'account' : 'opportunit'}${type === 'Account' ? (ids.length === 1 ? '' : 's') : (ids.length === 1 ? 'y' : 'ies')}`;
+  toast(hide ? `Hid ${what}. Tick "Show hidden" to see them again.` : `Unhid ${what}.`, 'ok');
+}
 
 // ---------- helpers ----------
 function el(tag, props = {}, ...kids) {
@@ -209,7 +239,7 @@ function showMain() {
   const app = document.getElementById('app');
   const search = el('input', { type: 'search', placeholder: 'Search accounts…' });
   const mine = el('input', { type: 'checkbox', checked: leadSeOnly });
-  const rep = el('select', { 'aria-label': 'Sales rep' });
+  const rep = el('select', { 'aria-label': 'Sales rep', id: 'repSelect' });
   const group = el('input', { type: 'checkbox', checked: groupByRep });
   const sort = el('select', { 'aria-label': 'Sort accounts' },
     el('option', { value: 'name' }, 'Sort: Name A–Z'), el('option', { value: 'recent' }, 'Sort: Recently modified'));
@@ -224,12 +254,16 @@ function showMain() {
     loadAccounts();
     if (current) openAccount(current.account.Id);
   });
+  const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
+  showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; renderList(); });
 
   app.replaceChildren(el('main', {},
     el('div', { id: 'list' },
       el('div', { class: 'controls' }, search, rep, sort,
         el('label', {}, mine, "Only where I'm Lead SE"),
-        el('label', {}, group, 'Group by sales rep')),
+        el('label', {}, group, 'Group by sales rep'),
+        el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden')),
+        el('div', { class: 'selbar', id: 'acctSelbar', hidden: true })),
       el('div', { id: 'accounts' }, el('div', { class: 'empty' }, 'Loading…')),
     ),
     el('div', { id: 'detail' }, el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.')),
@@ -241,17 +275,9 @@ function showMain() {
     if (sortRecent) params.set('sort', 'recent');
     try {
       accounts = await api('/accounts?' + params);
-      for (const a of accounts) if (a.OwnerId) reps.set(a.OwnerId, a.Owner?.Name || a.OwnerId);
-      renderReps();
+      for (const a of accounts) if (a.OwnerId) acctOwners.set(a.Id, { id: a.OwnerId, name: a.Owner?.Name || a.OwnerId });
       renderList();
     } catch (e) { toast(e.message, 'err'); }
-  }
-  // Rep choices are the owners of accounts seen so far, so picking one doesn't shrink the list.
-  function renderReps() {
-    const sorted = [...reps].sort((x, y) => x[1].localeCompare(y[1]));
-    rep.replaceChildren(el('option', { value: '' }, 'All sales reps'),
-      ...sorted.map(([id, name]) => el('option', { value: id }, name)));
-    rep.value = repFilter;
   }
   renderReps();
   loadAccounts();
@@ -259,24 +285,82 @@ function showMain() {
 
 function renderList() {
   const box = document.getElementById('accounts');
-  if (!accounts.length) return box.replaceChildren(el('div', { class: 'empty' }, 'No accounts found.'));
-  const row = (a) => el('div', {
-    class: 'acct' + (current?.account.Id === a.Id ? ' sel' : ''),
-    onclick: () => openAccount(a.Id),
-  },
-    el('div', { class: 'n' }, a.Name),
-    el('div', { class: 'm' }, [a.Type, a.Industry, [a.BillingCity, a.BillingState].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || '—'),
-  );
-  if (!groupByRep) return box.replaceChildren(...accounts.map(row));
+  const hiddenCount = accounts.filter((a) => isHidden(a.Id)).length;
+  document.getElementById('hiddenAcctLabel').textContent = `Show hidden (${hiddenCount})`;
+  const shown = showHiddenAccts ? accounts : accounts.filter((a) => !isHidden(a.Id));
+  for (const id of [...pickedAccts]) if (!shown.some((a) => a.Id === id)) pickedAccts.delete(id);
+  renderAcctSelbar();
+  renderReps();
+  if (!shown.length) {
+    return box.replaceChildren(el('div', { class: 'empty' },
+      accounts.length ? 'All accounts here are hidden. Tick "Show hidden" to see them.' : 'No accounts found.'));
+  }
+  const row = (a) => {
+    const pick = el('input', { type: 'checkbox', checked: pickedAccts.has(a.Id), 'aria-label': `Select ${a.Name}` });
+    pick.addEventListener('click', (e) => e.stopPropagation());
+    pick.addEventListener('change', () => { pick.checked ? pickedAccts.add(a.Id) : pickedAccts.delete(a.Id); renderAcctSelbar(); });
+    return el('div', {
+      class: 'acct' + (current?.account.Id === a.Id ? ' sel' : '') + (isHidden(a.Id) ? ' is-hidden' : ''),
+      onclick: () => openAccount(a.Id),
+    },
+      pick,
+      el('div', { class: 'body' },
+        el('div', { class: 'n' }, a.Name, isHidden(a.Id) ? el('span', { class: 'tag' }, 'Hidden') : null),
+        el('div', { class: 'm' }, [a.Type, a.Industry, [a.BillingCity, a.BillingState].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || '—'),
+      ),
+    );
+  };
+  if (!groupByRep) return box.replaceChildren(...shown.map(row));
   // Group by sales rep (account owner), reps A–Z, each group keeping the list's order.
   const groups = new Map();
-  for (const a of accounts) {
+  for (const a of shown) {
     const rep = a.Owner?.Name || 'No owner';
     if (!groups.has(rep)) groups.set(rep, []);
     groups.get(rep).push(a);
   }
   box.replaceChildren(...[...groups].sort((x, y) => x[0].localeCompare(y[0])).flatMap(([rep, list]) =>
     [el('div', { class: 'group' }, `${rep} (${list.length})`), ...list.map(row)]));
+}
+
+// Sales rep choices: owners of the accounts seen this session that aren't hidden (all of them while
+// "Show hidden" is ticked). Remembering every account seen means picking a rep doesn't shrink the list.
+function renderReps() {
+  const select = document.getElementById('repSelect');
+  if (!select) return;
+  const byId = new Map();
+  for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
+  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || repFilter);
+  select.replaceChildren(el('option', { value: '' }, 'All sales reps'),
+    ...[...byId].sort((x, y) => x[1].localeCompare(y[1])).map(([id, name]) => el('option', { value: id }, name)));
+  select.value = repFilter;
+}
+
+// The "N selected · Hide · Unhide" bar shown above a list while rows are ticked.
+function selbar(bar, picked, records, type, after) {
+  const recs = records.filter((r) => picked.has(r.Id));
+  bar.hidden = !recs.length;
+  if (!recs.length) return bar.replaceChildren();
+  const toHide = recs.filter((r) => !isHidden(r.Id)), toShow = recs.filter((r) => isHidden(r.Id));
+  const act = (list, hide) => async () => {
+    try { await setHiddenState(type, list, hide); picked.clear(); after(); } catch (e) { toast(e.message, 'err'); }
+  };
+  bar.replaceChildren(
+    el('span', {}, `${recs.length} selected`),
+    toHide.length ? el('button', { onclick: act(toHide, true) }, `Hide ${toHide.length}`) : null,
+    toShow.length ? el('button', { onclick: act(toShow, false) }, `Unhide ${toShow.length}`) : null,
+    el('button', { onclick: () => { picked.clear(); after(); } }, 'Clear'),
+  );
+}
+
+function renderAcctSelbar() {
+  selbar(document.getElementById('acctSelbar'), pickedAccts, accounts, 'Account', () => {
+    renderList();
+    // Hiding the open account closes it, unless hidden accounts are being shown.
+    if (current && isHidden(current.account.Id) && !showHiddenAccts) {
+      current = null;
+      document.getElementById('detail').replaceChildren(el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.'));
+    }
+  });
 }
 
 async function openAccount(id) {
@@ -293,20 +377,27 @@ async function openAccount(id) {
 
 function renderDetail() {
   const a = current.account;
-  const openOpps = current.opportunities.filter((o) => !o.IsClosed);
-  const pipeline = openOpps.reduce((s, o) => s + (o.Amount || 0), 0);
   document.getElementById('detail').replaceChildren(
     el('div', { class: 'title-row' },
       el('h2', {}, a.Name),
       el('a', { href: `${me.instanceUrl}/${a.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
       el('button', { onclick: () => openAccount(a.Id) }, 'Reload'),
     ),
-    el('div', { class: 'sub' }, `Sales rep (owner): ${a.Owner?.Name || '—'} · ${openOpps.length} open opportunities · ${money(pipeline)} open pipeline`),
+    el('div', { class: 'sub', id: 'acctSub' }),
     el('section', { id: 'acctSection' }),
     el('section', { id: 'oppSection' }),
   );
   renderAccountForm();
   renderOpps();
+}
+
+function renderSub() {
+  const a = current.account;
+  const openOpps = current.opportunities.filter((o) => !o.IsClosed && !isHidden(o.Id));
+  const pipeline = openOpps.reduce((s, o) => s + (o.Amount || 0), 0);
+  document.getElementById('acctSub').textContent =
+    `Sales rep (owner): ${a.Owner?.Name || '—'} · ${openOpps.length} open opportunities · ${money(pipeline)} open pipeline` +
+    (current.opportunities.some((o) => isHidden(o.Id)) ? ' (hidden ones not counted)' : '');
 }
 
 function renderAccountForm() {
@@ -341,34 +432,53 @@ function renderAccountForm() {
 }
 
 function renderOpps() {
+  renderSub();
   const sec = document.getElementById('oppSection');
   const all = current.opportunities;
-  const shown = showClosed ? all : all.filter((o) => !o.IsClosed);
-  const closed = all.length - all.filter((o) => !o.IsClosed).length;
+  // Hidden ones go first (unless "Show hidden"), then closed ones (unless "Show closed").
+  const visible = showHiddenOpps ? all : all.filter((o) => !isHidden(o.Id));
+  const hiddenCount = all.length - visible.length;
+  const shown = showClosed ? visible : visible.filter((o) => !o.IsClosed);
+  const closed = visible.length - visible.filter((o) => !o.IsClosed).length;
+  for (const id of [...pickedOpps]) if (!shown.some((o) => o.Id === id)) pickedOpps.delete(id);
   const tbody = el('tbody', {}, shown.map(oppRow));
   if (!shown.length) {
     const msg = !all.length ? 'No opportunities on this account yet.'
-      : `No open opportunities. Tick "Show closed" to see the ${closed} closed one${closed === 1 ? '' : 's'}.`;
-    tbody.append(el('tr', {}, el('td', { colspan: OPP_UI.length + 1, class: 'empty' }, msg)));
+      : closed ? `No open opportunities. Tick "Show closed" to see the ${closed} closed one${closed === 1 ? '' : 's'}.`
+      : 'All opportunities on this account are hidden.';
+    tbody.append(el('tr', {}, el('td', { colspan: OPP_UI.length + 2, class: 'empty' }, msg)));
   }
   const newRow = meta.canCreateOpportunity ? newOppRow(tbody) : null;
+  const showHidden = el('input', { type: 'checkbox', checked: showHiddenOpps });
+  showHidden.addEventListener('change', () => { showHiddenOpps = showHidden.checked; renderOpps(); });
   const toggle = el('input', { type: 'checkbox', checked: showClosed,
     onchange: (e) => { showClosed = e.target.checked; renderOpps(); } });
+  const bar = el('div', { class: 'selbar', id: 'oppSelbar', hidden: true });
   sec.replaceChildren(
-    el('h3', {}, showClosed ? `Opportunities (${all.length})` : `Open opportunities (${shown.length})`,
-      el('span', { class: 'spacer' }), el('label', {}, toggle, `Show closed (${closed})`)),
+    el('h3', {}, showClosed ? `Opportunities (${shown.length})` : `Open opportunities (${shown.length})`,
+      el('span', { class: 'spacer' }), bar,
+      el('label', { class: 'selbar' }, toggle, `Show closed (${closed})`),
+      hiddenCount ? el('label', { class: 'selbar' }, showHidden, `Show hidden (${hiddenCount})`) : null),
     el('div', { class: 'tablewrap' }, el('table', {},
-      el('thead', {}, el('tr', {}, OPP_UI.map(([f, , c]) => el('th', { class: c }, label(f))), el('th', {}, ''))),
+      el('thead', {}, el('tr', {}, el('th', { class: 'pick' }, ''), OPP_UI.map(([f, , c]) => el('th', { class: c }, label(f))), el('th', {}, ''))),
       tbody,
       newRow ? el('tfoot', {}, newRow) : null,
     )),
   );
+  renderOppSelbar();
+}
+
+function renderOppSelbar() {
+  selbar(document.getElementById('oppSelbar'), pickedOpps, current.opportunities, 'Opportunity', renderOpps);
 }
 
 function oppRow(o) {
-  const tr = el('tr', { class: o.IsClosed ? 'closed' : null });
+  const tr = el('tr', { class: [o.IsClosed && 'closed', isHidden(o.Id) && 'is-hidden'].filter(Boolean).join(' ') || null });
   const save = el('button', { class: 'primary', disabled: true }, 'Save');
   const onChange = () => { save.disabled = !Object.keys(changes(tr, o)).length; };
+  const pick = el('input', { type: 'checkbox', checked: pickedOpps.has(o.Id), 'aria-label': `Select ${o.Name}`, title: isHidden(o.Id) ? 'Hidden' : null });
+  pick.addEventListener('change', () => { pick.checked ? pickedOpps.add(o.Id) : pickedOpps.delete(o.Id); renderOppSelbar(); });
+  tr.append(el('td', { class: 'pick' }, pick));
   for (const def of OPP_UI) tr.append(el('td', {}, field(def, o[def[0]], meta.editable.Opportunity.includes(def[0]), onChange)));
   tr.append(el('td', { class: 'actions' }, save, ' ', el('button', { onclick: () => openOpportunity(o.Id), title: 'Focus on this opportunity and its deal supports' }, 'Open')));
 
@@ -390,6 +500,7 @@ function newOppRow(tbody) {
   const tr = el('tr', { class: 'new' });
   const blank = {};
   const add = el('button', { class: 'primary' }, 'Add');
+  tr.append(el('td', { class: 'pick' }));
   for (const def of OPP_UI) {
     const n = field(def, null, true, () => {});
     if (def[0] === 'Name') n.placeholder = 'New opportunity name';
@@ -609,6 +720,7 @@ document.getElementById('logout').addEventListener('click', async () => {
     document.getElementById('who').textContent = me.user?.username || me.user?.name || '';
     document.getElementById('logout').hidden = false;
     meta = await api('/meta');
+    await loadHidden();
     showMain();
   } catch (e) {
     if (e.status !== 401) toast(e.message, 'err');
