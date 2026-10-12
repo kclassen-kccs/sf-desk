@@ -6,8 +6,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
 
 ## What it does
 
-- Lists accounts (yours by default, or all you can see) with search
-- Shows account details plus all its opportunities, with open pipeline total
+- Lists accounts where you are the Lead SE by default (or all you can see) with search
+- Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
 - Edits account fields and opportunity fields inline; changed fields are highlighted before saving
 - Creates new opportunities on an account
 - Picklists (Type, Industry, Stage) come from your org; fields you can't edit are greyed out
@@ -41,6 +41,14 @@ npm start
 Open http://localhost:3000 and click **Connect**.
 
 Sandbox? Set `SF_LOGIN_URL=https://test.salesforce.com`. Using a My Domain login? Use that URL.
+
+## Lead SE filter
+
+By default the app only shows accounts and opportunities where you are the **Lead SE**. An account
+counts if you are its Lead SE, or the Lead SE on any of its opportunities. The app finds the field by
+its label "Lead SE" on Account and Opportunity. If yours is labelled differently, set
+`SF_LEAD_SE_FIELD` in `.env` to its API name (e.g. `Lead_SE__c`). A user lookup field is matched
+against your Salesforce user; a text or picklist field is matched against your full name.
 
 ## Changing which fields appear
 
