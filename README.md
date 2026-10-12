@@ -10,6 +10,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
 - Shows account details plus all its opportunities, with open pipeline total
 - Edits account fields and opportunity fields inline; changed fields are highlighted before saving
 - Creates new opportunities on an account
+- Hide accounts and opportunities you don't want to see: tick them and click **Hide**. Tick **Show hidden**
+  to see them again and **Unhide** them. Hiding is stored only in the local database, never in Salesforce
 - Picklists (Type, Industry, Stage) come from your org; fields you can't edit are greyed out
 - If someone else changed a record after you loaded it, the save is refused rather than overwriting their work
 - Keeps a local SQLite copy of every account and opportunity you load, so if Salesforce can't be reached

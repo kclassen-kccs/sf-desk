@@ -41,6 +41,18 @@ export function openDb(file) {
     );
     CREATE INDEX IF NOT EXISTS opportunities_by_account ON opportunities (org_id, account_id);
 
+    -- Accounts and opportunities you chose to hide from the app's lists. Local only:
+    -- nothing about hiding is sent to Salesforce. The name is kept so the record can be
+    -- listed for unhiding even if it isn't in the current view.
+    CREATE TABLE IF NOT EXISTS hidden_records (
+      org_id    TEXT NOT NULL,
+      id        TEXT NOT NULL,
+      sobject   TEXT NOT NULL,
+      name      TEXT,
+      hidden_at TEXT NOT NULL,
+      PRIMARY KEY (org_id, id)
+    );
+
     CREATE TABLE IF NOT EXISTS org_meta (
       org_id    TEXT PRIMARY KEY,
       data      TEXT NOT NULL,
@@ -145,6 +157,26 @@ export function openDb(file) {
         syncedAt: oldest([acct, ...opps]),
       };
     },
+
+    listHidden(orgId) {
+      return db.prepare(`
+        SELECT id, sobject AS type, name, hidden_at AS hiddenAt FROM hidden_records
+        WHERE org_id = ? ORDER BY hidden_at DESC
+      `).all(orgId);
+    },
+
+    hide: db.transaction((orgId, type, records) => {
+      const ins = db.prepare(`
+        INSERT INTO hidden_records (org_id, id, sobject, name, hidden_at) VALUES (?, ?, ?, ?, ?)
+        ON CONFLICT (org_id, id) DO UPDATE SET name = excluded.name
+      `);
+      for (const r of records) ins.run(orgId, r.id, type, r.name ?? null, now());
+    }),
+
+    unhide: db.transaction((orgId, ids) => {
+      const del = db.prepare('DELETE FROM hidden_records WHERE org_id = ? AND id = ?');
+      for (const id of ids) del.run(orgId, id);
+    }),
 
     saveMeta(orgId, meta) {
       db.prepare(`

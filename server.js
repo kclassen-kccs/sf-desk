@@ -403,6 +403,30 @@ api.post('/opportunities', wrap(async (req, res) => {
   res.status(201).json(rec);
 }));
 
+// Hidden records: local to this machine, never written to Salesforce. The page filters its
+// lists with these ids and can show them again with "Show hidden".
+api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
+
+function hiddenIds(body) {
+  const ids = Array.isArray(body?.ids) ? body.ids : [];
+  if (!ids.length || ids.length > 500) throw new HttpError(400, 'Pick between 1 and 500 records');
+  return ids.map(sfId);
+}
+
+api.post('/hidden', (req, res) => {
+  const type = req.body?.type;
+  if (type !== 'Account' && type !== 'Opportunity') throw new HttpError(400, 'type must be Account or Opportunity');
+  const ids = hiddenIds(req.body);
+  const names = req.body.names || {};
+  store.hide(orgOf(req), type, ids.map((id) => ({ id, name: typeof names[id] === 'string' ? names[id].slice(0, 255) : null })));
+  res.json(store.listHidden(orgOf(req)));
+});
+
+api.post('/hidden/remove', (req, res) => {
+  store.unhide(orgOf(req), hiddenIds(req.body));
+  res.json(store.listHidden(orgOf(req)));
+});
+
 app.use('/api', api);
 
 app.use((err, req, res, next) => {
