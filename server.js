@@ -429,6 +429,8 @@ api.get('/accounts', wrap(async (req, res) => {
   // Sales rep filter: the account owner.
   const owner = req.query.owner ? sfId(req.query.owner) : '';
   if (owner) where.push(`OwnerId = '${owner}'`);
+  // A–Z by name unless sort=recent asks for most recently modified first.
+  const recent = req.query.sort === 'recent';
   // Read the Lead SE fields too, so the saved copy can apply the same filter offline.
   const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
   const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate'],
@@ -436,7 +438,7 @@ api.get('/accounts', wrap(async (req, res) => {
   const soql = (extra = []) => {
     const w = [...where, ...extra];
     return `SELECT ${fields.join(', ')} ` +
-      `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY LastModifiedDate DESC LIMIT 200`;
+      `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY ${recent ? 'LastModifiedDate DESC' : 'Name ASC'} LIMIT 200`;
   };
 
   res.json(await withCacheFallback(req, res, async () => {
@@ -454,7 +456,9 @@ api.get('/accounts', wrap(async (req, res) => {
       const byId = new Map();
       for (const rec of (await Promise.all(queries)).flat()) byId.set(rec.Id, rec);
       accounts = [...byId.values()]
-        .sort((a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate)))
+        .sort(recent
+          ? (a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate))
+          : (a, b) => String(a.Name).localeCompare(String(b.Name)))
         .slice(0, 200);
     }
     store.saveAccounts(orgOf(req), accounts);
@@ -464,6 +468,7 @@ api.get('/accounts', wrap(async (req, res) => {
     const saved = store.listAccounts(orgOf(req), {
       q,
       ownerId: owner,
+      recent,
       leadSe: lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) },
     });
     return { data: saved.records, syncedAt: saved.syncedAt };
