@@ -1,5 +1,6 @@
 // SF Desk — local Salesforce account & opportunity editor.
-// Talks to the Salesforce REST API using your own OAuth login (PKCE).
+// Talks to the Salesforce REST API using your own OAuth login (PKCE), or, when no
+// SF_CLIENT_ID is set, the login you already have in the Salesforce CLI (`sf`).
 // Runs on localhost only; tokens live in server memory for the session.
 // Records loaded from Salesforce are kept in a local SQLite file (see db.js) so the
 // last-seen data can still be shown when Salesforce can't be reached.
@@ -8,6 +9,7 @@ import 'dotenv/config';
 import express from 'express';
 import session from 'express-session';
 import crypto from 'node:crypto';
+import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
@@ -21,11 +23,10 @@ const CLIENT_ID = process.env.SF_CLIENT_ID;
 const CLIENT_SECRET = process.env.SF_CLIENT_SECRET || '';
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/callback`;
 const DB_FILE = process.env.SF_DESK_DB || path.join(__dirname, 'data', 'sf-desk.db');
-
-if (!CLIENT_ID) {
-  console.error('Missing SF_CLIENT_ID in .env. See README.md for setup.');
-  process.exit(1);
-}
+// Without a client ID, sign in by borrowing the Salesforce CLI's login instead of running OAuth here.
+const USE_CLI = !CLIENT_ID;
+const SF_CLI = process.env.SF_CLI_PATH || 'sf';
+const SF_TARGET_ORG = process.env.SF_TARGET_ORG || '';
 
 // Fields the app reads and is allowed to write. Edit these lists to add more.
 const ACCOUNT_FIELDS = ['Name', 'Type', 'Industry', 'Phone', 'Website', 'AnnualRevenue',
@@ -52,9 +53,33 @@ app.use(session({
 }));
 app.use(express.static(path.join(__dirname, 'public')));
 
+// ---------- Salesforce CLI login ----------
+
+// Ask the sf CLI for a current access token. The CLI refreshes it first if it has expired.
+function cliToken() {
+  const args = ['org', 'display', '--json', ...(SF_TARGET_ORG ? ['--target-org', SF_TARGET_ORG] : [])];
+  return new Promise((resolve, reject) => {
+    execFile(SF_CLI, args, { timeout: 60_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+      if (err?.code === 'ENOENT') {
+        return reject(new HttpError(400, 'Salesforce CLI (sf) not found. Install it, or set SF_CLI_PATH in .env. See README.md.'));
+      }
+      let out = null;
+      try { out = JSON.parse(stdout); } catch { /* handled below */ }
+      const r = out?.result;
+      if (!r?.accessToken || !r?.instanceUrl) {
+        const why = out?.message || err?.message || 'no access token returned';
+        return reject(new HttpError(401, `Salesforce CLI login not available: ${why}. ` +
+          `Run "sf org login web${SF_TARGET_ORG ? ` --alias ${SF_TARGET_ORG}` : ' --set-default'}" and try again.`));
+      }
+      resolve({ access_token: r.accessToken, instance_url: r.instanceUrl.replace(/\/$/, '') });
+    });
+  });
+}
+
 // ---------- OAuth (Web Server flow + PKCE) ----------
 
-app.get('/login', (req, res) => {
+app.get('/login', (req, res, next) => {
+  if (USE_CLI) return cliLogin(req, res).catch(next);
   const verifier = b64url(crypto.randomBytes(32));
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
   const state = b64url(crypto.randomBytes(16));
@@ -70,6 +95,17 @@ app.get('/login', (req, res) => {
   });
   res.redirect(`${LOGIN_URL}/services/oauth2/authorize?${params}`);
 });
+
+async function cliLogin(req, res) {
+  req.session.sf = { ...(await cliToken()), cli: true };
+  await loadUser(req);
+  res.redirect('/');
+}
+
+async function loadUser(req) {
+  const me = await sf(req, 'GET', '/services/oauth2/userinfo');
+  req.session.sf.user = { id: me.user_id, orgId: me.organization_id, name: me.name, username: me.preferred_username };
+}
 
 app.get('/oauth/callback', wrap(async (req, res) => {
   const { code, state, error, error_description: desc } = req.query;
@@ -91,8 +127,7 @@ app.get('/oauth/callback', wrap(async (req, res) => {
     refresh_token: tok.refresh_token,
     instance_url: tok.instance_url,
   };
-  const me = await sf(req, 'GET', '/services/oauth2/userinfo');
-  req.session.sf.user = { id: me.user_id, orgId: me.organization_id, name: me.name, username: me.preferred_username };
+  await loadUser(req);
   res.redirect('/');
 }));
 
@@ -114,6 +149,15 @@ async function tokenRequest(params) {
 
 async function refreshAccess(req) {
   const t = req.session.sf;
+  if (t.cli) {
+    try {
+      Object.assign(t, await cliToken());
+    } catch {
+      delete req.session.sf;
+      throw new HttpError(401, 'Your Salesforce CLI login expired. Run "sf org login web" again, then reconnect.');
+    }
+    return;
+  }
   try {
     const tok = await tokenRequest({ grant_type: 'refresh_token', refresh_token: t.refresh_token });
     t.access_token = tok.access_token;
@@ -145,7 +189,7 @@ async function sf(req, method, urlPath, { body, headers = {} } = {}, retried = f
     throw new HttpError(503, "Can't reach Salesforce. Check your connection and try again.");
   }
 
-  if (r.status === 401 && !retried && t.refresh_token) {
+  if (r.status === 401 && !retried && (t.refresh_token || t.cli)) {
     await refreshAccess(req);
     return sf(req, method, urlPath, { body, headers }, true);
   }
@@ -247,7 +291,8 @@ api.get('/me', (req, res) => {
 
 api.post('/logout', wrap(async (req, res) => {
   const t = req.session.sf;
-  if (t?.refresh_token || t?.access_token) {
+  // A CLI login belongs to the sf CLI; leave it signed in there and just forget it here.
+  if (!t?.cli && (t?.refresh_token || t?.access_token)) {
     await fetch(`${LOGIN_URL}/services/oauth2/revoke`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -359,4 +404,5 @@ app.use((err, req, res, next) => {
 
 app.listen(PORT, 'localhost', () => {
   console.log(`SF Desk running at http://localhost:${PORT}`);
+  if (USE_CLI) console.log(`No SF_CLIENT_ID set: signing in with the Salesforce CLI login${SF_TARGET_ORG ? ` for "${SF_TARGET_ORG}"` : ' (default org)'}.`);
 });
