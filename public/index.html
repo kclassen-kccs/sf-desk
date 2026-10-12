@@ -100,7 +100,7 @@ const LABELS = { StageName: 'Stage', AnnualRevenue: 'Annual revenue', NumberOfEm
   Probability: 'Probability %' };
 const label = (f) => LABELS[f] || f;
 
-let me = null, meta = null, current = null, accounts = [];
+let me = null, meta = null, current = null, accounts = [], leadSeOnly = true;
 
 // Hidden records live in the local database (never in Salesforce). Lists leave them out
 // unless "Show hidden" is ticked; ticked rows can be hidden or unhidden in one go.
@@ -218,16 +218,20 @@ function showConnect(message) {
 function showMain() {
   const app = document.getElementById('app');
   const search = el('input', { type: 'search', placeholder: 'Search accounts…' });
-  const mine = el('input', { type: 'checkbox', checked: true });
+  const mine = el('input', { type: 'checkbox', checked: leadSeOnly });
   let timer;
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(loadAccounts, 300); });
-  mine.addEventListener('change', loadAccounts);
+  mine.addEventListener('change', () => {
+    leadSeOnly = mine.checked;
+    loadAccounts();
+    if (current) openAccount(current.account.Id);
+  });
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
   showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; renderList(); });
 
   app.replaceChildren(el('main', {},
     el('div', { id: 'list' },
-      el('div', { class: 'controls' }, search, el('label', {}, mine, 'Only accounts I own'),
+      el('div', { class: 'controls' }, search, el('label', {}, mine, "Only where I'm Lead SE"),
         el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden')),
         el('div', { class: 'selbar', id: 'acctSelbar', hidden: true })),
       el('div', { id: 'accounts' }, el('div', { class: 'empty' }, 'Loading…')),
@@ -236,7 +240,7 @@ function showMain() {
   ));
 
   async function loadAccounts() {
-    const params = new URLSearchParams({ q: search.value.trim(), mine: mine.checked ? '1' : '0' });
+    const params = new URLSearchParams({ q: search.value.trim(), leadse: leadSeOnly ? '1' : '0' });
     try {
       accounts = await api('/accounts?' + params);
       renderList();
@@ -305,7 +309,7 @@ async function openAccount(id) {
   const detail = document.getElementById('detail');
   detail.replaceChildren(el('div', { class: 'empty' }, 'Loading…'));
   try {
-    current = await api('/accounts/' + id);
+    current = await api('/accounts/' + id + (leadSeOnly ? '?leadse=1' : ''));
     renderList();
     renderDetail();
   } catch (e) {
