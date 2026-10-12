@@ -107,13 +107,13 @@ which is saved so the page still shows something offline.
 
 My Time reads every Deal Support where you are the user in a lookup field, and picks three fields:
 
-- **Mine by**: the user lookup with the most records naming you (e.g. Assigned SE), checked with a count per field
-- **Hours from**: the hours or duration field filled on the most of your records, preferring a total-hours field on
-  a tie (rates, costs and amounts are skipped). Numbers count as hours unless the field says minutes; text
-  values like "30 min" or "1.5 hours" are parsed
+- **Mine by**: `Regional_SE_IDN__c` (Assigned SE) if present, else the user lookup with the most records naming you
+- **Hours from**: `Total_Time_Hours__c` (Total Time (Hours)) if present, else the hours or duration field filled on
+  the most of your records, preferring a total-hours field on a tie (rates, costs and amounts are skipped).
+  Numbers count as hours unless the field says minutes; text values like "30 min" or "1.5 hours" are parsed
 - **Date**: `Date_of_Sales_Activity__c` (Date of Activity) if present, else an activity date field, else Created Date
 
-The dropdowns show how many of your records each field covers.
+The dropdowns show how many of your records each field covers. A pick other than the default is remembered in this browser.
 The page shows which fields it used and has a dropdown for each; your choice is remembered in this browser.
 To pin them for everyone, set `SF_TIME_USER_FIELD`, `SF_TIME_HOURS_FIELD` or `SF_TIME_DATE_FIELD` in `.env`
 to the field's API name.

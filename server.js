@@ -690,6 +690,11 @@ api.get('/pipeline', wrap(async (req, res) => {
 const TIME_DATE_FIELD = process.env.SF_TIME_DATE_FIELD || '';
 const TIME_HOURS_FIELD = process.env.SF_TIME_HOURS_FIELD || '';
 const TIME_USER_FIELD = process.env.SF_TIME_USER_FIELD || '';
+// Without those settings these fields are the defaults when the object has them (Kerry's org);
+// otherwise the best candidate by record count is picked.
+const TIME_USER_DEFAULT = TIME_USER_FIELD || 'Regional_SE_IDN__c';
+const TIME_HOURS_DEFAULT = TIME_HOURS_FIELD || 'Total_Time_Hours__c';
+const TIME_DATE_DEFAULT = TIME_DATE_FIELD || 'Date_of_Sales_Activity__c';
 
 // Highest score first; fields scoring 0 aren't offered.
 const pickFields = (fields, score, pinned, max = 8) => {
@@ -730,7 +735,7 @@ async function timeMeta(req) {
     f.name === 'Date_of_Sales_Activity__c' ? 10
       : /activity/i.test(text(f)) && /date/i.test(text(f)) ? 8
       : f.custom && f.type === 'date' ? 5
-      : f.name === 'CreatedDate' ? 2 : 0, TIME_DATE_FIELD);
+      : f.name === 'CreatedDate' ? 2 : 0, TIME_DATE_DEFAULT);
   // Hours: numeric or text fields named like time spent; never rates, costs or amounts.
   const hourCands = pickFields(d.fields.filter((f) => ['double', 'int', 'picklist', 'string'].includes(f.type) &&
     !/\brate\b|usd|\bcost|price|amount|revenue|percent|\$/i.test(text(f))), (f) => {
@@ -740,14 +745,14 @@ async function timeMeta(req) {
     if (/hour|hrs/i.test(t)) return 6 + num;
     if (/duration|time spent|minutes|customer facing time|prep time|travel time|effort/i.test(t)) return 4 + num;
     return 0;
-  }, TIME_HOURS_FIELD, 20);
+  }, TIME_HOURS_DEFAULT, 20);
   // Mine: every user lookup, ranked by how many records have me in it.
   const userCands = pickFields(d.fields.filter((f) => f.type === 'reference' && f.referenceTo?.includes('User') && f.name !== 'LastModifiedById'), (f) =>
     f.custom && /assigned\s*se\b/i.test(f.label) ? 10
       : f.custom && /\bSE\b|sales engineer|engineer|consultant|resource|assigned|performed|specialist/i.test(f.label) ? 9
       : f.name === 'OwnerId' ? 7
       : f.custom ? 5
-      : f.name === 'CreatedById' ? 3 : 0, TIME_USER_FIELD, 40);
+      : f.name === 'CreatedById' ? 3 : 0, TIME_USER_DEFAULT, 40);
   if (!hourCands.length) {
     throw new HttpError(404, `No hours or duration field found on ${d.label}. ` +
       'Set SF_TIME_HOURS_FIELD in .env to the field that holds the time spent and restart.');
@@ -757,12 +762,12 @@ async function timeMeta(req) {
   const total = (soql) => sf(req, 'GET', `/services/data/${API}/query?q=${encodeURIComponent(soql)}`);
   const userCounts = await Promise.all(userCands.map((f) =>
     total(`SELECT COUNT() FROM ${d.name} WHERE ${f.name} = '${me}'`).then((r) => r.totalSize, () => -1)));
-  const users = byCount(userCands, userCounts, TIME_USER_FIELD).slice(0, 8);
+  const users = byCount(userCands, userCounts, TIME_USER_DEFAULT).slice(0, 8);
   // How many of my records (by the top user field) have each hours field filled.
   const hourCounts = await total(`SELECT ${hourCands.map((f, i) => `COUNT(${f.name}) c${i}`).join(', ')} ` +
     `FROM ${d.name} WHERE ${users[0].name} = '${me}'`)
     .then((r) => hourCands.map((f, i) => r.records[0]?.['c' + i] ?? -1), () => null);
-  const hours = byCount(hourCands, hourCounts, TIME_HOURS_FIELD).slice(0, 8);
+  const hours = byCount(hourCands, hourCounts, TIME_HOURS_DEFAULT).slice(0, 8);
   const role = d.fields.find((f) => f.name === 'Role__c') || d.fields.find((f) => /^role$/i.test(f.label));
   // "Owner ID" reads better as "Owner".
   const info = (f) => ({ name: f.name, label: f.type === 'reference' ? f.label.replace(/\s+ID$/, '') : f.label, type: f.type, count: f.count ?? null });
