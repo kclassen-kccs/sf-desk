@@ -818,12 +818,10 @@ function dealSupportForm(o, close, opts = {}) {
   const required = fields.filter((f) => f.required);
   const optional = fields.filter((f) => !f.required);
   const create = el('button', { class: 'primary' }, `Create ${dsMeta.label}`);
-  // Optional fields open when prefilled, so what will be sent is visible.
-  const prefilled = optional.some((f) => opts.values?.[f.name] != null && opts.values[f.name] !== '');
   const box = el('section', {},
     el('h3', {}, opts.title || `New ${dsMeta.label} for ${o.Name}`),
     el('div', { class: 'grid' }, required.map(cell)),
-    optional.length ? el('details', { class: 'optional', open: required.length === 0 || prefilled },
+    optional.length ? el('details', { class: 'optional' },
       el('summary', {}, `More fields (${optional.length})`), el('div', { class: 'grid' }, optional.map(cell))) : null,
     el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
   );
@@ -841,7 +839,12 @@ function dealSupportForm(o, close, opts = {}) {
       const rec = await api(`/opportunities/${o.Id}/deal-supports`, { method: 'POST', body: { fields: body } });
       toast(`Created ${dsMeta.label}${rec?.Name ? ` "${rec.Name}"` : ''} in Salesforce`, 'ok');
       loadDealSupports(o);
-    } catch (e) { toast(e.message, 'err'); create.disabled = false; }
+    } catch (e) {
+      toast(e.message, 'err'); create.disabled = false;
+      // Salesforce wants a field that sits under "More fields": open it so the field can be filled in.
+      const named = optional.find((f) => e.message.includes(f.name) || e.message.includes(f.label));
+      if (named) { box.querySelector('details.optional').open = true; inputs.get(named).focus(); }
+    }
   });
   return box;
 }

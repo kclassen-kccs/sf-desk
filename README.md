@@ -113,7 +113,10 @@ Custom fields work too, e.g. `Region__c`.
 SF Desk finds the Deal Support object by its label ("Deal Support") and uses its lookup to Opportunity.
 The new-record form shows the fields on its page layout (for your default record type): required ones first,
 the rest under **More fields**. To pick the fields yourself, set `SF_DEAL_SUPPORT_FIELDS` in `.env` to a
-comma-separated list of API names.
+comma-separated list of API names. **More fields** starts closed. Platform Capabilities and Integration
+Modules are optional on the form even though the layout requires them (`SF_DEAL_SUPPORT_OPTIONAL` lists the
+fields treated this way); if Salesforce itself requires one, the save fails with its message and the field is
+shown.
 If it can't find the object, set `SF_DEAL_SUPPORT_OBJECT` in `.env` to its API name (e.g. `Deal_Support__c`);
 if the object has more than one lookup to Opportunity, set `SF_DEAL_SUPPORT_OPP_FIELD` to the right one.
 Deal Supports are read live from Salesforce and aren't kept in the local copy, except the last My Time load,

@@ -43,6 +43,12 @@ const DEAL_SUPPORT_OBJECT = process.env.SF_DEAL_SUPPORT_OBJECT || '';
 const DEAL_SUPPORT_OPP_FIELD = process.env.SF_DEAL_SUPPORT_OPP_FIELD || '';
 // Which Deal Support fields to show, comma-separated API names. Default: the fields on its page layout.
 const DEAL_SUPPORT_FIELDS = (process.env.SF_DEAL_SUPPORT_FIELDS || '').split(',').map((f) => f.trim()).filter(Boolean);
+// Deal Support fields the form treats as optional even when the page layout marks them required,
+// comma-separated API names; fields labelled like these are included too. Salesforce still rejects the
+// save if the field itself (or a validation rule) requires them.
+const DEAL_SUPPORT_OPTIONAL = (process.env.SF_DEAL_SUPPORT_OPTIONAL ?? 'IdentityNow_Platform_Modules__c,Integration_Modules_for_SaaS__c')
+  .split(',').map((f) => f.trim().toLowerCase()).filter(Boolean);
+const optionalByLabel = /platform capabilit|integration modules?/i;
 // Field types the Deal Support form knows how to show.
 const DS_TYPES = new Set(['string', 'textarea', 'email', 'phone', 'url', 'picklist', 'multipicklist', 'boolean',
   'date', 'datetime', 'double', 'currency', 'percent', 'int', 'reference']);
@@ -560,7 +566,8 @@ async function dealSupportMeta(req) {
       label: f.label,
       type: f.type,
       createable: f.createable && onForm,
-      required: f.createable && onForm && f.type !== 'boolean' && (!!required || (!f.nillable && !f.defaultedOnCreate)),
+      required: f.createable && onForm && f.type !== 'boolean' && (!f.nillable && !f.defaultedOnCreate ||
+        (!!required && !DEAL_SUPPORT_OPTIONAL.includes(f.name.toLowerCase()) && !optionalByLabel.test(f.label))),
       length: f.length || null,
       referenceTo: f.referenceTo?.length ? f.referenceTo : null,
       picklist: f.picklistValues?.length ? f.picklistValues.filter((v) => v.active).map((v) => v.value) : null,
