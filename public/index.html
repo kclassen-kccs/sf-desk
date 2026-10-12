@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SF Desk</title>
+<style>
+  :root {
+    --bg: #f5f6f8; --panel: #ffffff; --ink: #1b1f24; --muted: #667085; --line: #e3e6eb;
+    --accent: #0b5cad; --accent-soft: #e8f1fb; --ok: #067647; --err: #b42318; --dirty: #fff6dd;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
+  header { display: flex; align-items: center; gap: 12px; height: 50px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
+  header h1 { font-size: 15px; margin: 0; letter-spacing: .2px; }
+  #who { margin-left: auto; color: var(--muted); font-size: 13px; }
+  button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
+  button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  button:disabled { opacity: .45; cursor: default; }
+  input, select, textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); }
+  input:disabled, select:disabled, textarea:disabled { background: var(--bg); color: var(--muted); }
+  .dirty { background: var(--dirty); border-color: #e6b94a; }
+
+  main { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 50px); }
+  #list { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  #list .controls { padding: 10px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
+  #list .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
+  #list .controls input[type=checkbox] { width: auto; }
+  #accounts { overflow: auto; flex: 1; }
+  .acct { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
+  .acct:hover { background: var(--bg); }
+  .acct.sel { background: var(--accent-soft); }
+  .acct .n { font-weight: 600; }
+  .acct .m { color: var(--muted); font-size: 12px; }
+  .empty { padding: 24px 16px; color: var(--muted); }
+
+  #detail { overflow: auto; padding: 18px 22px 40px; min-width: 0; }
+  .title-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
+  .title-row h2 { margin: 0; font-size: 20px; }
+  .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
+  section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; }
+  section h3 { margin: 0 0 12px; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  section h3 .spacer { flex: 1; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; }
+  .grid label span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
+  .grid label.wide { grid-column: 1 / -1; }
+
+  table { width: 100%; border-collapse: collapse; }
+  th { text-align: left; font-size: 12px; color: var(--muted); font-weight: 500; padding: 4px 6px; border-bottom: 1px solid var(--line); }
+  td { padding: 5px 6px; border-bottom: 1px solid var(--line); vertical-align: middle; }
+  tr.closed td { opacity: .65; }
+  tr.new td { background: #fafbfc; }
+  td.actions { white-space: nowrap; width: 1%; }
+  .tablewrap { overflow-x: auto; }
+  .col-name { min-width: 180px; } .col-stage { min-width: 150px; } .col-num { min-width: 100px; } .col-date { min-width: 140px; } .col-next { min-width: 180px; }
+
+  .center { display: grid; place-items: center; height: calc(100vh - 50px); }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px; max-width: 420px; text-align: center; }
+  .card p { color: var(--muted); }
+
+  #toast { position: fixed; right: 16px; bottom: 16px; max-width: 420px; padding: 10px 14px; border-radius: 8px; background: #1b1f24; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; }
+  #toast.ok { background: var(--ok); } #toast.err { background: var(--err); }
+
+  @media (max-width: 760px) {
+    main { grid-template-columns: 1fr; height: auto; }
+    #list { max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+  }
+</style>
+</head>
+<body>
+<header>
+  <h1>SF Desk</h1>
+  <span id="who"></span>
+  <button id="logout" hidden>Disconnect</button>
+</header>
+<div id="app"></div>
+<div id="toast" role="status"></div>
+
+<script>
+const ACCOUNT_UI = [
+  ['Name', 'text'], ['Type', 'picklist'], ['Industry', 'picklist'], ['Phone', 'text'], ['Website', 'text'],
+  ['AnnualRevenue', 'number'], ['NumberOfEmployees', 'number'], ['BillingCity', 'text'], ['BillingState', 'text'],
+  ['Description', 'textarea'],
+];
+const OPP_UI = [
+  ['Name', 'text', 'col-name'], ['StageName', 'picklist', 'col-stage'], ['Amount', 'number', 'col-num'],
+  ['CloseDate', 'date', 'col-date'], ['Probability', 'number', 'col-num'], ['NextStep', 'text', 'col-next'],
+];
+const LABELS = { StageName: 'Stage', AnnualRevenue: 'Annual revenue', NumberOfEmployees: 'Employees',
+  BillingCity: 'Billing city', BillingState: 'Billing state', CloseDate: 'Close date', NextStep: 'Next step',
+  Probability: 'Probability %' };
+const label = (f) => LABELS[f] || f;
+
+let me = null, meta = null, current = null, accounts = [];
+
+// ---------- helpers ----------
+function el(tag, props = {}, ...kids) {
+  const n = document.createElement(tag);
+  for (const [k, v] of Object.entries(props)) {
+    if (v == null || v === false) continue;
+    if (k === 'class') n.className = v;
+    else if (k.startsWith('on')) n.addEventListener(k.slice(2), v);
+    else n.setAttribute(k, v === true ? '' : v);
+  }
+  for (const c of kids.flat()) if (c != null && c !== false) n.append(c instanceof Node ? c : String(c));
+  return n;
+}
+
+async function api(path, { method = 'GET', body } = {}) {
+  const r = await fetch('/api' + path, {
+    method,
+    headers: { 'Content-Type': 'application/json', 'X-SFDesk': '1' },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const data = await r.json().catch(() => ({}));
+  if (!r.ok) {
+    if (r.status === 401) showConnect(data.error);
+    throw Object.assign(new Error(data.error || r.statusText), { status: r.status });
+  }
+  return data;
+}
+
+let toastTimer;
+function toast(msg, kind = '') {
+  const t = document.getElementById('toast');
+  t.textContent = msg; t.className = kind; t.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => (t.style.display = 'none'), kind === 'err' ? 8000 : 3000);
+}
+
+const money = (n) => n == null ? '' : n.toLocaleString(undefined, { style: 'currency', currency: 'USD', maximumFractionDigits: 0 });
+
+function field(def, value, editable, onChange) {
+  const [name, kind] = def;
+  let n;
+  if (kind === 'picklist') {
+    const options = [...(meta.picklists[name] || [])];
+    if (value && !options.includes(value)) options.unshift(value);
+    n = el('select', {}, el('option', { value: '' }, '—'), options.map((o) => el('option', { value: o }, o)));
+  } else if (kind === 'textarea') {
+    n = el('textarea', { rows: 3 });
+  } else {
+    n = el('input', { type: kind === 'number' ? 'number' : kind === 'date' ? 'date' : 'text', step: kind === 'number' ? 'any' : null });
+  }
+  n.value = value ?? '';
+  n.dataset.field = name;
+  n.dataset.kind = kind;
+  n.disabled = !editable;
+  n.setAttribute('aria-label', label(name));
+  n.addEventListener('input', onChange);
+  n.addEventListener('change', onChange);
+  return n;
+}
+
+function readValue(n) {
+  if (n.value === '') return null;
+  return n.dataset.kind === 'number' ? Number(n.value) : n.value;
+}
+
+// Returns only changed fields, and highlights them.
+function changes(container, original) {
+  const out = {};
+  container.querySelectorAll('[data-field]').forEach((n) => {
+    const v = readValue(n), o = original[n.dataset.field] ?? null;
+    if (v !== o) { out[n.dataset.field] = v; n.classList.add('dirty'); } else n.classList.remove('dirty');
+  });
+  return out;
+}
+
+// ---------- views ----------
+function showConnect(message) {
+  document.getElementById('who').textContent = '';
+  document.getElementById('logout').hidden = true;
+  const app = document.getElementById('app');
+  app.replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
+    el('h2', {}, 'Connect to Salesforce'),
+    el('p', {}, message || 'Sign in with your Salesforce account. The app only sees what your user can see, and only saves when you click Save.'),
+    el('a', { class: 'btn primary', href: '/login' }, 'Connect'),
+  )));
+}
+
+function showMain() {
+  const app = document.getElementById('app');
+  const search = el('input', { type: 'search', placeholder: 'Search accounts…' });
+  const mine = el('input', { type: 'checkbox', checked: true });
+  let timer;
+  search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(loadAccounts, 300); });
+  mine.addEventListener('change', loadAccounts);
+
+  app.replaceChildren(el('main', {},
+    el('div', { id: 'list' },
+      el('div', { class: 'controls' }, search, el('label', {}, mine, 'Only accounts I own')),
+      el('div', { id: 'accounts' }, el('div', { class: 'empty' }, 'Loading…')),
+    ),
+    el('div', { id: 'detail' }, el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.')),
+  ));
+
+  async function loadAccounts() {
+    const params = new URLSearchParams({ q: search.value.trim(), mine: mine.checked ? '1' : '0' });
+    try {
+      accounts = await api('/accounts?' + params);
+      renderList();
+    } catch (e) { toast(e.message, 'err'); }
+  }
+  loadAccounts();
+}
+
+function renderList() {
+  const box = document.getElementById('accounts');
+  if (!accounts.length) return box.replaceChildren(el('div', { class: 'empty' }, 'No accounts found.'));
+  box.replaceChildren(...accounts.map((a) => el('div', {
+    class: 'acct' + (current?.account.Id === a.Id ? ' sel' : ''),
+    onclick: () => openAccount(a.Id),
+  },
+    el('div', { class: 'n' }, a.Name),
+    el('div', { class: 'm' }, [a.Type, a.Industry, [a.BillingCity, a.BillingState].filter(Boolean).join(', ')].filter(Boolean).join(' · ') || '—'),
+  )));
+}
+
+async function openAccount(id) {
+  const detail = document.getElementById('detail');
+  detail.replaceChildren(el('div', { class: 'empty' }, 'Loading…'));
+  try {
+    current = await api('/accounts/' + id);
+    renderList();
+    renderDetail();
+  } catch (e) {
+    detail.replaceChildren(el('div', { class: 'empty' }, e.message));
+  }
+}
+
+function renderDetail() {
+  const a = current.account;
+  const openOpps = current.opportunities.filter((o) => !o.IsClosed);
+  const pipeline = openOpps.reduce((s, o) => s + (o.Amount || 0), 0);
+  document.getElementById('detail').replaceChildren(
+    el('div', { class: 'title-row' },
+      el('h2', {}, a.Name),
+      el('a', { href: `${me.instanceUrl}/${a.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
+      el('button', { onclick: () => openAccount(a.Id) }, 'Reload'),
+    ),
+    el('div', { class: 'sub' }, `Owner: ${a.Owner?.Name || '—'} · ${openOpps.length} open opportunities · ${money(pipeline)} open pipeline`),
+    el('section', { id: 'acctSection' }),
+    el('section', { id: 'oppSection' }),
+  );
+  renderAccountForm();
+  renderOpps();
+}
+
+function renderAccountForm() {
+  const a = current.account;
+  const sec = document.getElementById('acctSection');
+  const form = el('div', { class: 'grid' });
+  const save = el('button', { class: 'primary', disabled: true }, 'Save account');
+  const revert = el('button', { disabled: true }, 'Revert');
+  const onChange = () => { const dirty = Object.keys(changes(form, a)).length > 0; save.disabled = revert.disabled = !dirty; };
+
+  for (const def of ACCOUNT_UI) {
+    form.append(el('label', { class: def[1] === 'textarea' ? 'wide' : null },
+      el('span', {}, label(def[0])), field(def, a[def[0]], meta.editable.Account.includes(def[0]), onChange)));
+  }
+  revert.addEventListener('click', renderAccountForm);
+  save.addEventListener('click', async () => {
+    const fields = changes(form, a);
+    save.disabled = true;
+    try {
+      const rec = await api('/accounts/' + a.Id, { method: 'PATCH', body: { fields, lastModified: a.LastModifiedDate } });
+      current.account = rec;
+      const i = accounts.findIndex((x) => x.Id === rec.Id);
+      if (i >= 0) accounts[i] = { ...accounts[i], ...rec };
+      renderList();
+      renderAccountForm();
+      document.querySelector('.title-row h2').textContent = rec.Name;
+      toast('Account saved to Salesforce', 'ok');
+    } catch (e) { toast(e.message, 'err'); save.disabled = false; }
+  });
+
+  sec.replaceChildren(el('h3', {}, 'Account', el('span', { class: 'spacer' }), revert, save), form);
+}
+
+function renderOpps() {
+  const sec = document.getElementById('oppSection');
+  const tbody = el('tbody', {}, current.opportunities.map(oppRow));
+  if (!current.opportunities.length) tbody.append(el('tr', {}, el('td', { colspan: OPP_UI.length + 1, class: 'empty' }, 'No opportunities on this account yet.')));
+  const newRow = meta.canCreateOpportunity ? newOppRow(tbody) : null;
+  sec.replaceChildren(
+    el('h3', {}, `Opportunities (${current.opportunities.length})`),
+    el('div', { class: 'tablewrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, OPP_UI.map(([f, , c]) => el('th', { class: c }, label(f))), el('th', {}, ''))),
+      tbody,
+      newRow ? el('tfoot', {}, newRow) : null,
+    )),
+  );
+}
+
+function oppRow(o) {
+  const tr = el('tr', { class: o.IsClosed ? 'closed' : null });
+  const save = el('button', { class: 'primary', disabled: true }, 'Save');
+  const onChange = () => { save.disabled = !Object.keys(changes(tr, o)).length; };
+  for (const def of OPP_UI) tr.append(el('td', {}, field(def, o[def[0]], meta.editable.Opportunity.includes(def[0]), onChange)));
+  tr.append(el('td', { class: 'actions' }, save));
+
+  save.addEventListener('click', async () => {
+    const fields = changes(tr, o);
+    save.disabled = true;
+    try {
+      const rec = await api('/opportunities/' + o.Id, { method: 'PATCH', body: { fields, lastModified: o.LastModifiedDate } });
+      const i = current.opportunities.findIndex((x) => x.Id === o.Id);
+      current.opportunities[i] = rec;
+      tr.replaceWith(oppRow(rec));
+      toast(`Saved "${rec.Name}" to Salesforce`, 'ok');
+    } catch (e) { toast(e.message, 'err'); save.disabled = false; }
+  });
+  return tr;
+}
+
+function newOppRow(tbody) {
+  const tr = el('tr', { class: 'new' });
+  const blank = {};
+  const add = el('button', { class: 'primary' }, 'Add');
+  for (const def of OPP_UI) {
+    const n = field(def, null, true, () => {});
+    if (def[0] === 'Name') n.placeholder = 'New opportunity name';
+    tr.append(el('td', {}, n));
+  }
+  tr.append(el('td', { class: 'actions' }, add));
+
+  add.addEventListener('click', async () => {
+    const fields = changes(tr, blank);
+    const missing = ['Name', 'StageName', 'CloseDate'].filter((k) => !fields[k]);
+    if (missing.length) return toast('Required: ' + missing.map(label).join(', '), 'err');
+    add.disabled = true;
+    try {
+      const rec = await api('/opportunities', { method: 'POST', body: { fields: { ...fields, AccountId: current.account.Id } } });
+      current.opportunities.push(rec);
+      renderOpps();
+      toast(`Created "${rec.Name}" in Salesforce`, 'ok');
+    } catch (e) { toast(e.message, 'err'); add.disabled = false; }
+  });
+  return tr;
+}
+
+// ---------- boot ----------
+document.getElementById('logout').addEventListener('click', async () => {
+  await api('/logout', { method: 'POST' }).catch(() => {});
+  current = null;
+  showConnect('Disconnected.');
+});
+
+(async function init() {
+  try {
+    me = await api('/me');
+    if (!me.connected) return showConnect();
+    document.getElementById('who').textContent = me.user?.username || me.user?.name || '';
+    document.getElementById('logout').hidden = false;
+    meta = await api('/meta');
+    showMain();
+  } catch (e) {
+    if (e.status !== 401) toast(e.message, 'err');
+  }
+})();
+</script>
+</body>
+</html>
