@@ -117,6 +117,12 @@ async function api(path, { method = 'GET', body } = {}) {
     if (r.status === 401) showConnect(data.error);
     throw Object.assign(new Error(data.error || r.statusText), { status: r.status });
   }
+  // The server answered from its local copy because Salesforce couldn't be reached.
+  const cached = r.headers.get('X-SFDesk-Cached');
+  if (cached) {
+    const when = isNaN(Date.parse(cached)) ? '' : ' from ' + new Date(cached).toLocaleString();
+    toast(`Salesforce is unreachable. Showing your saved copy${when}; changes can't be saved until it's back.`, 'err');
+  }
   return data;
 }
 

@@ -12,6 +12,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
 - Creates new opportunities on an account
 - Picklists (Type, Industry, Stage) come from your org; fields you can't edit are greyed out
 - If someone else changed a record after you loaded it, the save is refused rather than overwriting their work
+- Keeps a local SQLite copy of every account and opportunity you load, so if Salesforce can't be reached
+  you can still browse what you last saw (read-only until the connection is back)
 
 ## 1. Create an app in Salesforce (one-time)
 
@@ -29,7 +31,7 @@ the "API Enabled" permission.
 
 ## 2. Configure and run
 
-Requires Node.js 18 or newer.
+Requires Node.js 22 or newer.
 
 ```bash
 cd sf-desk
@@ -51,5 +53,8 @@ Custom fields work too, e.g. `Region__c`.
 ## Security notes
 
 - The server listens on `localhost` only.
-- Tokens are held in server memory for the session; nothing is written to disk. Restarting the app means reconnecting.
+- Tokens are held in server memory for the session and never written to disk. Restarting the app means reconnecting.
+- Account and opportunity records you load are saved to `data/sf-desk.db` (set `SF_DESK_DB` to move it).
+  Delete that file to clear the local copy; it is rebuilt as you browse. Edits always go straight to
+  Salesforce; nothing is queued locally.
 - **Disconnect** revokes the token with Salesforce.

@@ -1,6 +1,8 @@
 // SF Desk — local Salesforce account & opportunity editor.
 // Talks to the Salesforce REST API using your own OAuth login (PKCE).
 // Runs on localhost only; tokens live in server memory for the session.
+// Records loaded from Salesforce are kept in a local SQLite file (see db.js) so the
+// last-seen data can still be shown when Salesforce can't be reached.
 
 import 'dotenv/config';
 import express from 'express';
@@ -8,6 +10,7 @@ import session from 'express-session';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openDb } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -17,6 +20,7 @@ const API = process.env.SF_API_VERSION || 'v62.0';
 const CLIENT_ID = process.env.SF_CLIENT_ID;
 const CLIENT_SECRET = process.env.SF_CLIENT_SECRET || '';
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/callback`;
+const DB_FILE = process.env.SF_DESK_DB || path.join(__dirname, 'data', 'sf-desk.db');
 
 if (!CLIENT_ID) {
   console.error('Missing SF_CLIENT_ID in .env. See README.md for setup.');
@@ -27,7 +31,7 @@ if (!CLIENT_ID) {
 const ACCOUNT_FIELDS = ['Name', 'Type', 'Industry', 'Phone', 'Website', 'AnnualRevenue',
   'NumberOfEmployees', 'BillingCity', 'BillingState', 'Description'];
 const OPP_FIELDS = ['Name', 'StageName', 'Amount', 'CloseDate', 'Probability', 'NextStep', 'Description'];
-const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'Owner.Name', 'LastModifiedDate'];
+const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'OwnerId', 'Owner.Name', 'LastModifiedDate'];
 const OPP_READ = ['Id', 'AccountId', ...OPP_FIELDS, 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
 
 class HttpError extends Error {
@@ -35,6 +39,8 @@ class HttpError extends Error {
 }
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 const b64url = (buf) => buf.toString('base64url');
+
+const store = openDb(DB_FILE);
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
@@ -86,7 +92,7 @@ app.get('/oauth/callback', wrap(async (req, res) => {
     instance_url: tok.instance_url,
   };
   const me = await sf(req, 'GET', '/services/oauth2/userinfo');
-  req.session.sf.user = { id: me.user_id, name: me.name, username: me.preferred_username };
+  req.session.sf.user = { id: me.user_id, orgId: me.organization_id, name: me.name, username: me.preferred_username };
   res.redirect('/');
 }));
 
@@ -123,16 +129,21 @@ async function refreshAccess(req) {
 async function sf(req, method, urlPath, { body, headers = {} } = {}, retried = false) {
   const t = req.session.sf;
   if (!t) throw new HttpError(401, 'Not connected to Salesforce');
-  const r = await fetch(t.instance_url + urlPath, {
-    method,
+  let r;
+  try {
+    r = await fetch(t.instance_url + urlPath, {
+      method,
     headers: {
-      Authorization: `Bearer ${t.access_token}`,
-      Accept: 'application/json',
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+        Authorization: `Bearer ${t.access_token}`,
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...headers,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new HttpError(503, "Can't reach Salesforce. Check your connection and try again.");
+  }
 
   if (r.status === 401 && !retried && t.refresh_token) {
     await refreshAccess(req);
@@ -201,6 +212,24 @@ async function updateRecord(req, sobject, allowed, readFields) {
   return rec;
 }
 
+// ---------- Local SQLite copy ----------
+
+const orgOf = (req) => req.session.sf.user.orgId;
+
+// Run a Salesforce read; if Salesforce is unreachable or erroring, answer from the local copy
+// instead, marking the response so the page can say it is showing saved data.
+async function withCacheFallback(req, res, live, cached) {
+  try {
+    return await live();
+  } catch (err) {
+    if (!(err.status >= 502)) throw err;
+    const saved = cached();
+    if (!saved) throw err;
+    res.set('X-SFDesk-Cached', saved.syncedAt || 'unknown');
+    return saved.data;
+  }
+}
+
 // ---------- JSON API used by the page ----------
 
 const api = express.Router();
@@ -231,54 +260,80 @@ api.post('/logout', wrap(async (req, res) => {
 api.use((req, res, next) => (req.session.sf ? next() : next(new HttpError(401, 'Not connected to Salesforce'))));
 
 api.get('/meta', wrap(async (req, res) => {
-  if (!req.session.meta) {
-    const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
-    const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
-    const picklist = (d, name) =>
-      (d.fields.find((f) => f.name === name)?.picklistValues || []).filter((v) => v.active).map((v) => v.value);
-    const editable = (d, names) =>
-      d.fields.filter((f) => names.includes(f.name) && f.updateable).map((f) => f.name);
-    const creatable = (d, names) =>
-      d.fields.filter((f) => names.includes(f.name) && f.createable).map((f) => f.name);
-    req.session.meta = {
-      picklists: {
-        Type: picklist(acct, 'Type'),
-        Industry: picklist(acct, 'Industry'),
-        StageName: picklist(opp, 'StageName'),
-      },
-      editable: { Account: editable(acct, ACCOUNT_FIELDS), Opportunity: editable(opp, OPP_FIELDS) },
-      canCreateOpportunity: opp.createable && creatable(opp, ['Name', 'StageName', 'CloseDate']).length === 3,
-    };
-  }
-  res.json(req.session.meta);
+  if (req.session.meta) return res.json(req.session.meta);
+  const meta = await withCacheFallback(req, res, () => loadMeta(req), () => {
+    const saved = store.getMeta(orgOf(req));
+    return saved && { data: saved };
+  });
+  if (!res.get('X-SFDesk-Cached')) req.session.meta = meta;
+  res.json(meta);
 }));
+
+async function loadMeta(req) {
+  const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
+  const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
+  const picklist = (d, name) =>
+    (d.fields.find((f) => f.name === name)?.picklistValues || []).filter((v) => v.active).map((v) => v.value);
+  const editable = (d, names) =>
+    d.fields.filter((f) => names.includes(f.name) && f.updateable).map((f) => f.name);
+  const creatable = (d, names) =>
+    d.fields.filter((f) => names.includes(f.name) && f.createable).map((f) => f.name);
+  const meta = {
+    picklists: {
+      Type: picklist(acct, 'Type'),
+      Industry: picklist(acct, 'Industry'),
+      StageName: picklist(opp, 'StageName'),
+    },
+    editable: { Account: editable(acct, ACCOUNT_FIELDS), Opportunity: editable(opp, OPP_FIELDS) },
+    canCreateOpportunity: opp.createable && creatable(opp, ['Name', 'StageName', 'CloseDate']).length === 3,
+  };
+  store.saveMeta(orgOf(req), meta);
+  return meta;
+}
 
 api.get('/accounts', wrap(async (req, res) => {
   const where = [];
   const q = String(req.query.q || '').trim().slice(0, 80);
   if (q) where.push(`Name LIKE '%${soqlLike(q)}%'`);
   if (req.query.mine === '1') where.push(`OwnerId = '${sfId(req.session.sf.user.id)}'`);
-  const soql = 'SELECT Id, Name, Type, Industry, BillingCity, BillingState, Owner.Name, LastModifiedDate ' +
+  const soql = 'SELECT Id, Name, Type, Industry, BillingCity, BillingState, OwnerId, Owner.Name, LastModifiedDate ' +
     `FROM Account ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ` +
     'ORDER BY LastModifiedDate DESC LIMIT 200';
-  res.json(await query(req, soql));
+  res.json(await withCacheFallback(req, res, async () => {
+    const accounts = await query(req, soql);
+    store.saveAccounts(orgOf(req), accounts);
+    return accounts;
+  }, () => {
+    const saved = store.listAccounts(orgOf(req), { q, ownerId: req.query.mine === '1' ? req.session.sf.user.id : null });
+    return { data: saved.records, syncedAt: saved.syncedAt };
+  }));
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
-  const [account] = await query(req, `SELECT ${ACCOUNT_READ.join(', ')} FROM Account WHERE Id = '${id}'`);
-  if (!account) throw new HttpError(404, 'Account not found');
-  const opportunities = await query(req,
-    `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE AccountId = '${id}' ORDER BY IsClosed ASC, CloseDate ASC`);
-  res.json({ account, opportunities });
+  res.json(await withCacheFallback(req, res, async () => {
+    const [account] = await query(req, `SELECT ${ACCOUNT_READ.join(', ')} FROM Account WHERE Id = '${id}'`);
+    if (!account) throw new HttpError(404, 'Account not found');
+    const opportunities = await query(req,
+      `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE AccountId = '${id}' ORDER BY IsClosed ASC, CloseDate ASC`);
+    store.saveAccountDetail(orgOf(req), account, opportunities);
+    return { account, opportunities };
+  }, () => {
+    const saved = store.getAccountDetail(orgOf(req), id);
+    return saved && { data: { account: saved.account, opportunities: saved.opportunities }, syncedAt: saved.syncedAt };
+  }));
 }));
 
 api.patch('/accounts/:id', wrap(async (req, res) => {
-  res.json(await updateRecord(req, 'Account', ACCOUNT_FIELDS, ACCOUNT_READ));
+  const rec = await updateRecord(req, 'Account', ACCOUNT_FIELDS, ACCOUNT_READ);
+  store.saveAccounts(orgOf(req), [rec], { replace: true });
+  res.json(rec);
 }));
 
 api.patch('/opportunities/:id', wrap(async (req, res) => {
-  res.json(await updateRecord(req, 'Opportunity', OPP_FIELDS, OPP_READ));
+  const rec = await updateRecord(req, 'Opportunity', OPP_FIELDS, OPP_READ);
+  store.saveOpportunities(orgOf(req), [rec]);
+  res.json(rec);
 }));
 
 api.post('/opportunities', wrap(async (req, res) => {
@@ -288,6 +343,7 @@ api.post('/opportunities', wrap(async (req, res) => {
   for (const k of ['Name', 'StageName', 'CloseDate']) if (!body[k]) throw new HttpError(400, `${k} is required`);
   const created = await sf(req, 'POST', `/services/data/${API}/sobjects/Opportunity`, { body });
   const [rec] = await query(req, `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE Id = '${sfId(created.id)}'`);
+  store.saveOpportunities(orgOf(req), [rec]);
   res.status(201).json(rec);
 }));
 
