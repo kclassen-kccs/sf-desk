@@ -14,6 +14,9 @@ your Salesforce user is already allowed to, and it only writes when you click **
   the last 30 days, this fiscal quarter and this fiscal year, hours per week for the last 13 weeks, and hours
   per opportunity for any of those periods. Click a tile, week or opportunity to list its activities. Weeks
   start on Monday
+- **Export to Excel** on the Pipeline deal list and the My Time activity list downloads the rows shown (after
+  filters, hidden records and any clicked bar, tile or opportunity) as an .xlsx with typed dates, amounts and
+  hours, a total row and a link to each record
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
 - Lists accounts A–Z by name (or most recently modified first); filters the list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)

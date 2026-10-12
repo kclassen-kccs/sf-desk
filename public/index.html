@@ -171,6 +171,7 @@
 <div id="toast" role="status"></div>
 <div id="tip" role="tooltip"></div>
 
+<script src="xlsx.js"></script>
 <script>
 const ACCOUNT_UI = [
   ['Name', 'text'], ['Type', 'picklist'], ['Industry', 'picklist'], ['Phone', 'text'], ['Website', 'text'],
@@ -1060,7 +1061,8 @@ function renderDeals(opps, today) {
   if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: ncols, class: 'empty' }, 'No open deals here.')));
   sec.replaceChildren(
     el('h3', {}, title, el('span', { class: 'spacer' }),
-      p ? el('button', { onclick: () => { dash.pick = null; renderDashboard(); } }, 'Show this quarter') : el('span', { class: 'sub', style: 'margin:0' }, 'Click a bar to list its deals')),
+      p ? el('button', { onclick: () => { dash.pick = null; renderDashboard(); } }, 'Show this quarter') : el('span', { class: 'sub', style: 'margin:0' }, 'Click a bar to list its deals'),
+      el('button', { disabled: !list.length, onclick: () => exportDeals(list, showCat, p ? p.label : `${fyName(now.fy)} Q${now.q}`) }, 'Export to Excel')),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
       el('thead', {}, el('tr', {}, el('th', {}, 'Opportunity'), el('th', {}, 'Account'), el('th', {}, 'Stage'),
         el('th', { class: 'n' }, 'Prob.'), el('th', {}, 'Close date'), el('th', {}, 'Owner'),
@@ -1070,6 +1072,20 @@ function renderDeals(opps, today) {
         el('td', { colspan: ncols - 1 }, `Total (${plural(list.length, 'deal')})`),
         el('td', { class: 'n' }, money(sum(list))))) : null)),
   );
+}
+
+// The deal list as shown (same rows, order and columns), with a link back to each opportunity.
+function exportDeals(list, showCat, what) {
+  const cols = [
+    { header: 'Opportunity', width: 40 }, { header: 'Account', width: 28 }, { header: 'Stage', width: 18 },
+    { header: 'Probability', type: 'percent', width: 11 }, { header: 'Close date', type: 'date', width: 12 },
+    { header: 'Owner', width: 20 }, ...(showCat ? [{ header: 'Forecast', width: 12 }] : []),
+    { header: 'Amount', type: 'money', width: 14, sum: true }, { header: 'Salesforce link', width: 45 },
+  ];
+  const rows = list.map((o) => [o.Name, o.Account?.Name, o.StageName, o.Probability, o.CloseDate, o.Owner?.Name,
+    ...(showCat ? [o.ForecastCategoryName] : []), amt(o), `${me.instanceUrl}/${o.Id}`]);
+  downloadXlsx(`Pipeline - ${what} - ${todayStr()}.xlsx`, 'Pipeline', cols, rows, { totals: true })
+    .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
 }
 
 // Jump from the dashboard to the opportunity in the Accounts view.
@@ -1312,6 +1328,19 @@ function renderOppTime(all, today) {
     rows.length ? grid : el('div', { class: 'empty' }, 'No time logged in this period.'));
 }
 
+// The activity list as shown, with the hours as numbers and a link to each Deal Support.
+function exportTime(list, showRole, what) {
+  const cols = [
+    { header: 'Date', type: 'date', width: 12 }, { header: 'Opportunity', width: 40 }, { header: 'Account', width: 28 },
+    ...(showRole ? [{ header: 'Role', width: 16 }] : []), { header: time.data.label, width: 18 },
+    { header: 'Hours', type: 'number', width: 9, sum: true }, { header: 'Salesforce link', width: 45 },
+  ];
+  const rows = list.map((e) => [e.date, e.oppName, e.accountName, ...(showRole ? [e.role] : []), e.name, e.hours,
+    `${me.instanceUrl}/${e.id}`]);
+  downloadXlsx(`My Time - ${what} - ${todayStr()}.xlsx`, 'My Time', cols, rows, { totals: true })
+    .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
+}
+
 // The activities behind the numbers: the chosen period, narrowed to one opportunity if picked.
 function renderTimeList(all, today) {
   const sec = document.getElementById('timeList');
@@ -1333,7 +1362,8 @@ function renderTimeList(all, today) {
     el('h3', {}, `${range.label}${oppName ? ` · ${oppName}` : ''}: ${plural(list.length, 'activity', 'activities')}, ${fmtH(hoursOf(list))}`,
       el('span', { class: 'spacer' }),
       time.opp !== null ? el('button', { onclick: () => { time.opp = null; renderTime(); } }, 'All opportunities')
-        : el('span', { class: 'sub', style: 'margin:0' }, 'Click a tile, week or opportunity to narrow this list')),
+        : el('span', { class: 'sub', style: 'margin:0' }, 'Click a tile, week or opportunity to narrow this list'),
+      el('button', { disabled: !list.length, onclick: () => exportTime(list, showRole, range.label + (oppName ? ` - ${oppName}` : '')) }, 'Export to Excel')),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
       el('thead', {}, el('tr', {}, el('th', {}, 'Date'), el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
         showRole ? el('th', {}, 'Role') : null, el('th', {}, time.data.label), el('th', { class: 'n' }, 'Hours'))),
