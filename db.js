@@ -52,6 +52,17 @@ export function openDb(file) {
       PRIMARY KEY (org_id, id)
     );
 
+    -- My Calendar: which Deal Support was created from which calendar event, and events marked as
+    -- needing no Deal Support. Local only; nothing here is written to Salesforce.
+    CREATE TABLE IF NOT EXISTS event_marks (
+      org_id     TEXT NOT NULL,
+      event_id   TEXT NOT NULL,
+      ds_id      TEXT,
+      skipped    INTEGER NOT NULL DEFAULT 0,
+      updated_at TEXT NOT NULL,
+      PRIMARY KEY (org_id, event_id)
+    );
+
     -- Per-org settings learned from Salesforce, e.g. kind 'meta' (picklists, editable fields)
     -- and 'leadSe' (which field is the Lead SE field), so the app can start up offline.
     CREATE TABLE IF NOT EXISTS org_settings (
@@ -225,6 +236,32 @@ export function openDb(file) {
       const del = db.prepare('DELETE FROM hidden_records WHERE org_id = ? AND id = ?');
       for (const id of ids) del.run(orgId, id);
     }),
+
+    // Marks for these event Ids: { [eventId]: { dsId, skipped } }.
+    eventMarks(orgId, eventIds) {
+      const get = db.prepare('SELECT ds_id, skipped FROM event_marks WHERE org_id = ? AND event_id = ?');
+      const out = {};
+      for (const id of eventIds) {
+        const r = get.get(orgId, id);
+        if (r) out[id] = { dsId: r.ds_id, skipped: !!r.skipped };
+      }
+      return out;
+    },
+
+    linkEvent(orgId, eventId, dsId) {
+      db.prepare(`
+        INSERT INTO event_marks (org_id, event_id, ds_id, skipped, updated_at) VALUES (?, ?, ?, 0, ?)
+        ON CONFLICT (org_id, event_id) DO UPDATE SET ds_id = excluded.ds_id, skipped = 0, updated_at = excluded.updated_at
+      `).run(orgId, eventId, dsId, now());
+    },
+
+    // Mark (or unmark) an event as needing no Deal Support. Unmarking keeps any link.
+    skipEvent(orgId, eventId, skipped) {
+      db.prepare(`
+        INSERT INTO event_marks (org_id, event_id, ds_id, skipped, updated_at) VALUES (?, ?, NULL, ?, ?)
+        ON CONFLICT (org_id, event_id) DO UPDATE SET skipped = excluded.skipped, updated_at = excluded.updated_at
+      `).run(orgId, eventId, skipped ? 1 : 0, now());
+    },
 
     saveSetting(orgId, kind, value) {
       db.prepare(`

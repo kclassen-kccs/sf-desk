@@ -143,6 +143,50 @@
   .deals tbody tr { cursor: pointer; } .deals tbody tr:hover td { background: var(--bg); }
   .deals td.wrap { white-space: normal; min-width: 180px; }
   .pastdue { color: var(--err); }
+  /* ---------- my calendar ---------- */
+  .cal { --covered: #c9f2d6; --covered-line: #12924a; --open: #fdd3cf; --open-line: #d92d20; --skip: #eef0f3; --skip-line: #98a2b3; --hour: 48px;
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px 22px 40px; height: calc(100vh - 50px); overflow: auto; }
+  .cal.with-panel { grid-template-columns: minmax(0, 1fr) 400px; }
+  .cal-main { min-width: 0; }
+  .cal-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .cal-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; border-left: 3px solid; }
+  .week { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .week-row { display: grid; grid-template-columns: 52px repeat(var(--days), minmax(0, 1fr)); }
+  .week-row > div { border-left: 1px solid var(--line); min-width: 0; }
+  .week-row > div:first-child { border-left: 0; }
+  .day-head { padding: 6px 8px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .day-head b { display: block; font-size: 16px; color: var(--ink); }
+  .day-head.today b { color: var(--accent); }
+  .allday { padding: 3px; border-bottom: 1px solid var(--line); min-height: 26px; display: grid; gap: 3px; align-content: start; }
+  .gutter-label { font-size: 11px; color: var(--muted); padding: 4px 6px; text-align: right; }
+  .hours-col { position: relative; }
+  .hours-col .hl { position: absolute; left: 0; right: 0; border-top: 1px solid #f0f1f4; }
+  .hours-col .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid var(--accent); z-index: 2; }
+  .gutter .hl-label { position: absolute; right: 6px; font-size: 11px; color: var(--muted); transform: translateY(-50%); }
+  .ev { position: absolute; border-radius: 4px; padding: 2px 5px; font-size: 12px; line-height: 1.3; overflow: hidden; cursor: pointer;
+    border-left: 3px solid; text-align: left; font-family: inherit; color: var(--ink); min-height: 18px; }
+  .allday .ev { position: static; }
+  .ev.covered { background: var(--covered); border-color: var(--covered-line); }
+  .ev.open { background: var(--open); border-color: var(--open-line); }
+  .ev.skipped { background: var(--skip); border-color: var(--skip-line); color: var(--muted); }
+  .ev.sel { box-shadow: 0 0 0 2px var(--accent); z-index: 3; }
+  .ev .t { font-size: 11px; opacity: .8; }
+  .ev .s { font-weight: 600; overflow-wrap: anywhere; }
+  .cal-panel section { margin-bottom: 14px; }
+  .cal-panel .grid { grid-template-columns: 1fr; }
+  .cal-panel .desc { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 13px; background: var(--bg); border-radius: 6px; padding: 8px; }
+  .cal-panel dl { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; margin: 0 0 10px; font-size: 13px; }
+  .cal-panel dt { color: var(--muted); } .cal-panel dd { margin: 0; overflow-wrap: anywhere; }
+  .status-pill { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 10px; padding: 1px 9px; }
+  .status-pill.covered { background: var(--covered); color: #05603a; } .status-pill.open { background: var(--open); color: #912018; }
+  .status-pill.skipped { background: var(--skip); color: var(--muted); }
+  .opp-pick { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
+  .opp-pick button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 6px 8px; }
+  .opp-pick button:last-child { border-bottom: 0; }
+  .opp-pick button.on { background: var(--accent-soft); }
+  .opp-pick .m { color: var(--muted); font-size: 12px; }
+  .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  @media (max-width: 1000px) { .cal.with-panel { grid-template-columns: minmax(0, 1fr); } }
   @media (max-width: 1000px) {
     .tiles { grid-template-columns: repeat(2, 1fr); } .tile.hero { grid-column: 1 / -1; }
     .tiles.even { grid-template-columns: repeat(3, minmax(0, 1fr)); }
@@ -162,6 +206,7 @@
   <nav id="nav" hidden>
     <button id="navDash" onclick="showDashboard()">Dashboard</button>
     <button id="navTime" onclick="showTime()">My Time</button>
+    <button id="navCal" onclick="showCalendar()">My Calendar</button>
     <button id="navAccts" onclick="showMain()">Accounts</button>
   </nav>
   <span id="who"></span>
@@ -310,6 +355,7 @@ function setNav(which) {
   document.getElementById('nav').hidden = false;
   document.getElementById('navDash').classList.toggle('on', which === 'dash');
   document.getElementById('navTime').classList.toggle('on', which === 'time');
+  document.getElementById('navCal').classList.toggle('on', which === 'cal');
   document.getElementById('navAccts').classList.toggle('on', which === 'accts');
 }
 
@@ -753,18 +799,29 @@ function dsValue(f, n) {
   return n.value;
 }
 
-function dealSupportForm(o, close) {
+// opts.values prefills fields by name; opts.submit(fields) does the create instead of posting to `o`
+// (My Calendar uses both); opts.title replaces the heading.
+function dealSupportForm(o, close, opts = {}) {
   const fields = dsMeta.fields.filter((f) => f.createable);
   const inputs = new Map(fields.map((f) => [f, dsInput(f)]));
+  for (const [f, n] of inputs) {
+    const v = opts.values?.[f.name];
+    if (v == null || v === '') continue;
+    if (f.type === 'boolean') n.checked = !!v;
+    else if (f.type === 'multipicklist') for (const x of n.options) x.selected = String(v).split(';').includes(x.value);
+    else n.value = v;
+  }
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
     el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f));
   const required = fields.filter((f) => f.required);
   const optional = fields.filter((f) => !f.required);
   const create = el('button', { class: 'primary' }, `Create ${dsMeta.label}`);
+  // Optional fields open when prefilled, so what will be sent is visible.
+  const prefilled = optional.some((f) => opts.values?.[f.name] != null && opts.values[f.name] !== '');
   const box = el('section', {},
-    el('h3', {}, `New ${dsMeta.label} for ${o.Name}`),
+    el('h3', {}, opts.title || `New ${dsMeta.label} for ${o.Name}`),
     el('div', { class: 'grid' }, required.map(cell)),
-    optional.length ? el('details', { class: 'optional', open: required.length === 0 },
+    optional.length ? el('details', { class: 'optional', open: required.length === 0 || prefilled },
       el('summary', {}, `More fields (${optional.length})`), el('div', { class: 'grid' }, optional.map(cell))) : null,
     el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
   );
@@ -778,6 +835,7 @@ function dealSupportForm(o, close) {
     if (missing.length) return toast('Required: ' + missing.map((f) => f.label).join(', '), 'err');
     create.disabled = true;
     try {
+      if (opts.submit) return await opts.submit(body);
       const rec = await api(`/opportunities/${o.Id}/deal-supports`, { method: 'POST', body: { fields: body } });
       toast(`Created ${dsMeta.label}${rec?.Name ? ` "${rec.Name}"` : ''} in Salesforce`, 'ok');
       loadDealSupports(o);
@@ -1339,6 +1397,267 @@ function renderTimeList(all, today) {
         showRole ? el('th', {}, 'Role') : null, el('th', {}, time.data.label), el('th', { class: 'n' }, 'Hours'))),
       tbody)),
   );
+}
+
+// ---------- My Calendar ----------
+// Your Salesforce calendar (Events you own), a week at a time. Events covered by a Deal Support are
+// green, the rest red (grey once marked "No Deal Support needed"). Pick an event to create a Deal
+// Support from it: choose the opportunity, and the form is prefilled from the event.
+const cal = { week: null, data: null, sel: null, loading: 0 };
+const evTime = (s) => new Date(String(s).replace(/\+0000$/, 'Z'));
+const hhmm = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const evStatus = (e) => e.supports.length ? 'covered' : e.skipped ? 'skipped' : 'open';
+const STATUS_TEXT = { covered: 'Has a Deal Support', open: 'No Deal Support', skipped: 'No Deal Support needed' };
+const localDate = (s) => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+
+function showCalendar() {
+  setNav('cal');
+  current = null;
+  cal.week ||= mondayOf(todayStr());
+  document.getElementById('app').replaceChildren(el('div', { class: 'cal', id: 'cal' },
+    el('div', { class: 'cal-main' },
+      el('div', { class: 'dash-head' },
+        el('h2', {}, 'My Calendar'),
+        el('span', { class: 'fynav' },
+          el('button', { onclick: () => moveWeek(-7), title: 'Previous week', 'aria-label': 'Previous week' }, '‹'),
+          el('span', { id: 'calWeek' }),
+          el('button', { onclick: () => moveWeek(7), title: 'Next week', 'aria-label': 'Next week' }, '›')),
+        el('button', { onclick: () => { cal.week = mondayOf(todayStr()); loadCalendar(); } }, 'This week'),
+        el('span', { class: 'cal-legend' },
+          el('span', {}, el('i', { style: 'background:var(--covered);border-color:var(--covered-line)' }), 'Has a Deal Support'),
+          el('span', {}, el('i', { style: 'background:var(--open);border-color:var(--open-line)' }), 'No Deal Support'),
+          el('span', {}, el('i', { style: 'background:var(--skip);border-color:var(--skip-line)' }), 'Not needed')),
+        el('span', { class: 'spacer', style: 'flex:1' }),
+        el('button', { onclick: loadCalendar }, 'Reload'),
+      ),
+      el('div', { class: 'sub', id: 'calSub' }, 'Loading…'),
+      el('div', { id: 'calBody' }),
+    ),
+    el('div', { class: 'cal-panel', id: 'calPanel', hidden: true }),
+  ));
+  loadCalendar();
+}
+
+function moveWeek(days) { cal.week = addDays(cal.week, days); cal.sel = null; loadCalendar(); }
+
+async function loadCalendar() {
+  const week = cal.week, ticket = ++cal.loading;
+  const end = addDays(week, 7);
+  document.getElementById('calWeek').textContent = `${monDay(week)} – ${monDay(addDays(week, 6))}, ${addDays(week, 6).slice(0, 4)}`;
+  const params = new URLSearchParams({ from: localDate(week).toISOString(), to: localDate(end).toISOString(),
+    d0: week, d1: addDays(week, 6), tz: new Date().getTimezoneOffset() });
+  try {
+    const [data] = await Promise.all([api('/calendar?' + params), dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; })]);
+    if (ticket !== cal.loading || !document.getElementById('calBody')) return;
+    cal.data = data;
+    renderCalendar();
+  } catch (e) {
+    if (ticket !== cal.loading) return;
+    const sub = document.getElementById('calSub');
+    if (sub) sub.textContent = e.message;
+    document.getElementById('calBody')?.replaceChildren();
+  }
+}
+
+function renderCalendar() {
+  const { events } = cal.data;
+  const by = { covered: 0, open: 0, skipped: 0 };
+  for (const e of events) by[evStatus(e)]++;
+  document.getElementById('calSub').textContent = events.length
+    ? `${plural(events.length, 'event')} this week · ${by.covered} with a ${dsMeta.label} · ${by.open} without` +
+      (by.skipped ? ` · ${by.skipped} marked not needed` : '') + ' · Click an event to see it or create a ' + dsMeta.label
+    : 'No Salesforce events this week. If your Outlook or Google calendar reaches Salesforce through Einstein Activity Capture, ' +
+      'those meetings may not be stored as Salesforce events, so they can\'t be shown here.';
+
+  // Monday to Friday, plus the weekend days that have something on them.
+  const days = Array.from({ length: 7 }, (_, i) => addDays(cal.week, i))
+    .filter((d, i) => i < 5 || events.some((e) => e.date === d));
+  const timed = events.filter((e) => !e.allDay), allDay = events.filter((e) => e.allDay);
+  // Hours shown: 8:00 to 18:00, widened to fit the week's events.
+  let h0 = 8, h1 = 18;
+  for (const e of timed) {
+    const s = evTime(e.start), en = evTime(e.end);
+    h0 = Math.min(h0, s.getHours());
+    h1 = Math.max(h1, en.getDate() !== s.getDate() ? 24 : Math.ceil(en.getHours() + en.getMinutes() / 60));
+  }
+  const hourPx = 48, height = (h1 - h0) * hourPx, today = todayStr();
+  const evBox = (e) => {
+    const st = evStatus(e);
+    const n = el('button', { class: `ev ${st}${cal.sel === e.id ? ' sel' : ''}`, title: `${e.subject} · ${STATUS_TEXT[st]}`,
+      onclick: () => selectEvent(e.id) },
+      el('div', { class: 's' }, e.subject),
+      e.allDay ? null : el('div', { class: 't' }, `${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`));
+    return n;
+  };
+  const cols = days.map((d) => {
+    const col = el('div', { class: 'hours-col', style: `height:${height}px` });
+    for (let h = h0; h < h1; h++) col.append(el('div', { class: 'hl', style: `top:${(h - h0) * hourPx}px` }));
+    if (d === today) {
+      const now = new Date(), m = (now.getHours() - h0) * 60 + now.getMinutes();
+      if (m >= 0 && m <= (h1 - h0) * 60) col.append(el('div', { class: 'now-line', style: `top:${m / 60 * hourPx}px` }));
+    }
+    // Lay overlapping events side by side: group events that overlap, then give each the first free lane.
+    const list = timed.filter((e) => e.date === d).map((e) => {
+      const s = evTime(e.start), en = evTime(e.end);
+      const a = (s.getHours() - h0) * 60 + s.getMinutes();
+      const b = en.getDate() !== s.getDate() ? (h1 - h0) * 60 : (en.getHours() - h0) * 60 + en.getMinutes();
+      return { e, a, b: Math.max(b, a + 20) };
+    }).sort((x, y) => x.a - y.a || y.b - x.b);
+    let group = [], groupEnd = -1;
+    const flush = () => {
+      const lanes = [];
+      for (const it of group) {
+        let lane = lanes.findIndex((end) => end <= it.a);
+        if (lane < 0) { lane = lanes.length; lanes.push(0); }
+        lanes[lane] = it.b; it.lane = lane;
+      }
+      for (const it of group) {
+        const w = 100 / lanes.length;
+        const n = evBox(it.e);
+        n.style.cssText = `top:${it.a / 60 * hourPx}px;height:${(it.b - it.a) / 60 * hourPx - 2}px;left:calc(${it.lane * w}% + 2px);width:calc(${w}% - 4px)`;
+        col.append(n);
+      }
+      group = []; groupEnd = -1;
+    };
+    for (const it of list) {
+      if (group.length && it.a >= groupEnd) flush();
+      group.push(it); groupEnd = Math.max(groupEnd, it.b);
+    }
+    flush();
+    return col;
+  });
+  const gutter = el('div', { class: 'hours-col gutter', style: `height:${height}px` });
+  for (let h = h0 + 1; h < h1; h++) {
+    gutter.append(el('div', { class: 'hl-label', style: `top:${(h - h0) * hourPx}px` },
+      new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: 'numeric' })));
+  }
+  const dayName = (d) => localDate(d).toLocaleDateString([], { weekday: 'short' });
+  document.getElementById('calBody').replaceChildren(el('div', { class: 'week', style: `--days:${days.length}` },
+    el('div', { class: 'week-row' }, el('div', { class: 'day-head' }),
+      days.map((d) => el('div', { class: 'day-head' + (d === today ? ' today' : '') }, dayName(d), el('b', {}, +d.slice(8, 10))))),
+    allDay.length ? el('div', { class: 'week-row' }, el('div', { class: 'gutter-label' }, 'All day'),
+      days.map((d) => el('div', { class: 'allday' }, allDay.filter((e) => e.date === d).map(evBox)))) : null,
+    el('div', { class: 'week-row' }, gutter, cols),
+  ));
+  renderEventPanel();
+}
+
+function selectEvent(id) {
+  cal.sel = cal.sel === id ? null : id;
+  renderCalendar();
+}
+
+// Values for the new Deal Support form, taken from the event.
+function eventPrefill(e) {
+  const p = cal.data.prefill, v = {};
+  if (p.nameField) v[p.nameField.name] = e.subject.slice(0, p.nameField.length || 80);
+  if (p.dateField) {
+    v[p.dateField.name] = p.dateField.type === 'datetime' && !e.allDay
+      ? `${e.date}T${hhmm24(evTime(e.start))}` : e.date;
+  }
+  const mins = e.minutes ?? (e.allDay ? null : (evTime(e.end) - evTime(e.start)) / 60000);
+  if (p.hoursField && mins != null && !e.allDay) {
+    const hours = Math.round(mins / 60 * 100) / 100;
+    if (p.hoursField.unit === 'minutes') v[p.hoursField.name] = Math.round(mins);
+    else if (p.hoursField.unit === 'hours') v[p.hoursField.name] = hours;
+    else if (p.hoursField.picklist) {
+      const opt = p.hoursField.picklist.find((o) => Math.abs(parseDuration(o) - hours) < 0.01);
+      if (opt) v[p.hoursField.name] = opt;
+    } else v[p.hoursField.name] = String(hours);
+  }
+  if (p.descField && e.description) v[p.descField.name] = e.description.slice(0, p.descField.length || 32000);
+  if (p.userField?.onForm) v[p.userField.name] = me.user.id;
+  return v;
+}
+const hhmm24 = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+
+function renderEventPanel() {
+  const panel = document.getElementById('calPanel');
+  const e = cal.data?.events.find((x) => x.id === cal.sel);
+  document.getElementById('cal').classList.toggle('with-panel', !!e);
+  panel.hidden = !e;
+  if (!e) return panel.replaceChildren();
+  const st = evStatus(e);
+  const when = e.allDay ? `${localDate(e.date).toLocaleDateString()} (all day)`
+    : `${evTime(e.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`;
+  const sfLink = (id, text) => el('a', { href: `${me.instanceUrl}/${id}`, target: '_blank', rel: 'noopener' }, text);
+  const skip = el('button', { onclick: async () => {
+    try {
+      await api(`/calendar/events/${e.id}/skip`, { method: 'POST', body: { skip: !e.skipped } });
+      e.skipped = !e.skipped;
+      renderCalendar();
+    } catch (err) { toast(err.message, 'err'); }
+  } }, e.skipped ? 'Needs a Deal Support after all' : 'No Deal Support needed');
+  const formBox = el('div');
+  const create = el('button', { class: 'primary', onclick: () => { create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
+    st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
+  if (!dsMeta.canCreate) create.hidden = true;
+
+  panel.replaceChildren(
+    el('section', {},
+      el('h3', {}, e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), 'aria-label': 'Close' }, '✕')),
+      el('div', { style: 'margin:-6px 0 10px' }, el('span', { class: 'status-pill ' + st }, STATUS_TEXT[st])),
+      el('dl', {},
+        el('dt', {}, 'When'), el('dd', {}, when),
+        e.location ? [el('dt', {}, 'Where'), el('dd', {}, e.location)] : null,
+        e.who ? [el('dt', {}, 'With'), el('dd', {}, e.who)] : null,
+        e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
+        e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
+          sfLink(r.Id, r.Name || r.Id), r.oppName ? ` · ${r.oppName}` : '',
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, with the same opportunity or name' }, 'matched') : null)))] : null,
+      ),
+      e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
+      el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, sfLink(e.id, 'Open event in Salesforce ↗')),
+    ),
+    formBox,
+  );
+}
+
+// The "create from event" form: pick an opportunity, then the Deal Support fields, prefilled from the event.
+function createFromEvent(e, close) {
+  let picked = e.what?.type === 'Opportunity' ? { Id: e.what.id, Name: e.what.name } : null;
+  const search = el('input', { type: 'search', placeholder: 'Search opportunities or accounts…', 'aria-label': 'Search opportunities' });
+  const list = el('div', { class: 'opp-pick' }, el('div', { class: 'empty' }, 'Loading…'));
+  const chosen = el('div', { class: 'sub', style: 'margin:8px 0 0' });
+  const showChosen = () => { chosen.textContent = picked ? `Opportunity: ${picked.Name}${picked.Account?.Name ? ` (${picked.Account.Name})` : ''}` : 'Pick an opportunity.'; };
+  let results = [];
+  const renderList = () => {
+    const rows = picked && !results.some((o) => o.Id === picked.Id) ? [picked, ...results] : results;
+    list.replaceChildren(...(rows.length ? rows.map((o) => el('button', { class: picked?.Id === o.Id ? 'on' : null,
+      onclick: () => { picked = o; showChosen(); renderList(); } },
+      el('div', {}, o.Name), el('div', { class: 'm' }, [o.Account?.Name, o.StageName, o.CloseDate && `closes ${o.CloseDate}`].filter(Boolean).join(' · '))))
+      : [el('div', { class: 'empty' }, 'No opportunities found.')]));
+  };
+  let ticket = 0;
+  const load = async () => {
+    const q = search.value.trim(), my = ++ticket;
+    const params = new URLSearchParams();
+    if (q) params.set('q', q);
+    else if (e.what?.type === 'Account') params.set('account', e.what.id);
+    try {
+      const r = await api('/opportunities/search?' + params);
+      if (my === ticket) { results = r; renderList(); }
+    } catch (err) { list.replaceChildren(el('div', { class: 'empty' }, err.message)); }
+  };
+  let timer;
+  search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 300); });
+  showChosen();
+  load();
+
+  const form = dealSupportForm(null, close, {
+    title: `New ${dsMeta.label} from this event`,
+    values: eventPrefill(e),
+    submit: async (fields) => {
+      if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
+      const rec = await api(`/calendar/events/${e.id}/deal-support`, { method: 'POST', body: { opportunityId: picked.Id, fields } });
+      toast(`Created ${dsMeta.label}${rec?.Name ? ` "${rec.Name}"` : ''} on ${picked.Name}`, 'ok');
+      await loadCalendar();
+    },
+  });
+  // The opportunity picker goes at the top of the form.
+  form.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
+    el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), search)), list, chosen));
+  return form;
 }
 
 let resizeTimer;

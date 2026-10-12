@@ -631,21 +631,46 @@ api.get('/opportunities/:id/deal-supports', wrap(async (req, res) => {
   res.json(await listDealSupports(req, meta, id));
 }));
 
-api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
-  const id = sfId(req.params.id);
-  const meta = await dealSupportMeta(req);
+// Create a Deal Support on an opportunity from the form's fields. `extra` holds fields the server
+// itself sets (e.g. the Assigned SE from My Calendar), used only when the form didn't set them.
+async function createDealSupport(req, meta, oppId, fields, extra = {}) {
   if (!meta.canCreate) throw new HttpError(403, `Your Salesforce user can't create ${meta.labelPlural}.`);
   const byName = new Map(meta.fields.filter((f) => f.createable).map((f) => [f.name, f]));
-  const body = { [meta.oppField]: id };
-  for (const [k, v] of Object.entries(req.body?.fields || {})) {
+  const body = { [meta.oppField]: oppId };
+  for (const [k, v] of Object.entries(fields || {})) {
     if (!byName.has(k)) throw new HttpError(400, `Field not settable in this app: ${k}`);
     if (v !== '' && v !== null && v !== undefined) body[k] = v;
   }
+  for (const [k, v] of Object.entries(extra)) if (body[k] === undefined) body[k] = v;
   const missing = [...byName.values()].filter((f) => f.required && body[f.name] === undefined);
   if (missing.length) throw new HttpError(400, 'Required: ' + missing.map((f) => f.label).join(', '));
   const created = await sf(req, 'POST', `/services/data/${API}/sobjects/${meta.object}`, { body });
-  const [rec] = await listDealSupports(req, meta, id, ` AND Id = '${sfId(created.id)}'`);
-  res.status(201).json(rec);
+  const [rec] = await listDealSupports(req, meta, oppId, ` AND Id = '${sfId(created.id)}'`);
+  return rec || { Id: created.id };
+}
+
+api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  res.status(201).json(await createDealSupport(req, meta, id, req.body?.fields));
+}));
+
+// Opportunities to attach a Deal Support to: by name or account name with q, an account's with
+// account, else the open ones where I'm Lead SE (or recently modified ones if there's no Lead SE field).
+api.get('/opportunities/search', wrap(async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 80);
+  const account = req.query.account ? sfId(req.query.account) : '';
+  const fields = 'Id, Name, AccountId, Account.Name, StageName, CloseDate, IsClosed';
+  let where, order = 'IsClosed ASC, CloseDate DESC';
+  if (q) where = `(Name LIKE '%${soqlLike(q)}%' OR Account.Name LIKE '%${soqlLike(q)}%')`;
+  else if (account) where = `AccountId = '${account}'`;
+  else {
+    const lse = await knownLeadSeFields(req).catch(() => ({}));
+    if (lse.Opportunity) where = `IsClosed = false AND ${leadSeIsMe(req, lse.Opportunity)}`;
+    else if (lse.Account) where = `IsClosed = false AND ${leadSeIsMe(req, { ...lse.Account, name: 'Account.' + lse.Account.name })}`;
+    else { where = 'IsClosed = false'; order = 'LastModifiedDate DESC'; }
+  }
+  res.json(await query(req, `SELECT ${fields} FROM Opportunity WHERE ${where} ORDER BY ${order} LIMIT 50`, 50));
 }));
 
 // ---------- Pipeline dashboard ----------
@@ -804,6 +829,177 @@ api.get('/my-time', wrap(async (req, res) => {
     return saved && { data: saved };
   }));
 }));
+
+// ---------- My Calendar ----------
+
+// Your Salesforce calendar (Event records you own; invitees get their own copy) for a date range,
+// each marked as covered by a Deal Support or not. An event is covered when a Deal Support was
+// created from it here (remembered in the local database), or when one of yours has the same
+// activity date and either the event's opportunity or the event's subject as its name.
+
+const EVENT_READ = ['Id', 'Subject', 'StartDateTime', 'EndDateTime', 'IsAllDayEvent', 'ActivityDate', 'DurationInMinutes',
+  'Location', 'Description', 'WhatId', 'What.Name', 'What.Type', 'Who.Name', 'ShowAs'];
+
+// Which Deal Support fields a new one from an event fills in: name, date, duration, details and
+// the person (Assigned SE). Picked from the fields on the create form; the person may be set by
+// the server even when the layout leaves it off the form.
+async function calendarMeta(req) {
+  if (req.session.calendarMeta) return req.session.calendarMeta;
+  const ds = await dealSupportMeta(req);
+  const tm = await timeMeta(req).catch(() => null);
+  const d = await sf(req, 'GET', `/services/data/${API}/sobjects/${ds.object}/describe`);
+  const desc = new Map(d.fields.map((f) => [f.name, f]));
+  const form = ds.fields.filter((f) => f.createable);
+  const text = (f) => `${f.label} ${f.name}`;
+  const best = (list, score) => list.map((f) => ({ f, s: score(f) })).filter((x) => x.s > 0)
+    .sort((a, b) => b.s - a.s)[0]?.f || null;
+
+  const nameField = form.find((f) => f.name === 'Name') || null;
+  const dateField = best(form.filter((f) => f.type === 'date' || f.type === 'datetime'), (f) =>
+    f.name === 'Date_of_Sales_Activity__c' ? 10
+      : tm?.dateFields[0]?.name === f.name ? 9
+      : /activity|meeting|event/i.test(text(f)) && /date/i.test(text(f)) ? 8
+      : /date/i.test(text(f)) && f.type === 'date' ? 3 : 0);
+  const hoursField = best(form.filter((f) => ['double', 'int', 'picklist', 'string'].includes(f.type)), (f) =>
+    f.name === 'Meeting_Duration__c' ? 10
+      : /meeting|customer facing/i.test(text(f)) && /duration|time|hour|hrs/i.test(text(f)) ? 8
+      : /duration/i.test(text(f)) ? 6 : 0);
+  const descField = best(form.filter((f) => f.type === 'textarea'), (f) =>
+    (/description|details?|notes?|summary|agenda|comments?|activity/i.test(text(f)) ? 10 : 1) + Math.min(f.length || 0, 131072) / 131072);
+  // The person: the "mine" field from My Time (Assigned SE), if it is a creatable user lookup.
+  const userName = tm?.userFields?.find((f) => f.name !== 'OwnerId' && f.name !== 'CreatedById')?.name;
+  const userDesc = userName && desc.get(userName);
+  const userField = userDesc?.createable && userDesc.referenceTo?.includes('User') ? userName : null;
+
+  const meta = {
+    nameField: nameField && { name: nameField.name, length: nameField.length },
+    dateField: dateField && { name: dateField.name, type: dateField.type },
+    hoursField: hoursField && { name: hoursField.name, type: hoursField.type, picklist: hoursField.picklist,
+      unit: ['double', 'int'].includes(hoursField.type) ? timeUnit(desc.get(hoursField.name) || hoursField) : 'text' },
+    descField: descField && { name: descField.name, length: descField.length },
+    userField: userField && { name: userField, label: userDesc.label.replace(/\s+ID$/, ''), onForm: form.some((f) => f.name === userField) },
+    // Date and person fields used to find my existing Deal Supports for an event.
+    matchDate: (dateField || tm?.dateFields[0])?.name || null,
+    matchUser: userField || tm?.userFields?.[0]?.name || null,
+  };
+  req.session.calendarMeta = meta;
+  return meta;
+}
+
+const isoDateTime = (v) => {
+  const s = String(v || '');
+  if (!/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,3})?Z$/.test(s) || isNaN(Date.parse(s))) {
+    throw new HttpError(400, 'Invalid date-time (expected ISO format in UTC)');
+  }
+  return s.replace(/\.\d+Z$/, 'Z');
+};
+const isoDate = (v) => {
+  const s = String(v || '');
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s)) throw new HttpError(400, 'Invalid date (expected YYYY-MM-DD)');
+  return s;
+};
+
+// My Deal Supports dated within [d0, d1], for matching events to them.
+async function myDealSupportsBetween(req, ds, cm, d0, d1) {
+  if (!cm.matchDate) return [];
+  const me = sfId(req.session.sf.user.id);
+  const opp = (await timeMeta(req).catch(() => null))?.oppRel;
+  const fields = ['Id', 'Name', cm.matchDate, ds.oppField, ...(opp ? [`${opp}.Name`] : [])];
+  const dateType = cm.dateField?.name === cm.matchDate ? cm.dateField.type : 'date';
+  const range = dateType === 'datetime'
+    ? `${cm.matchDate} >= ${d0}T00:00:00Z AND ${cm.matchDate} <= ${d1}T23:59:59Z`
+    : `${cm.matchDate} >= ${d0} AND ${cm.matchDate} <= ${d1}`;
+  const who = [cm.matchUser && `${cm.matchUser} = '${me}'`, `CreatedById = '${me}'`].filter(Boolean);
+  const recs = await query(req, `SELECT ${[...new Set(fields)].join(', ')} FROM ${ds.object} ` +
+    `WHERE ${range} AND (${[...new Set(who)].join(' OR ')})`, 2000);
+  return recs.map((r) => ({ Id: r.Id, Name: r.Name, date: String(r[cm.matchDate] || '').slice(0, 10),
+    oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null }));
+}
+
+// Deal Supports by Id (to check the linked ones still exist), with their opportunity.
+async function dealSupportsById(req, ds, ids) {
+  if (!ids.length) return [];
+  const opp = (await timeMeta(req).catch(() => null))?.oppRel;
+  const recs = await query(req, `SELECT Id, Name, ${ds.oppField}${opp ? `, ${opp}.Name` : ''} FROM ${ds.object} ` +
+    `WHERE Id IN (${ids.map((id) => `'${sfId(id)}'`).join(', ')})`, 500);
+  return recs.map((r) => ({ Id: r.Id, Name: r.Name, oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null }));
+}
+
+// The local calendar date an event falls on, given the page's UTC offset in minutes (from getTimezoneOffset).
+function eventDate(e, tzOffset) {
+  if (e.IsAllDayEvent) return e.ActivityDate;
+  const t = Date.parse(String(e.StartDateTime).replace(/\+0000$/, 'Z')) - tzOffset * 60_000;
+  return new Date(t).toISOString().slice(0, 10);
+}
+
+// from/to: the range's start and end as UTC instants; d0/d1: its first and last local dates.
+api.get('/calendar', wrap(async (req, res) => {
+  const from = isoDateTime(req.query.from), to = isoDateTime(req.query.to);
+  const d0 = isoDate(req.query.d0), d1 = isoDate(req.query.d1);
+  const tz = Math.max(-840, Math.min(840, Number(req.query.tz) || 0));
+  const kind = `calendar:${d0}:${d1}`;
+  res.json(await withCacheFallback(req, res, async () => {
+    const me = sfId(req.session.sf.user.id);
+    const ds = await dealSupportMeta(req);
+    const cm = await calendarMeta(req);
+    const where = `OwnerId = '${me}' AND IsRecurrence = false AND (` +
+      `(IsAllDayEvent = false AND StartDateTime < ${to} AND EndDateTime > ${from}) OR ` +
+      `(IsAllDayEvent = true AND ActivityDate >= ${d0} AND ActivityDate <= ${d1}))`;
+    const events = await query(req, `SELECT ${EVENT_READ.join(', ')} FROM Event WHERE ${where} ORDER BY StartDateTime ASC`, 1000);
+
+    const marks = store.eventMarks(orgOf(req), events.map((e) => e.Id));
+    const linkedIds = [...new Set(Object.values(marks).map((m) => m.dsId).filter(Boolean))];
+    const [linked, mine] = await Promise.all([dealSupportsById(req, ds, linkedIds), myDealSupportsBetween(req, ds, cm, d0, d1)]);
+    const linkedById = new Map(linked.map((r) => [r.Id, r]));
+    const norm = (s) => String(s || '').trim().toLowerCase();
+
+    const out = events.map((e) => {
+      const date = eventDate(e, tz);
+      const oppId = e.What?.Type === 'Opportunity' ? e.WhatId : null;
+      const m = marks[e.Id];
+      const supports = [];
+      if (m?.dsId && linkedById.has(m.dsId)) supports.push({ ...linkedById.get(m.dsId), how: 'created' });
+      for (const r of mine) {
+        if (r.date !== date || supports.some((x) => x.Id === r.Id)) continue;
+        if ((oppId && r.oppId === oppId) || (e.Subject && norm(r.Name) === norm(e.Subject))) supports.push({ ...r, how: 'matched' });
+      }
+      return {
+        id: e.Id, subject: e.Subject || '(no subject)', start: e.StartDateTime, end: e.EndDateTime,
+        allDay: !!e.IsAllDayEvent, date, minutes: e.DurationInMinutes ?? null, location: e.Location || '',
+        description: e.Description || '', who: e.Who?.Name || '', showAs: e.ShowAs || '',
+        what: e.WhatId ? { id: e.WhatId, name: e.What?.Name || '', type: e.What?.Type || '' } : null,
+        supports, skipped: !!m?.skipped,
+      };
+    });
+    const data = { events: out, prefill: cm, dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } };
+    store.saveSetting(orgOf(req), kind, data);
+    return data;
+  }, () => {
+    const saved = store.getSetting(orgOf(req), kind);
+    return saved && { data: saved };
+  }));
+}));
+
+// Create a Deal Support from an event, on the opportunity the page picked, and remember the link.
+api.post('/calendar/events/:id/deal-support', wrap(async (req, res) => {
+  const eventId = sfId(req.params.id);
+  const oppId = sfId(req.body?.opportunityId);
+  const me = sfId(req.session.sf.user.id);
+  const [ev] = await query(req, `SELECT Id FROM Event WHERE Id = '${eventId}' AND OwnerId = '${me}'`);
+  if (!ev) throw new HttpError(404, 'That event is not on your calendar.');
+  const ds = await dealSupportMeta(req);
+  const cm = await calendarMeta(req);
+  const extra = cm.userField && !cm.userField.onForm ? { [cm.userField.name]: me } : {};
+  const rec = await createDealSupport(req, ds, oppId, req.body?.fields, extra);
+  store.linkEvent(orgOf(req), eventId, rec.Id);
+  res.status(201).json(rec);
+}));
+
+// Mark an event as needing no Deal Support (skip: true), or undo that.
+api.post('/calendar/events/:id/skip', (req, res) => {
+  store.skipEvent(orgOf(req), sfId(req.params.id), !!req.body?.skip);
+  res.json({ ok: true });
+});
 
 // Hidden records: local to this machine, never written to Salesforce. The page filters its
 // lists with these ids and can show them again with "Show hidden".
