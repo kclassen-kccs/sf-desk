@@ -558,7 +558,9 @@ function renderAccountDealSupports(data, fyStart) {
   const showActivity = !!data.activityLabel;
   // The opportunity only when it tells rows apart: not when they're all on one, nor when the name already says it.
   const opps = new Set(list.map((r) => r.oppId));
-  const showOpp = opps.size > 1 && list.some((r) => r.oppName && !String(r.Name || '').toLowerCase().includes(r.oppName.toLowerCase()));
+  // Grouped by opportunity (the default), each group's subtotal names it, so the column isn't needed.
+  const bySe = acctDsGroup && !!data.whoLabel;
+  const showOpp = bySe && opps.size > 1 && list.some((r) => r.oppName && !String(r.Name || '').toLowerCase().includes(r.oppName.toLowerCase()));
   // The record number only (e.g. "DR-012345" -> "012345") keeps the first column narrow; the full name is its tooltip.
   const num = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
   const ncols = 3 + showActivity + showOpp + !!data.whoLabel + showRole;
@@ -574,16 +576,16 @@ function renderAccountDealSupports(data, fyStart) {
     el('td', { colspan: ncols - 1 }, `${text} (${plural(rows.length, data.label.toLowerCase(), data.labelPlural.toLowerCase())})`),
     el('td', { class: 'n' }, fmtH(rows.reduce((s, r) => s + toHours(r.hours), 0))));
   const tbody = el('tbody');
-  if (acctDsGroup && data.whoLabel) {
-    // One block per Assigned SE (A–Z), each ending in its subtotal.
+  {
+    // One block per opportunity (or per Assigned SE when ticked), A–Z, each ending in its subtotal.
     const groups = new Map();
     for (const r of list) {
-      const k = r.who || '(none)';
+      const k = (bySe ? r.who : r.oppName) || '(none)';
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(r);
     }
-    for (const [who, rows] of [...groups].sort((x, y) => x[0].localeCompare(y[0]))) tbody.append(...rows.map(row), sumRow(`Subtotal ${who}`, rows, 'subtotal'));
-  } else tbody.append(...list.map(row));
+    for (const [k, rows] of [...groups].sort((x, y) => x[0].localeCompare(y[0]))) tbody.append(...rows.map(row), sumRow(`Subtotal ${k}`, rows, 'subtotal'));
+  }
   if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: ncols, class: 'empty' }, `No ${data.labelPlural.toLowerCase()} in this period.`)));
   const group = data.whoLabel ? el('label', { class: 'selbar' }, el('input', { type: 'checkbox', checked: acctDsGroup,
     onchange: (e) => { acctDsGroup = e.target.checked; renderAccountDealSupports(data, fyStart); } }), `Group by ${data.whoLabel}`) : null;
