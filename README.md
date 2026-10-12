@@ -14,13 +14,18 @@ your Salesforce user is already allowed to, and it only writes when you click **
   the last 30 days, this fiscal quarter and this fiscal year, hours per week for the last 13 weeks, and hours
   per opportunity for any of those periods. Click a tile, week or opportunity to list its activities. Weeks
   start on Monday
+- **Export to Excel** on the Pipeline deal list and the My Time activity list downloads the rows shown (after
+  filters, hidden records and any clicked bar, tile or opportunity) as an .xlsx with typed dates, amounts and
+  hours, a total row and a link to each record
 - **My Calendar** shows your Salesforce calendar (the Event records you own) a week at a time. Events with a
   Deal Support are green, events without one are red, and ones you mark **No Deal Support needed** turn grey.
   Click an event to see its details, then **Create Deal Support**: pick the opportunity (the event's own one is
   preselected when it has one) and the form is prefilled from the event: name from the subject, activity date
   from the start, meeting duration in hours, the event description in the details field, and you as the
   Assigned SE. An event counts as covered when a Deal Support was created from it here (remembered in the local
-  database), or when one of yours has the same activity date and the event's opportunity or subject. Meetings
+  database), or when one of yours has the same activity date and the event's opportunity, account or subject.
+  The same meeting logged twice at the same time (e.g. by Outreach, once on the account and once on the
+  opportunity) is shown once. Meetings
   that reach Salesforce only through Einstein Activity Capture aren't stored as Events, so they can't be shown
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
