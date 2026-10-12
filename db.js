@@ -21,7 +21,6 @@ export function openDb(file) {
       org_id        TEXT NOT NULL,
       id            TEXT NOT NULL,
       name          TEXT,
-      owner_id      TEXT,
       last_modified TEXT,
       data          TEXT NOT NULL,
       synced_at     TEXT NOT NULL,
@@ -41,21 +40,24 @@ export function openDb(file) {
     );
     CREATE INDEX IF NOT EXISTS opportunities_by_account ON opportunities (org_id, account_id);
 
-    CREATE TABLE IF NOT EXISTS org_meta (
-      org_id    TEXT PRIMARY KEY,
+    -- Per-org settings learned from Salesforce, e.g. kind 'meta' (picklists, editable fields)
+    -- and 'leadSe' (which field is the Lead SE field), so the app can start up offline.
+    CREATE TABLE IF NOT EXISTS org_settings (
+      org_id    TEXT NOT NULL,
+      kind      TEXT NOT NULL,
       data      TEXT NOT NULL,
-      synced_at TEXT NOT NULL
+      synced_at TEXT NOT NULL,
+      PRIMARY KEY (org_id, kind)
     );
   `);
 
   const now = () => new Date().toISOString();
 
   const upsertAccount = db.prepare(`
-    INSERT INTO accounts (org_id, id, name, owner_id, last_modified, data, synced_at)
-    VALUES (@org_id, @id, @name, @owner_id, @last_modified, @data, @synced_at)
+    INSERT INTO accounts (org_id, id, name, last_modified, data, synced_at)
+    VALUES (@org_id, @id, @name, @last_modified, @data, @synced_at)
     ON CONFLICT (org_id, id) DO UPDATE SET
       name = excluded.name,
-      owner_id = excluded.owner_id,
       last_modified = excluded.last_modified,
       data = excluded.data,
       synced_at = excluded.synced_at
@@ -84,7 +86,6 @@ export function openDb(file) {
         org_id: orgId,
         id: merged.Id,
         name: merged.Name ?? null,
-        owner_id: merged.OwnerId ?? null,
         last_modified: merged.LastModifiedDate ?? null,
         data: JSON.stringify(merged),
         synced_at: now(),
@@ -121,14 +122,28 @@ export function openDb(file) {
       saveOpportunities(orgId, opportunities);
     }),
 
-    listAccounts(orgId, { q = '', ownerId = null, limit = 200 } = {}) {
+    // `leadSe`, when given, keeps only accounts where the user is Lead SE: on the account itself
+    // or on any of its saved opportunities. Each side is { field, value } or null; field names
+    // come from the org's describe, and are compared like SOQL does (case-insensitively).
+    listAccounts(orgId, { q = '', leadSe = null, limit = 200 } = {}) {
+      const acct = leadSe?.account, opp = leadSe?.opportunity;
       const rows = db.prepare(`
-        SELECT data, synced_at FROM accounts
+        SELECT data, synced_at FROM accounts a
         WHERE org_id = @orgId
           AND (@q = '' OR instr(lower(name), lower(@q)) > 0)
-          AND (@ownerId IS NULL OR owner_id = @ownerId)
+          AND (NOT @filter
+            OR (@acctPath IS NOT NULL AND lower(json_extract(a.data, @acctPath)) = lower(@acctValue))
+            OR (@oppPath IS NOT NULL AND EXISTS (
+              SELECT 1 FROM opportunities o
+              WHERE o.org_id = a.org_id AND o.account_id = a.id
+                AND lower(json_extract(o.data, @oppPath)) = lower(@oppValue))))
         ORDER BY last_modified DESC LIMIT @limit
-      `).all({ orgId, q, ownerId, limit });
+      `).all({
+        orgId, q, limit,
+        filter: leadSe ? 1 : 0,
+        acctPath: acct ? '$.' + acct.field : null, acctValue: acct?.value ?? null,
+        oppPath: opp ? '$.' + opp.field : null, oppValue: opp?.value ?? null,
+      });
       return { records: rows.map((r) => JSON.parse(r.data)), syncedAt: oldest(rows) };
     },
 
@@ -146,15 +161,15 @@ export function openDb(file) {
       };
     },
 
-    saveMeta(orgId, meta) {
+    saveSetting(orgId, kind, value) {
       db.prepare(`
-        INSERT INTO org_meta (org_id, data, synced_at) VALUES (?, ?, ?)
-        ON CONFLICT (org_id) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at
-      `).run(orgId, JSON.stringify(meta), now());
+        INSERT INTO org_settings (org_id, kind, data, synced_at) VALUES (?, ?, ?, ?)
+        ON CONFLICT (org_id, kind) DO UPDATE SET data = excluded.data, synced_at = excluded.synced_at
+      `).run(orgId, kind, JSON.stringify(value), now());
     },
 
-    getMeta(orgId) {
-      const row = db.prepare('SELECT data FROM org_meta WHERE org_id = ?').get(orgId);
+    getSetting(orgId, kind) {
+      const row = db.prepare('SELECT data FROM org_settings WHERE org_id = ? AND kind = ?').get(orgId, kind);
       return row ? JSON.parse(row.data) : null;
     },
   };
