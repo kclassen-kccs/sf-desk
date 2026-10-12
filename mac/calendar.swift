@@ -26,8 +26,10 @@ if #available(macOS 14.0, *) {
 }
 done.wait()
 if !granted {
-  fail("denied", "SF Desk isn't allowed to read your calendars. In System Settings > Privacy & Security > Calendars, " +
-    "allow the app you run SF Desk from (e.g. Terminal), then reload.")
+  // macOS asks on behalf of the app that started SF Desk (Terminal, iTerm, the Claude app...), not SF Desk itself.
+  fail("denied", "macOS isn't letting SF Desk read your calendars. In System Settings > Privacy & Security > Calendars, " +
+    "allow the app that runs \"npm start\" for SF Desk (Terminal, iTerm, the Claude app...), then restart SF Desk and reload. " +
+    "If that app isn't in the list, start SF Desk from Terminal with \"npm start\" so macOS asks.")
 }
 
 let iso = ISO8601DateFormatter()

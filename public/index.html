@@ -1477,7 +1477,7 @@ function showCalendar() {
           el('span', {}, el('i', { style: 'background:var(--open);border-color:var(--open-line)' }), 'No Deal Support'),
           el('span', {}, el('i', { style: 'background:var(--skip);border-color:var(--skip-line)' }), 'Not needed')),
         el('span', { class: 'spacer', style: 'flex:1' }),
-        el('button', { onclick: loadCalendar }, 'Reload'),
+        el('button', { onclick: () => loadSources().then(loadCalendar) }, 'Reload'),
       ),
       el('div', { class: 'sub', id: 'calSub' }, 'Loading…'),
       el('div', { id: 'calBody' }),
@@ -1491,14 +1491,18 @@ function showCalendar() {
 // Internet Accounts. The choice is remembered on this machine; the first time, the Exchange account's
 // main calendar is picked if there is one.
 async function loadSources() {
-  try { cal.sources ||= await api('/calendar/sources'); } catch { cal.sources = { mac: false, calendars: [] }; }
+  // Asked again after a refusal, so allowing access in System Settings and clicking Reload picks it up.
+  const wasRefused = !!cal.sources?.error;
+  if (!cal.sources || wasRefused) {
+    try { cal.sources = await api('/calendar/sources'); } catch { cal.sources = { mac: false, calendars: [] }; }
+  }
   const { calendars, error } = cal.sources;
   let saved = null;
   try { saved = localStorage.getItem(CAL_SOURCE); } catch {}
   const exchange = calendars.filter((c) => c.type === 'exchange');
   const pick = (saved === 'salesforce' || calendars.some((c) => c.id === saved)) ? saved
     : (exchange.find((c) => /^calendar$/i.test(c.title)) || exchange[0])?.id || 'salesforce';
-  cal.source ||= pick;
+  if (!cal.source || (wasRefused && !error)) cal.source = pick;
   cal.sourceNote = error || '';
   const select = document.getElementById('calSource');
   if (!select) return;
