@@ -29,8 +29,9 @@ your Salesforce user is already allowed to, and it only writes when you click **
   prefilled from the event: name from the title, activity date from the start, meeting duration in hours, the
   event description in the details field, and you as the Assigned SE. An event counts as covered when a Deal
   Support was created from it here (remembered in the local database), or when one of yours has the same
-  activity date and the same opportunity, account or name. For Mac calendar events the account is found from
-  the meeting title and the attendees' email domains. Salesforce events logged twice at the same time (e.g. by
+  activity date and the same opportunity, account or name. For Mac calendar events the account and opportunity
+  come from the matching Salesforce event (e.g. synced by Outreach) at the same time, else from the meeting
+  title and the attendees' email domains. Salesforce events logged twice at the same time (e.g. by
   Outreach, on the account and on the opportunity) are shown once. The open opportunity list is kept in the
   local database and refreshed from Salesforce every 4 hours
 - Lists accounts where you are the Lead SE by default (or all you can see) with search

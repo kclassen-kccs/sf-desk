@@ -1027,6 +1027,26 @@ async function macEvents(req, calendarId, { from, to }) {
   }).sort((a, b) => String(a.start).localeCompare(String(b.start)));
 }
 
+// Meetings synced into Salesforce (e.g. by Outreach) carry the account and opportunity. For each Mac
+// event, find the Salesforce event at the same start with the same or a similar subject (or the only one
+// at that start) and use its links for matching and to preselect the opportunity.
+async function borrowSalesforceLinks(req, events, range) {
+  const sfEvents = await salesforceEvents(req, range).catch(() => []);
+  const simple = (s) => cleanSubject(s).toLowerCase().replace(/[^a-z0-9&]+/g, ' ').trim();
+  for (const e of events) {
+    const at = Date.parse(e.start);
+    const same = sfEvents.filter((x) => x.allDay === e.allDay && (e.allDay ? x.date === e.date : Date.parse(x.start) === at));
+    const a = simple(e.subject);
+    const hit = same.find((x) => { const b = simple(x.subject); return a && b && (a === b || a.includes(b) || b.includes(a)); }) ||
+      (same.length === 1 ? same[0] : null);
+    if (!hit) continue;
+    e.accountIds = hit.accountIds;
+    e.oppId = hit.oppId;
+    e.what = hit.what;
+    e.sfEventId = hit.id;
+  }
+}
+
 // The Mac's calendars, for the source picker. Empty when not on a Mac; an error message when access
 // was refused, so the page can say so and stay on Salesforce events.
 api.get('/calendar/sources', wrap(async (req, res) => {
@@ -1054,6 +1074,7 @@ api.get('/calendar', wrap(async (req, res) => {
     const ds = await dealSupportMeta(req);
     const cm = await calendarMeta(req);
     const events = source === 'salesforce' ? await salesforceEvents(req, range) : await macEvents(req, source, range);
+    if (source !== 'salesforce') await borrowSalesforceLinks(req, events, range);
 
     const marks = store.eventMarks(orgOf(req), events.flatMap((e) => [e.id, ...e.copies]));
     const linkedIds = [...new Set(Object.values(marks).map((m) => m.dsId).filter(Boolean))];
