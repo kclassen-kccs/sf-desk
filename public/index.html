@@ -1159,9 +1159,17 @@ async function openDeal(o) {
 // opportunities: this week, last week, the last 30 days, this fiscal quarter and year, per week,
 // and per opportunity. Weeks start on Monday.
 const time = { data: null, range: 'fy', opp: null };
-const TIME_PREFS = 'sfdesk.time';
+// Field picks that differ from the server's defaults, kept in this browser. (v2: picks saved by the
+// first version, which had different defaults, are ignored.)
+const TIME_PREFS = 'sfdesk.time.v2';
 const timePrefs = () => { try { return JSON.parse(localStorage.getItem(TIME_PREFS)) || {}; } catch { return {}; } };
-const saveTimePrefs = (p) => { try { localStorage.setItem(TIME_PREFS, JSON.stringify({ ...timePrefs(), ...p })); } catch {} };
+const saveTimePrefs = (key, value, dflt) => {
+  try {
+    const p = timePrefs();
+    if (value === dflt) delete p[key]; else p[key] = value;
+    localStorage.setItem(TIME_PREFS, JSON.stringify(p));
+  } catch {}
+};
 
 const ymd = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const addDays = (s, n) => { const d = new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10) + n, 12); return ymd(d); };
@@ -1269,6 +1277,10 @@ function renderTime() {
   const by = d.userFields.find((f) => f.name === d.by) || d.userFields[0];
 
   // Which fields count: picked here, remembered on this machine. Each shows how many of your records fill it.
+  // "Total Time (Hours)" needs no "(hours)"; only say the unit when the label doesn't, or when reading it the other way.
+  const unitLabel = (o) => o.unit === 'text' ? o.label
+    : o.key !== hoursOpts.find((x) => x.name === o.name).key ? `${o.label} (read as ${o.unit})`
+    : new RegExp(o.unit === 'hours' ? 'hour|hrs' : 'min', 'i').test(o.label) ? o.label : `${o.label} (${o.unit})`;
   const counted = (f) => f.count != null ? ` · ${plural(f.count, 'record').replace(/^\d+/, f.count.toLocaleString())}` : '';
   const pick = (labelText, opts, value, onPick) => {
     const s = el('select', {}, opts.map(([v, t]) => el('option', { value: v, selected: v === value }, t)));
@@ -1276,11 +1288,12 @@ function renderTime() {
     return el('label', {}, labelText, s);
   };
   document.getElementById('timePicks').replaceChildren(
-    pick('Mine by', d.userFields.map((f) => [f.name, f.label + counted(f)]), by.name, (v) => { saveTimePrefs({ by: v }); loadTime(); }),
-    pick('Hours from', hoursOpts.map((o) => [o.key, (o.unit === 'text' ? o.label : `${o.label} (${o.unit})`) + counted(o)]), hours.key,
-      (v) => { saveTimePrefs({ hours: v }); renderTime(); }),
+    pick('Mine by', d.userFields.map((f) => [f.name, f.label + counted(f)]), by.name,
+      (v) => { saveTimePrefs('by', v, d.userFields[0].name); loadTime(); }),
+    pick('Hours from', hoursOpts.map((o) => [o.key, unitLabel(o) + counted(o)]), hours.key,
+      (v) => { saveTimePrefs('hours', v, hoursOpts[0].key); renderTime(); }),
     d.dateFields.length > 1 ? pick('Date', d.dateFields.map((f) => [f.name, f.label]), date.name,
-      (v) => { saveTimePrefs({ date: v }); renderTime(); }) : null,
+      (v) => { saveTimePrefs('date', v, d.dateFields[0].name); renderTime(); }) : null,
   );
 
   const all = timeEntries();
