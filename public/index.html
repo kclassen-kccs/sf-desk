@@ -143,7 +143,7 @@
   .deals td { white-space: nowrap; } .deals td.n { text-align: right; font-variant-numeric: tabular-nums; }
   .deals th.n { text-align: right; }
   .deals tfoot td { font-weight: 600; border-top: 2px solid var(--line); border-bottom: 0; }
-  .deals tbody tr { cursor: pointer; } .deals tbody tr.nolink { cursor: default; } .deals tbody tr:hover td { background: var(--bg); }
+  .deals tbody tr { cursor: pointer; } .deals tbody tr.nolink { cursor: default; } .deals tr.subtotal td { font-weight: 600; background: var(--bg); } .deals tbody tr:hover td { background: var(--bg); }
   .deals td.wrap { white-space: normal; min-width: 180px; }
   .pastdue { color: var(--err); }
   /* ---------- my calendar ---------- */
@@ -528,7 +528,7 @@ function renderDetail() {
 // ---------- account Deal Supports ----------
 // Everyone's Deal Supports on this account and its opportunities for the last 30, 60 or 90 days or this
 // fiscal year: count, hours and the list (newest first; click one to open it in Salesforce).
-let acctDsRange = '90';
+let acctDsRange = '90', acctDsGroup = false;
 async function loadAccountDealSupports(accountId) {
   const sec = document.getElementById('acctDs');
   sec.replaceChildren(el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, 'Loading…'));
@@ -559,25 +559,45 @@ function renderAccountDealSupports(data, fyStart) {
   // The opportunity only when it tells rows apart: not when they're all on one, nor when the name already says it.
   const opps = new Set(list.map((r) => r.oppId));
   const showOpp = opps.size > 1 && list.some((r) => r.oppName && !String(r.Name || '').toLowerCase().includes(r.oppName.toLowerCase()));
-  const tbody = el('tbody', {}, list.map((r) => el('tr', { class: 'nolink' },
-    el('td', { class: 'wrap' }, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: 'Open in Salesforce' }, r.Name || r.Id)),
+  // The record number only (e.g. "DR-012345" -> "012345") keeps the first column narrow; the full name is its tooltip.
+  const num = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
+  const ncols = 3 + showActivity + showOpp + !!data.whoLabel + showRole;
+  const row = (r) => el('tr', { class: 'nolink' },
+    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, num(r.Name) || r.Id)),
     el('td', {}, r.date),
     showActivity ? el('td', { class: 'wrap' }, r.activity) : null,
     showOpp ? el('td', { class: 'wrap' }, r.oppName) : null,
     data.whoLabel ? el('td', {}, r.who) : null,
     showRole ? el('td', {}, r.role) : null,
-    el('td', { class: 'n' }, fmtH(toHours(r.hours))))));
-  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, `No ${data.labelPlural.toLowerCase()} in this period.`)));
+    el('td', { class: 'n' }, fmtH(toHours(r.hours))));
+  const sumRow = (text, rows, cls) => el('tr', { class: 'nolink ' + cls },
+    el('td', { colspan: ncols - 1 }, `${text} (${plural(rows.length, data.label.toLowerCase(), data.labelPlural.toLowerCase())})`),
+    el('td', { class: 'n' }, fmtH(rows.reduce((s, r) => s + toHours(r.hours), 0))));
+  const tbody = el('tbody');
+  if (acctDsGroup && data.whoLabel) {
+    // One block per Assigned SE (A–Z), each ending in its subtotal.
+    const groups = new Map();
+    for (const r of list) {
+      const k = r.who || '(none)';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
+    for (const [who, rows] of [...groups].sort((x, y) => x[0].localeCompare(y[0]))) tbody.append(...rows.map(row), sumRow(`Subtotal ${who}`, rows, 'subtotal'));
+  } else tbody.append(...list.map(row));
+  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: ncols, class: 'empty' }, `No ${data.labelPlural.toLowerCase()} in this period.`)));
+  const group = data.whoLabel ? el('label', { class: 'selbar' }, el('input', { type: 'checkbox', checked: acctDsGroup,
+    onchange: (e) => { acctDsGroup = e.target.checked; renderAccountDealSupports(data, fyStart); } }), `Group by ${data.whoLabel}`) : null;
   sec.replaceChildren(
-    el('h3', {}, `${data.labelPlural}: ${rangeLabel}`, el('span', { class: 'spacer' }), seg),
+    el('h3', {}, `${data.labelPlural}: ${rangeLabel}`, el('span', { class: 'spacer' }), group, seg),
     el('div', { class: 'tiles', style: 'grid-template-columns:repeat(2, minmax(0, 220px));margin-bottom:12px' },
       el('div', { class: 'tile' }, el('div', { class: 'k' }, data.labelPlural), el('div', { class: 'v' }, list.length.toLocaleString())),
       el('div', { class: 'tile' }, el('div', { class: 'k' }, data.hoursLabel), el('div', { class: 'v' }, fmtH(total)))),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
-      el('thead', {}, el('tr', {}, el('th', {}, 'Name'), el('th', {}, data.dateLabel),
+      el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, data.dateLabel),
         showActivity ? el('th', {}, data.activityLabel) : null, showOpp ? el('th', {}, 'Opportunity') : null,
         data.whoLabel ? el('th', {}, data.whoLabel) : null, showRole ? el('th', {}, 'Role') : null, el('th', { class: 'n' }, 'Hours'))),
-      tbody)),
+      tbody,
+      list.length ? el('tfoot', {}, sumRow('Total', list, '')) : null)),
   );
 }
 
