@@ -573,11 +573,16 @@ async function dealSupportMeta(req) {
       picklist: f.picklistValues?.length ? f.picklistValues.filter((v) => v.active).map((v) => v.value) : null,
       defaultValue: f.defaultValue ?? null,
     }));
+  // New Deal Supports default Role to "Lead SE" (matched ignoring case) when the picklist has it.
+  const role = fields.find((f) => f.picklist && (f.name === 'Role__c' || /^role$/i.test(f.label)));
+  const leadSe = role?.picklist.find((v) => v.trim().toLowerCase() === 'lead se');
+  if (leadSe) role.defaultValue = leadSe;
   const meta = {
     object: d.name,
     label: d.label,
     labelPlural: d.labelPlural,
     oppField: opp.name,
+    roleDefault: role ? { field: role.name, value: leadSe || null, options: role.picklist } : null,
     canCreate: d.createable && opp.createable,
     fields,
   };
