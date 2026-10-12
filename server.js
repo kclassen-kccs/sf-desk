@@ -30,6 +30,10 @@ const OPP_FIELDS = ['Name', 'StageName', 'Amount', 'CloseDate', 'Probability', '
 const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'Owner.Name', 'LastModifiedDate'];
 const OPP_READ = ['Id', 'AccountId', ...OPP_FIELDS, 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
 
+// The "Lead SE" field used for the "only where I'm Lead SE" filter. Set SF_LEAD_SE_FIELD to its API
+// name (e.g. Lead_SE__c) if auto-detection by its label "Lead SE" doesn't find it.
+const LEAD_SE_FIELD = process.env.SF_LEAD_SE_FIELD || '';
+
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
@@ -201,6 +205,36 @@ async function updateRecord(req, sobject, allowed, readFields) {
   return rec;
 }
 
+// Find the Lead SE field on an object: by API name if configured, else by its label.
+function findLeadSe(describe) {
+  const f = describe.fields.find((x) => LEAD_SE_FIELD
+    ? x.name.toLowerCase() === LEAD_SE_FIELD.toLowerCase()
+    : /^lead\s*se$/i.test(x.label.trim()));
+  return f ? { name: f.name, isUser: f.type === 'reference' } : null;
+}
+
+async function leadSeFields(req) {
+  if (!req.session.leadSe) {
+    const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
+    const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
+    req.session.leadSe = { Account: findLeadSe(acct), Opportunity: findLeadSe(opp) };
+  }
+  const fields = req.session.leadSe;
+  if (!fields.Account && !fields.Opportunity) {
+    throw new HttpError(400, 'No "Lead SE" field found on Account or Opportunity. ' +
+      'Set SF_LEAD_SE_FIELD in .env to its API name (e.g. Lead_SE__c) and restart.');
+  }
+  return fields;
+}
+
+// SOQL condition matching the signed-in user: by User Id for a lookup field, else by full name.
+function leadSeIsMe(req, field) {
+  const user = req.session.sf.user;
+  return field.isUser
+    ? `${field.name} = '${sfId(user.id)}'`
+    : `${field.name} = '${String(user.name).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
 // ---------- JSON API used by the page ----------
 
 const api = express.Router();
@@ -257,19 +291,39 @@ api.get('/accounts', wrap(async (req, res) => {
   const where = [];
   const q = String(req.query.q || '').trim().slice(0, 80);
   if (q) where.push(`Name LIKE '%${soqlLike(q)}%'`);
-  if (req.query.mine === '1') where.push(`OwnerId = '${sfId(req.session.sf.user.id)}'`);
-  const soql = 'SELECT Id, Name, Type, Industry, BillingCity, BillingState, Owner.Name, LastModifiedDate ' +
-    `FROM Account ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ` +
-    'ORDER BY LastModifiedDate DESC LIMIT 200';
-  res.json(await query(req, soql));
+  const soql = (extra = []) => {
+    const w = [...where, ...extra];
+    return 'SELECT Id, Name, Type, Industry, BillingCity, BillingState, Owner.Name, LastModifiedDate ' +
+      `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY LastModifiedDate DESC LIMIT 200`;
+  };
+  if (req.query.leadse !== '1') return res.json(await query(req, soql()));
+
+  // An account is "mine" if I'm its Lead SE, or Lead SE on any of its opportunities.
+  // SOQL can't OR a sub-select, so run one query per field and merge.
+  const lse = await leadSeFields(req);
+  const queries = [];
+  if (lse.Account) queries.push(query(req, soql([leadSeIsMe(req, lse.Account)])));
+  if (lse.Opportunity) {
+    queries.push(query(req, soql([`Id IN (SELECT AccountId FROM Opportunity WHERE ${leadSeIsMe(req, lse.Opportunity)})`])));
+  }
+  const byId = new Map();
+  for (const rec of (await Promise.all(queries)).flat()) byId.set(rec.Id, rec);
+  res.json([...byId.values()]
+    .sort((a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate)))
+    .slice(0, 200));
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const [account] = await query(req, `SELECT ${ACCOUNT_READ.join(', ')} FROM Account WHERE Id = '${id}'`);
   if (!account) throw new HttpError(404, 'Account not found');
+  const where = [`AccountId = '${id}'`];
+  if (req.query.leadse === '1') {
+    const lse = await leadSeFields(req);
+    if (lse.Opportunity) where.push(leadSeIsMe(req, lse.Opportunity));
+  }
   const opportunities = await query(req,
-    `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE AccountId = '${id}' ORDER BY IsClosed ASC, CloseDate ASC`);
+    `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE ${where.join(' AND ')} ORDER BY IsClosed ASC, CloseDate ASC`);
   res.json({ account, opportunities });
 }));
 
