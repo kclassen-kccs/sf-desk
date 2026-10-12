@@ -5,7 +5,8 @@
 //
 // downloadXlsx('file.xlsx', 'Sheet', columns, rows, { totals: true })
 //   columns: [{ header, type: 'string' | 'number' | 'money' | 'percent' | 'date', width?, sum? }]
-//   rows:    arrays of values in column order ('YYYY-MM-DD' strings for dates, percent as 0–100)
+//   rows:    arrays of values in column order ('YYYY-MM-DD' strings for dates, percent as 0–100),
+//            or { bold: true, values: [...] } for a bold row such as a subtotal
 //   totals:  add a bold Total row with SUM formulas under columns marked sum: true
 (function () {
   // Styles (cellXfs index): 0 default, 1 header, 2 date, 3 money, 4 percent, 5 number,
@@ -23,21 +24,24 @@
     return m ? (Date.UTC(+m[1], +m[2] - 1, +m[3]) - Date.UTC(1899, 11, 30)) / 86400000 : null;
   };
 
-  function cell(ref, col, v) {
+  function cell(ref, col, v, bold) {
     if (v == null || v === '') return '';
     const t = col.type || 'string';
     if (t !== 'string') {
       const n = t === 'date' ? serial(v) : t === 'percent' ? Number(v) / 100 : Number(v);
-      if (n != null && Number.isFinite(n)) return `<c r="${ref}" s="${STYLE[t]}"><v>${n}</v></c>`;
+      if (n != null && Number.isFinite(n)) return `<c r="${ref}" s="${bold && TOTAL[t] ? TOTAL[t] : STYLE[t]}"><v>${n}</v></c>`;
     }
-    return `<c r="${ref}" t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
+    return `<c r="${ref}"${bold ? ' s="6"' : ''} t="inlineStr"><is><t xml:space="preserve">${esc(v)}</t></is></c>`;
   }
 
   function sheetXml(columns, rows, totals) {
     const last = colName(columns.length - 1), n = rows.length;
     const out = [`<row r="1">${columns.map((c, i) =>
       `<c r="${colName(i)}1" s="1" t="inlineStr"><is><t>${esc(c.header)}</t></is></c>`).join('')}</row>`];
-    rows.forEach((r, j) => out.push(`<row r="${j + 2}">${columns.map((c, i) => cell(colName(i) + (j + 2), c, r[i])).join('')}</row>`));
+    rows.forEach((r, j) => {
+      const vals = Array.isArray(r) ? r : r.values, bold = !Array.isArray(r) && !!r.bold;
+      out.push(`<row r="${j + 2}">${columns.map((c, i) => cell(colName(i) + (j + 2), c, vals[i], bold)).join('')}</row>`);
+    });
     if (totals && n) {
       const rr = n + 2;
       out.push(`<row r="${rr}">${columns.map((c, i) => {

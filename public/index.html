@@ -576,6 +576,7 @@ function renderAccountDealSupports(data, fyStart) {
     el('td', { colspan: ncols - 1 }, `${text} (${plural(rows.length, data.label.toLowerCase(), data.labelPlural.toLowerCase())})`),
     el('td', { class: 'n' }, fmtH(rows.reduce((s, r) => s + toHours(r.hours), 0))));
   const tbody = el('tbody');
+  const blocks = [];
   {
     // One block per opportunity (or per Assigned SE when ticked), A–Z, each ending in its subtotal.
     const groups = new Map();
@@ -584,13 +585,17 @@ function renderAccountDealSupports(data, fyStart) {
       if (!groups.has(k)) groups.set(k, []);
       groups.get(k).push(r);
     }
-    for (const [k, rows] of [...groups].sort((x, y) => x[0].localeCompare(y[0]))) tbody.append(...rows.map(row), sumRow(`Subtotal ${k}`, rows, 'subtotal'));
+    for (const [k, rows] of [...groups].sort((x, y) => x[0].localeCompare(y[0]))) {
+      blocks.push([k, rows]);
+      tbody.append(...rows.map(row), sumRow(`Subtotal ${k}`, rows, 'subtotal'));
+    }
   }
   if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: ncols, class: 'empty' }, `No ${data.labelPlural.toLowerCase()} in this period.`)));
   const group = data.whoLabel ? el('label', { class: 'selbar' }, el('input', { type: 'checkbox', checked: acctDsGroup,
     onchange: (e) => { acctDsGroup = e.target.checked; renderAccountDealSupports(data, fyStart); } }), `Group by ${data.whoLabel}`) : null;
   sec.replaceChildren(
-    el('h3', {}, `${data.labelPlural}: ${rangeLabel}`, el('span', { class: 'spacer' }), group, seg),
+    el('h3', {}, `${data.labelPlural}: ${rangeLabel}`, el('span', { class: 'spacer' }), group, seg,
+      el('button', { disabled: !list.length, onclick: () => exportAccountDealSupports(data, blocks, bySe, toHours, rangeLabel) }, 'Export to Excel')),
     el('div', { class: 'tiles', style: 'grid-template-columns:repeat(2, minmax(0, 220px));margin-bottom:12px' },
       el('div', { class: 'tile' }, el('div', { class: 'k' }, data.labelPlural), el('div', { class: 'v' }, list.length.toLocaleString())),
       el('div', { class: 'tile' }, el('div', { class: 'k' }, data.hoursLabel), el('div', { class: 'v' }, fmtH(total)))),
@@ -601,6 +606,27 @@ function renderAccountDealSupports(data, fyStart) {
       tbody,
       list.length ? el('tfoot', {}, sumRow('Total', list, '')) : null)),
   );
+}
+
+// The panel's rows as shown (same period and grouping), with full names, subtotals, the total and links.
+function exportAccountDealSupports(data, blocks, bySe, toHours, rangeLabel) {
+  const showRole = blocks.some(([, rows]) => rows.some((r) => r.role));
+  const cols = [
+    { header: data.label, width: 34 }, { header: data.dateLabel, type: 'date', width: 13 },
+    ...(data.activityLabel ? [{ header: data.activityLabel, width: 22 }] : []), { header: 'Opportunity', width: 36 },
+    ...(data.whoLabel ? [{ header: data.whoLabel, width: 22 }] : []), ...(showRole ? [{ header: 'Role', width: 14 }] : []),
+    { header: 'Hours', type: 'number', width: 10 }, { header: 'Salesforce link', width: 45 },
+  ];
+  const line = (r) => [r.Name || r.Id, r.date, ...(data.activityLabel ? [r.activity] : []), r.oppName,
+    ...(data.whoLabel ? [r.who] : []), ...(showRole ? [r.role] : []), toHours(r.hours), `${me.instanceUrl}/${r.Id}`];
+  const sumLine = (label, rows) => ({ bold: true, values: [label, ...Array(cols.length - 3).fill(''), rows.reduce((s, r) => s + toHours(r.hours), 0), ''] });
+  const rows = [];
+  for (const [k, list] of blocks) rows.push(...list.map(line), sumLine(`Subtotal ${k}`, list));
+  rows.push(sumLine('Total', blocks.flatMap(([, list]) => list)));
+  const acct = current?.account?.Name || 'Account';
+  downloadXlsx(`${acct} - ${data.labelPlural} - ${rangeLabel}${bySe ? ' by SE' : ''} - ${todayStr()}.xlsx`.replace(/[\\/:*?"<>|]/g, '-'),
+    data.labelPlural, cols, rows)
+    .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
 }
 
 function renderSub() {
