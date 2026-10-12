@@ -1513,9 +1513,9 @@ function renderCalendar() {
   const hourPx = 48, height = (h1 - h0) * hourPx, today = todayStr();
   const evBox = (e) => {
     const st = evStatus(e);
-    const n = el('button', { class: `ev ${st}${cal.sel === e.id ? ' sel' : ''}`, title: `${e.subject} · ${STATUS_TEXT[st]}`,
+    const n = el('button', { class: `ev ${st}${cal.sel === e.id ? ' sel' : ''}`, title: `${e.title || e.subject} · ${STATUS_TEXT[st]}`,
       onclick: () => selectEvent(e.id) },
-      el('div', { class: 's' }, e.subject),
+      el('div', { class: 's' }, e.title || e.subject),
       e.allDay ? null : el('div', { class: 't' }, `${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`));
     return n;
   };
@@ -1580,7 +1580,7 @@ function selectEvent(id) {
 // Values for the new Deal Support form, taken from the event.
 function eventPrefill(e) {
   const p = cal.data.prefill, v = {};
-  if (p.nameField) v[p.nameField.name] = e.subject.slice(0, p.nameField.length || 80);
+  if (p.nameField) v[p.nameField.name] = (e.title || e.subject).slice(0, p.nameField.length || 80);
   if (p.dateField) {
     v[p.dateField.name] = p.dateField.type === 'datetime' && !e.allDay
       ? `${e.date}T${hhmm24(evTime(e.start))}` : e.date;
@@ -1613,7 +1613,7 @@ function renderEventPanel() {
   const sfLink = (id, text) => el('a', { href: `${me.instanceUrl}/${id}`, target: '_blank', rel: 'noopener' }, text);
   const skip = el('button', { onclick: async () => {
     try {
-      await api(`/calendar/events/${e.id}/skip`, { method: 'POST', body: { skip: !e.skipped } });
+      await api(`/calendar/events/${e.id}/skip`, { method: 'POST', body: { skip: !e.skipped, copies: e.copies || [] } });
       e.skipped = !e.skipped;
       renderCalendar();
     } catch (err) { toast(err.message, 'err'); }
@@ -1625,7 +1625,7 @@ function renderEventPanel() {
 
   panel.replaceChildren(
     el('section', {},
-      el('h3', {}, e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), 'aria-label': 'Close' }, '✕')),
+      el('h3', {}, e.title || e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), 'aria-label': 'Close' }, '✕')),
       el('div', { style: 'margin:-6px 0 10px' }, el('span', { class: 'status-pill ' + st }, STATUS_TEXT[st])),
       el('dl', {},
         el('dt', {}, 'When'), el('dd', {}, when),
@@ -1634,7 +1634,7 @@ function renderEventPanel() {
         e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
         e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
           sfLink(r.Id, r.Name || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, with the same opportunity or name' }, 'matched') : null)))] : null,
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, with the same opportunity, account or name' }, 'matched') : null)))] : null,
       ),
       e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
       el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, sfLink(e.id, 'Open event in Salesforce ↗')),

@@ -835,9 +835,11 @@ api.get('/my-time', wrap(async (req, res) => {
 // Your Salesforce calendar (Event records you own; invitees get their own copy) for a date range,
 // each marked as covered by a Deal Support or not. An event is covered when a Deal Support was
 // created from it here (remembered in the local database), or when one of yours has the same
-// activity date and either the event's opportunity or the event's subject as its name.
+// activity date and the event's opportunity, the event's account, or the event's subject as its name.
+// Outreach can log one meeting twice at the same time (once on the account, once on the opportunity,
+// that copy's subject prefixed "[Backstory | ...]"); those are shown as one event.
 
-const EVENT_READ = ['Id', 'Subject', 'StartDateTime', 'EndDateTime', 'IsAllDayEvent', 'ActivityDate', 'DurationInMinutes',
+const EVENT_READ = ['Id', 'Subject', 'AccountId', 'StartDateTime', 'EndDateTime', 'IsAllDayEvent', 'ActivityDate', 'DurationInMinutes',
   'Location', 'Description', 'WhatId', 'What.Name', 'What.Type', 'Who.Name', 'ShowAs'];
 
 // Which Deal Support fields a new one from an event fills in: name, date, duration, details and
@@ -871,6 +873,10 @@ async function calendarMeta(req) {
   const userDesc = userName && desc.get(userName);
   const userField = userDesc?.createable && userDesc.referenceTo?.includes('User') ? userName : null;
 
+  // A direct Account lookup on Deal Support, if there is one (else the account comes via the opportunity).
+  const acctField = d.fields.filter((f) => f.type === 'reference' && f.referenceTo?.includes('Account'))
+    .sort((a, b) => (b.name === 'Account_lookup__c') - (a.name === 'Account_lookup__c'))[0];
+
   const meta = {
     nameField: nameField && { name: nameField.name, length: nameField.length },
     dateField: dateField && { name: dateField.name, type: dateField.type },
@@ -881,6 +887,7 @@ async function calendarMeta(req) {
     // Date and person fields used to find my existing Deal Supports for an event.
     matchDate: (dateField || tm?.dateFields[0])?.name || null,
     matchUser: userField || tm?.userFields?.[0]?.name || null,
+    matchAccount: acctField?.name || null,
   };
   req.session.calendarMeta = meta;
   return meta;
@@ -904,7 +911,8 @@ async function myDealSupportsBetween(req, ds, cm, d0, d1) {
   if (!cm.matchDate) return [];
   const me = sfId(req.session.sf.user.id);
   const opp = (await timeMeta(req).catch(() => null))?.oppRel;
-  const fields = ['Id', 'Name', cm.matchDate, ds.oppField, ...(opp ? [`${opp}.Name`] : [])];
+  const fields = ['Id', 'Name', cm.matchDate, ds.oppField, ...(opp ? [`${opp}.Name`, `${opp}.AccountId`] : []),
+    ...(cm.matchAccount ? [cm.matchAccount] : [])];
   const dateType = cm.dateField?.name === cm.matchDate ? cm.dateField.type : 'date';
   const range = dateType === 'datetime'
     ? `${cm.matchDate} >= ${d0}T00:00:00Z AND ${cm.matchDate} <= ${d1}T23:59:59Z`
@@ -913,7 +921,8 @@ async function myDealSupportsBetween(req, ds, cm, d0, d1) {
   const recs = await query(req, `SELECT ${[...new Set(fields)].join(', ')} FROM ${ds.object} ` +
     `WHERE ${range} AND (${[...new Set(who)].join(' OR ')})`, 2000);
   return recs.map((r) => ({ Id: r.Id, Name: r.Name, date: String(r[cm.matchDate] || '').slice(0, 10),
-    oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null }));
+    oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null,
+    accountIds: [cm.matchAccount && r[cm.matchAccount], opp && r[opp]?.AccountId].filter(Boolean) }));
 }
 
 // Deal Supports by Id (to check the linked ones still exist), with their opportunity.
@@ -924,6 +933,9 @@ async function dealSupportsById(req, ds, ids) {
     `WHERE Id IN (${ids.map((id) => `'${sfId(id)}'`).join(', ')})`, 500);
   return recs.map((r) => ({ Id: r.Id, Name: r.Name, oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null }));
 }
+
+// The subject without an Outreach "[Backstory | ...]" prefix, for spotting duplicates and naming Deal Supports.
+const cleanSubject = (s) => String(s || '').replace(/^\s*\[backstory\b[^\]]*\]\s*/i, '').trim();
 
 // The local calendar date an event falls on, given the page's UTC offset in minutes (from getTimezoneOffset).
 function eventDate(e, tzOffset) {
@@ -951,24 +963,39 @@ api.get('/calendar', wrap(async (req, res) => {
     const linkedIds = [...new Set(Object.values(marks).map((m) => m.dsId).filter(Boolean))];
     const [linked, mine] = await Promise.all([dealSupportsById(req, ds, linkedIds), myDealSupportsBetween(req, ds, cm, d0, d1)]);
     const linkedById = new Map(linked.map((r) => [r.Id, r]));
-    const norm = (s) => String(s || '').trim().toLowerCase();
+    const norm = (s) => cleanSubject(s).toLowerCase();
 
-    const out = events.map((e) => {
+    // Collapse copies of one meeting: same start and same subject once the Backstory prefix is gone.
+    // The opportunity copy is kept; links and marks on any copy count for the one shown.
+    const groups = new Map();
+    for (const e of events) {
+      const key = `${e.IsAllDayEvent ? e.ActivityDate : e.StartDateTime}|${norm(e.Subject)}`;
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push(e);
+    }
+    const isOpp = (e) => e.What?.Type === 'Opportunity';
+    const out = [...groups.values()].map((copies) => {
+      const e = copies.find(isOpp) || copies[0];
       const date = eventDate(e, tz);
-      const oppId = e.What?.Type === 'Opportunity' ? e.WhatId : null;
-      const m = marks[e.Id];
+      const oppId = isOpp(e) ? e.WhatId : null;
+      const accountIds = new Set(copies.flatMap((c) => [c.AccountId, c.What?.Type === 'Account' && c.WhatId]).filter(Boolean));
       const supports = [];
-      if (m?.dsId && linkedById.has(m.dsId)) supports.push({ ...linkedById.get(m.dsId), how: 'created' });
+      for (const c of copies) {
+        const m = marks[c.Id];
+        if (m?.dsId && linkedById.has(m.dsId) && !supports.some((x) => x.Id === m.dsId)) supports.push({ ...linkedById.get(m.dsId), how: 'created' });
+      }
       for (const r of mine) {
         if (r.date !== date || supports.some((x) => x.Id === r.Id)) continue;
-        if ((oppId && r.oppId === oppId) || (e.Subject && norm(r.Name) === norm(e.Subject))) supports.push({ ...r, how: 'matched' });
+        if ((oppId && r.oppId === oppId) || (e.Subject && norm(r.Name) === norm(e.Subject)) ||
+          r.accountIds.some((a) => accountIds.has(a))) supports.push({ ...r, how: 'matched' });
       }
       return {
-        id: e.Id, subject: e.Subject || '(no subject)', start: e.StartDateTime, end: e.EndDateTime,
+        id: e.Id, copies: copies.filter((c) => c !== e).map((c) => c.Id),
+        subject: e.Subject || '(no subject)', title: cleanSubject(e.Subject) || '(no subject)', start: e.StartDateTime, end: e.EndDateTime,
         allDay: !!e.IsAllDayEvent, date, minutes: e.DurationInMinutes ?? null, location: e.Location || '',
         description: e.Description || '', who: e.Who?.Name || '', showAs: e.ShowAs || '',
         what: e.WhatId ? { id: e.WhatId, name: e.What?.Name || '', type: e.What?.Type || '' } : null,
-        supports, skipped: !!m?.skipped,
+        supports, skipped: copies.some((c) => marks[c.Id]?.skipped),
       };
     });
     const data = { events: out, prefill: cm, dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } };
@@ -997,7 +1024,9 @@ api.post('/calendar/events/:id/deal-support', wrap(async (req, res) => {
 
 // Mark an event as needing no Deal Support (skip: true), or undo that.
 api.post('/calendar/events/:id/skip', (req, res) => {
-  store.skipEvent(orgOf(req), sfId(req.params.id), !!req.body?.skip);
+  // copies: the other records of the same meeting the page shows as one event.
+  const copies = Array.isArray(req.body?.copies) ? req.body.copies.slice(0, 20) : [];
+  for (const id of [req.params.id, ...copies]) store.skipEvent(orgOf(req), sfId(id), !!req.body?.skip);
   res.json({ ok: true });
 });
 
