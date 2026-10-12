@@ -802,7 +802,7 @@ async function timeMeta(req) {
     roleField: role?.name || null,
     dateFields: dates.length ? dates.map(info) : [{ name: 'CreatedDate', label: 'Created Date', type: 'datetime' }],
     hoursFields: hours.map((f) => ({ ...info(f), unit: timeUnit(f) })),
-    userFields: users.map(info),
+    userFields: users.map((f) => ({ ...info(f), rel: f.relationshipName || null })),
   };
   req.session.timeMeta = meta;
   return meta;
@@ -1191,6 +1191,31 @@ api.get('/opportunities/open', wrap(async (req, res) => {
   const top = (accounts.size || title) ? [...matches.filter(suggested), ...matches.filter((o) => !suggested(o))] : matches;
   res.json({ total: records.length, matched: matches.length, syncedAt: at,
     records: top.slice(0, limit).map((o) => ({ ...o, suggested: !!suggested(o) || undefined })) });
+}));
+
+// Deal Supports on an account and all its opportunities (everyone's, not just mine) dated on or after
+// `since`, newest first, for the account screen. Uses My Time's date, hours and person fields.
+api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const since = isoDate(req.query.since);
+  const ds = await dealSupportMeta(req);
+  const tm = await timeMeta(req);
+  const cm = await calendarMeta(req).catch(() => ({}));
+  const date = tm.dateFields[0], hours = tm.hoursFields[0], who = tm.userFields.find((f) => f.rel) || null;
+  const onAccount = [cm.matchAccount && `${cm.matchAccount} = '${id}'`, tm.oppRel && `${tm.oppRel}.AccountId = '${id}'`].filter(Boolean);
+  if (!onAccount.length) throw new HttpError(404, `Can't tell which ${ds.labelPlural} belong to an account.`);
+  const fields = ['Id', 'Name', date.name, hours.name, ds.oppField, ...(tm.oppRel ? [`${tm.oppRel}.Name`] : []),
+    ...(who ? [`${who.rel}.Name`] : []), ...(tm.roleField ? [tm.roleField] : [])];
+  const from = date.type === 'datetime' ? `${since}T00:00:00Z` : since;
+  const recs = await query(req, `SELECT ${[...new Set(fields)].join(', ')} FROM ${ds.object} ` +
+    `WHERE (${onAccount.join(' OR ')}) AND ${date.name} >= ${from} ORDER BY ${date.name} DESC`, 5000);
+  res.json({
+    label: ds.label, labelPlural: ds.labelPlural, dateLabel: date.label, hoursLabel: hours.label, hoursUnit: hours.unit,
+    whoLabel: who?.label || null,
+    records: recs.map((r) => ({ Id: r.Id, Name: r.Name, date: String(r[date.name] || '').slice(0, 10), hours: r[hours.name] ?? null,
+      oppId: r[ds.oppField] || null, oppName: tm.oppRel ? r[tm.oppRel]?.Name || '' : '', who: who ? r[who.rel]?.Name || '' : '',
+      role: tm.roleField ? r[tm.roleField] || '' : '' })),
+  });
 }));
 
 // Hidden records: local to this machine, never written to Salesforce. The page filters its

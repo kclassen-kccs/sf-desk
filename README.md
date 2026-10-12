@@ -35,6 +35,9 @@ your Salesforce user is already allowed to, and it only writes when you click **
   Outreach, on the account and on the opportunity) are shown once. The open opportunity list is kept in the
   local database and refreshed from Salesforce every 4 hours
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
+- The account screen shows the sales rep prominently, and a **Deal Supports** panel with everyone's Deal Supports
+  on the account and its opportunities for the last 30, 60 or 90 days or the fiscal year to date: count, total
+  hours and the list (click one to open it in Salesforce)
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
 - Lists accounts A–Z by name (or most recently modified first); filters the list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)
 - Shows only open opportunities on an account by default; tick **Show closed** to see all of them
