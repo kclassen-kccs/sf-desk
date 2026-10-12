@@ -573,7 +573,7 @@ function renderAccountDealSupports(data, fyStart) {
     showRole ? el('td', {}, r.role) : null,
     el('td', { class: 'n' }, fmtH(toHours(r.hours))));
   const sumRow = (text, rows, cls) => el('tr', { class: 'nolink ' + cls },
-    el('td', { colspan: ncols - 1 }, `${text} (${plural(rows.length, data.label.toLowerCase(), data.labelPlural.toLowerCase())})`),
+    el('td', { colspan: ncols - 1 }, `${text} (${rows.length})`),
     el('td', { class: 'n' }, fmtH(rows.reduce((s, r) => s + toHours(r.hours), 0))));
   const tbody = el('tbody');
   const blocks = [];
