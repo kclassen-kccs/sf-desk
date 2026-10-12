@@ -10,6 +10,10 @@ your Salesforce user is already allowed to, and it only writes when you click **
   hid): total and weighted pipeline, totals by stage, and a forecast by close date per fiscal month, quarter or
   year, stacked by forecast category. Click a bar to list its deals, and a deal to open it. The fiscal year
   starts Feb 1 and is named for the calendar year it ends in (FY27 = Feb 2026 – Jan 2027)
+- **My Time** totals the hours on your Deal Supports across all opportunities: this week, the previous week,
+  the last 30 days, this fiscal quarter and this fiscal year, hours per week for the last 13 weeks, and hours
+  per opportunity for any of those periods. Click a tile, week or opportunity to list its activities. Weeks
+  start on Monday
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
 - Lists accounts A–Z by name (or most recently modified first); filters the list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)
@@ -93,7 +97,22 @@ the rest under **More fields**. To pick the fields yourself, set `SF_DEAL_SUPPOR
 comma-separated list of API names.
 If it can't find the object, set `SF_DEAL_SUPPORT_OBJECT` in `.env` to its API name (e.g. `Deal_Support__c`);
 if the object has more than one lookup to Opportunity, set `SF_DEAL_SUPPORT_OPP_FIELD` to the right one.
-Deal Supports are read live from Salesforce and aren't kept in the local copy.
+Deal Supports are read live from Salesforce and aren't kept in the local copy, except the last My Time load,
+which is saved so the page still shows something offline.
+
+### My Time
+
+My Time reads every Deal Support where you are the user in a lookup field, and picks three fields:
+
+- **Mine by**: a custom user lookup whose label looks like an SE or assigned person, else the record Owner
+- **Hours from**: a total-hours field if there is one, else `Meeting_Duration__c` (Customer Facing Time),
+  else any hours or duration field. Numbers count as hours unless the field says minutes; text values like
+  "30 min" or "1.5 hours" are parsed
+- **Date**: `Date_of_Sales_Activity__c` (Date of Activity) if present, else an activity date field, else Created Date
+
+The page shows which fields it used and has a dropdown for each; your choice is remembered in this browser.
+To pin them for everyone, set `SF_TIME_USER_FIELD`, `SF_TIME_HOURS_FIELD` or `SF_TIME_DATE_FIELD` in `.env`
+to the field's API name.
 
 ## Security notes
 
