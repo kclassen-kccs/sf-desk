@@ -180,7 +180,7 @@ let me = null, meta = null, current = null, accounts = [], leadSeOnly = true, ds
 // Account list: filter to one sales rep (account owner) and/or group the list by rep.
 // Opportunities: closed ones are hidden unless showClosed is ticked.
 let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
-const reps = new Map(); // OwnerId -> name, from every account list loaded this session
+const acctOwners = new Map(); // account Id -> { id, name } of its owner, for every account loaded this session
 
 // Hidden records live in the local database (never in Salesforce). Lists leave them out
 // unless "Show hidden" is ticked; ticked rows can be hidden or unhidden in one go.
@@ -308,7 +308,7 @@ function showMain() {
   const app = document.getElementById('app');
   const search = el('input', { type: 'search', placeholder: 'Search accounts…' });
   const mine = el('input', { type: 'checkbox', checked: leadSeOnly });
-  const rep = el('select', { 'aria-label': 'Sales rep' });
+  const rep = el('select', { 'aria-label': 'Sales rep', id: 'repSelect' });
   const group = el('input', { type: 'checkbox', checked: groupByRep });
   const sort = el('select', { 'aria-label': 'Sort accounts' },
     el('option', { value: 'name' }, 'Sort: Name A–Z'), el('option', { value: 'recent' }, 'Sort: Recently modified'));
@@ -344,17 +344,9 @@ function showMain() {
     if (sortRecent) params.set('sort', 'recent');
     try {
       accounts = await api('/accounts?' + params);
-      for (const a of accounts) if (a.OwnerId) reps.set(a.OwnerId, a.Owner?.Name || a.OwnerId);
-      renderReps();
+      for (const a of accounts) if (a.OwnerId) acctOwners.set(a.Id, { id: a.OwnerId, name: a.Owner?.Name || a.OwnerId });
       renderList();
     } catch (e) { toast(e.message, 'err'); }
-  }
-  // Rep choices are the owners of accounts seen so far, so picking one doesn't shrink the list.
-  function renderReps() {
-    const sorted = [...reps].sort((x, y) => x[1].localeCompare(y[1]));
-    rep.replaceChildren(el('option', { value: '' }, 'All sales reps'),
-      ...sorted.map(([id, name]) => el('option', { value: id }, name)));
-    rep.value = repFilter;
   }
   renderReps();
   loadAccounts();
@@ -367,6 +359,7 @@ function renderList() {
   const shown = showHiddenAccts ? accounts : accounts.filter((a) => !isHidden(a.Id));
   for (const id of [...pickedAccts]) if (!shown.some((a) => a.Id === id)) pickedAccts.delete(id);
   renderAcctSelbar();
+  renderReps();
   if (!shown.length) {
     return box.replaceChildren(el('div', { class: 'empty' },
       accounts.length ? 'All accounts here are hidden. Tick "Show hidden" to see them.' : 'No accounts found.'));
@@ -396,6 +389,19 @@ function renderList() {
   }
   box.replaceChildren(...[...groups].sort((x, y) => x[0].localeCompare(y[0])).flatMap(([rep, list]) =>
     [el('div', { class: 'group' }, `${rep} (${list.length})`), ...list.map(row)]));
+}
+
+// Sales rep choices: owners of the accounts seen this session that aren't hidden (all of them while
+// "Show hidden" is ticked). Remembering every account seen means picking a rep doesn't shrink the list.
+function renderReps() {
+  const select = document.getElementById('repSelect');
+  if (!select) return;
+  const byId = new Map();
+  for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
+  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || repFilter);
+  select.replaceChildren(el('option', { value: '' }, 'All sales reps'),
+    ...[...byId].sort((x, y) => x[1].localeCompare(y[1])).map(([id, name]) => el('option', { value: id }, name)));
+  select.value = repFilter;
 }
 
 // The "N selected · Hide · Unhide" bar shown above a list while rows are ticked.
@@ -498,27 +504,29 @@ function renderOpps() {
   renderSub();
   const sec = document.getElementById('oppSection');
   const all = current.opportunities;
-  const hiddenCount = all.filter((o) => isHidden(o.Id)).length;
+  // Hidden ones go first (unless "Show hidden"), then closed ones (unless "Show closed").
   const visible = showHiddenOpps ? all : all.filter((o) => !isHidden(o.Id));
+  const hiddenCount = all.length - visible.length;
   const shown = showClosed ? visible : visible.filter((o) => !o.IsClosed);
-  const closed = visible.filter((o) => o.IsClosed).length;
+  const closed = visible.length - visible.filter((o) => !o.IsClosed).length;
   for (const id of [...pickedOpps]) if (!shown.some((o) => o.Id === id)) pickedOpps.delete(id);
   const tbody = el('tbody', {}, shown.map(oppRow));
   if (!shown.length) {
     const msg = !all.length ? 'No opportunities on this account yet.'
-      : !visible.length ? 'All opportunities on this account are hidden.'
-      : `No open opportunities. Tick "Show closed" to see the ${closed} closed one${closed === 1 ? '' : 's'}.`;
+      : closed ? `No open opportunities. Tick "Show closed" to see the ${closed} closed one${closed === 1 ? '' : 's'}.`
+      : 'All opportunities on this account are hidden.';
     tbody.append(el('tr', {}, el('td', { colspan: OPP_UI.length + 2, class: 'empty' }, msg)));
   }
   const newRow = meta.canCreateOpportunity ? newOppRow(tbody) : null;
-  const toggle = el('input', { type: 'checkbox', checked: showClosed,
-    onchange: (e) => { showClosed = e.target.checked; renderOpps(); } });
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenOpps });
   showHidden.addEventListener('change', () => { showHiddenOpps = showHidden.checked; renderOpps(); });
+  const toggle = el('input', { type: 'checkbox', checked: showClosed,
+    onchange: (e) => { showClosed = e.target.checked; renderOpps(); } });
   const bar = el('div', { class: 'selbar', id: 'oppSelbar', hidden: true });
   sec.replaceChildren(
     el('h3', {}, showClosed ? `Opportunities (${shown.length})` : `Open opportunities (${shown.length})`,
-      el('span', { class: 'spacer' }), bar, el('label', {}, toggle, `Show closed (${closed})`),
+      el('span', { class: 'spacer' }), bar,
+      el('label', { class: 'selbar' }, toggle, `Show closed (${closed})`),
       hiddenCount ? el('label', { class: 'selbar' }, showHidden, `Show hidden (${hiddenCount})`) : null),
     el('div', { class: 'tablewrap' }, el('table', {},
       el('thead', {}, el('tr', {}, el('th', { class: 'pick' }, ''), OPP_UI.map(([f, , c]) => el('th', { class: c }, label(f))), el('th', {}, ''))),
