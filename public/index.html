@@ -54,6 +54,19 @@
   .tablewrap { overflow-x: auto; }
   .col-name { min-width: 180px; } .col-stage { min-width: 150px; } .col-num { min-width: 100px; } .col-date { min-width: 140px; } .col-next { min-width: 180px; }
 
+  .back { margin-bottom: 8px; }
+  .ds-row { cursor: pointer; }
+  .ds-row:hover td { background: var(--bg); }
+  .ds-more td { background: #fafbfc; }
+  .ds-more dl { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 8px 14px; margin: 4px 0; }
+  .ds-more dt { font-size: 12px; color: var(--muted); }
+  .ds-more dd { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .grid label span.req { display: inline; color: var(--err); }
+  [hidden] { display: none !important; }
+  .grid input[type=checkbox] { width: auto; }
+  details.optional summary { cursor: pointer; color: var(--accent); margin: 12px 0 8px; }
+  .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+
   .center { display: grid; place-items: center; height: calc(100vh - 50px); }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px; max-width: 420px; text-align: center; }
   .card p { color: var(--muted); }
@@ -91,7 +104,7 @@ const LABELS = { StageName: 'Stage', AnnualRevenue: 'Annual revenue', NumberOfEm
   Probability: 'Probability %' };
 const label = (f) => LABELS[f] || f;
 
-let me = null, meta = null, current = null, accounts = [];
+let me = null, meta = null, current = null, accounts = [], dsMeta = null;
 
 // ---------- helpers ----------
 function el(tag, props = {}, ...kids) {
@@ -304,7 +317,7 @@ function oppRow(o) {
   const save = el('button', { class: 'primary', disabled: true }, 'Save');
   const onChange = () => { save.disabled = !Object.keys(changes(tr, o)).length; };
   for (const def of OPP_UI) tr.append(el('td', {}, field(def, o[def[0]], meta.editable.Opportunity.includes(def[0]), onChange)));
-  tr.append(el('td', { class: 'actions' }, save));
+  tr.append(el('td', { class: 'actions' }, save, ' ', el('button', { onclick: () => openOpportunity(o.Id), title: 'Focus on this opportunity and its deal supports' }, 'Open')));
 
   save.addEventListener('click', async () => {
     const fields = changes(tr, o);
@@ -346,10 +359,193 @@ function newOppRow(tbody) {
   return tr;
 }
 
+// ---------- opportunity focus ----------
+const OPP_FOCUS_UI = [...OPP_UI, ['Description', 'textarea']];
+const shortDate = (d) => d ? new Date(String(d).replace(/\+0000$/, 'Z')).toLocaleDateString() : '';
+
+function openOpportunity(id) {
+  const o = current.opportunities.find((x) => x.Id === id);
+  if (!o) return;
+  const a = current.account;
+  document.getElementById('detail').replaceChildren(
+    el('button', { class: 'back', onclick: renderDetail }, `← ${a.Name}`),
+    el('div', { class: 'title-row' },
+      el('h2', {}, o.Name),
+      el('a', { href: `${me.instanceUrl}/${o.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
+    ),
+    el('div', { class: 'sub' }, [a.Name, o.StageName, money(o.Amount), o.CloseDate && `closes ${o.CloseDate}`, `Owner: ${o.Owner?.Name || '—'}`].filter(Boolean).join(' · ')),
+    el('section', { id: 'focusOpp' }),
+    el('section', { id: 'dealSupports' }, el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, 'Loading…')),
+  );
+  renderFocusOpp(o);
+  loadDealSupports(o);
+}
+
+function renderFocusOpp(o) {
+  const sec = document.getElementById('focusOpp');
+  const form = el('div', { class: 'grid' });
+  const save = el('button', { class: 'primary', disabled: true }, 'Save opportunity');
+  const revert = el('button', { disabled: true }, 'Revert');
+  const onChange = () => { const dirty = Object.keys(changes(form, o)).length > 0; save.disabled = revert.disabled = !dirty; };
+  for (const def of OPP_FOCUS_UI) {
+    form.append(el('label', { class: def[1] === 'textarea' ? 'wide' : null },
+      el('span', {}, label(def[0])), field(def, o[def[0]], meta.editable.Opportunity.includes(def[0]), onChange)));
+  }
+  revert.addEventListener('click', () => renderFocusOpp(o));
+  save.addEventListener('click', async () => {
+    save.disabled = true;
+    try {
+      const rec = await api('/opportunities/' + o.Id, { method: 'PATCH', body: { fields: changes(form, o), lastModified: o.LastModifiedDate } });
+      const i = current.opportunities.findIndex((x) => x.Id === o.Id);
+      current.opportunities[i] = rec;
+      document.querySelector('.title-row h2').textContent = rec.Name;
+      renderFocusOpp(rec);
+      toast(`Saved "${rec.Name}" to Salesforce`, 'ok');
+    } catch (e) { toast(e.message, 'err'); save.disabled = false; }
+  });
+  sec.replaceChildren(el('h3', {}, 'Opportunity', el('span', { class: 'spacer' }), revert, save), form);
+}
+
+async function loadDealSupports(o) {
+  const sec = document.getElementById('dealSupports');
+  try {
+    dsMeta ||= await api('/deal-supports/meta');
+    const records = await api(`/opportunities/${o.Id}/deal-supports`);
+    if (document.getElementById('dealSupports') === sec) renderDealSupports(o, records);
+  } catch (e) {
+    sec.replaceChildren(el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, e.message));
+  }
+}
+
+// Show a field value from a Deal Support record as text.
+function dsText(f, v) {
+  if (v == null || v === '') return '';
+  if (f.type === 'boolean') return v ? 'Yes' : 'No';
+  if (f.type === 'currency') return money(v);
+  if (f.type === 'percent') return v + '%';
+  if (f.type === 'datetime') return new Date(String(v).replace(/\+0000$/, 'Z')).toLocaleString();
+  if (f.type === 'multipicklist') return String(v).split(';').join(', ');
+  return String(v);
+}
+
+// Up to five columns for the list: the name, then required fields, then status/type-like picklists.
+function dsColumns() {
+  const name = dsMeta.fields.find((f) => f.name === 'Name');
+  const rest = dsMeta.fields.filter((f) => f !== name && f.type !== 'textarea' && f.type !== 'reference');
+  const picked = [...rest.filter((f) => f.required),
+    ...rest.filter((f) => f.type === 'picklist' && /status|type|stage|request|product/i.test(f.name + f.label))];
+  return [name, ...picked].filter((f, i, all) => f && all.indexOf(f) === i).slice(0, 5);
+}
+
+function renderDealSupports(o, records) {
+  const sec = document.getElementById('dealSupports');
+  const cols = dsColumns();
+  const ncols = cols.length + 2;
+  const tbody = el('tbody');
+  for (const r of records) {
+    const more = el('tr', { class: 'ds-more', hidden: true }, el('td', { colspan: ncols },
+      el('dl', {}, dsMeta.fields.filter((f) => r[f.name] != null && r[f.name] !== '' && f.type !== 'reference')
+        .map((f) => el('div', {}, el('dt', {}, f.label), el('dd', {}, dsText(f, r[f.name]))))),
+      el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
+    ));
+    tbody.append(
+      el('tr', { class: 'ds-row', onclick: () => { more.hidden = !more.hidden; } },
+        cols.map((f) => el('td', {}, dsText(f, r[f.name]) || '—')),
+        el('td', {}, r.CreatedBy?.Name || ''),
+        el('td', {}, shortDate(r.CreatedDate)),
+      ),
+      more,
+    );
+  }
+  if (!records.length) tbody.append(el('tr', {}, el('td', { colspan: ncols, class: 'empty' }, `No ${dsMeta.labelPlural.toLowerCase()} on this opportunity yet.`)));
+
+  const formBox = el('div');
+  const add = dsMeta.canCreate ? el('button', { class: 'primary', onclick: () => {
+    add.hidden = true;
+    formBox.replaceChildren(dealSupportForm(o, () => { add.hidden = false; formBox.replaceChildren(); }));
+  } }, `New ${dsMeta.label}`) : null;
+
+  sec.replaceChildren(
+    el('h3', {}, `${dsMeta.labelPlural} (${records.length})`, el('span', { class: 'spacer' }),
+      el('button', { onclick: () => loadDealSupports(o) }, 'Reload'), add),
+    formBox,
+    el('div', { class: 'tablewrap' }, el('table', {},
+      el('thead', {}, el('tr', {}, cols.map((f) => el('th', {}, f.label)), el('th', {}, 'Created by'), el('th', {}, 'Created'))),
+      tbody,
+    )),
+  );
+}
+
+function dsInput(f) {
+  let n;
+  if (f.type === 'picklist' || f.type === 'multipicklist') {
+    n = el('select', { multiple: f.type === 'multipicklist' },
+      f.type === 'picklist' ? el('option', { value: '' }, '—') : null,
+      (f.picklist || []).map((v) => el('option', { value: v }, v)));
+  } else if (f.type === 'boolean') {
+    n = el('input', { type: 'checkbox' });
+  } else if (f.type === 'textarea') {
+    n = el('textarea', { rows: 3, maxlength: f.length });
+  } else {
+    const type = { date: 'date', datetime: 'datetime-local', double: 'number', currency: 'number', percent: 'number',
+      int: 'number', email: 'email', url: 'url', phone: 'tel' }[f.type] || 'text';
+    n = el('input', { type, step: type === 'number' ? 'any' : null, maxlength: type === 'text' ? f.length : null,
+      placeholder: f.type === 'reference' ? `${f.referenceTo?.[0] || 'Record'} Id` : null });
+  }
+  if (f.defaultValue != null) {
+    if (f.type === 'boolean') n.checked = f.defaultValue === true || f.defaultValue === 'true';
+    else if (typeof f.defaultValue !== 'object') n.value = f.defaultValue;
+  }
+  n.setAttribute('aria-label', f.label);
+  return n;
+}
+
+function dsValue(f, n) {
+  if (f.type === 'boolean') return n.checked;
+  if (f.type === 'multipicklist') return [...n.selectedOptions].map((x) => x.value).join(';') || null;
+  if (n.value === '') return null;
+  if (['double', 'currency', 'percent', 'int'].includes(f.type)) return Number(n.value);
+  if (f.type === 'datetime') return new Date(n.value).toISOString();
+  return n.value;
+}
+
+function dealSupportForm(o, close) {
+  const fields = dsMeta.fields.filter((f) => f.createable);
+  const inputs = new Map(fields.map((f) => [f, dsInput(f)]));
+  const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
+    el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f));
+  const required = fields.filter((f) => f.required);
+  const optional = fields.filter((f) => !f.required);
+  const create = el('button', { class: 'primary' }, `Create ${dsMeta.label}`);
+  const box = el('section', {},
+    el('h3', {}, `New ${dsMeta.label} for ${o.Name}`),
+    el('div', { class: 'grid' }, required.map(cell)),
+    optional.length ? el('details', { class: 'optional', open: required.length === 0 },
+      el('summary', {}, `More fields (${optional.length})`), el('div', { class: 'grid' }, optional.map(cell))) : null,
+    el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
+  );
+  create.addEventListener('click', async () => {
+    const body = {};
+    for (const [f, n] of inputs) {
+      const v = dsValue(f, n);
+      if (v !== null && !(f.type === 'boolean' && v === false && f.defaultValue !== true)) body[f.name] = v;
+    }
+    const missing = required.filter((f) => body[f.name] == null);
+    if (missing.length) return toast('Required: ' + missing.map((f) => f.label).join(', '), 'err');
+    create.disabled = true;
+    try {
+      const rec = await api(`/opportunities/${o.Id}/deal-supports`, { method: 'POST', body: { fields: body } });
+      toast(`Created ${dsMeta.label}${rec?.Name ? ` "${rec.Name}"` : ''} in Salesforce`, 'ok');
+      loadDealSupports(o);
+    } catch (e) { toast(e.message, 'err'); create.disabled = false; }
+  });
+  return box;
+}
+
 // ---------- boot ----------
 document.getElementById('logout').addEventListener('click', async () => {
   await api('/logout', { method: 'POST' }).catch(() => {});
-  current = null;
+  current = null; dsMeta = null;
   showConnect('Disconnected.');
 });
 

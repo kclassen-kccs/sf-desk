@@ -35,6 +35,15 @@ const OPP_FIELDS = ['Name', 'StageName', 'Amount', 'CloseDate', 'Probability', '
 const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'OwnerId', 'Owner.Name', 'LastModifiedDate'];
 const OPP_READ = ['Id', 'AccountId', ...OPP_FIELDS, 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
 
+// The "Deal Support" object attached to opportunities. Found by its label unless these name it:
+// SF_DEAL_SUPPORT_OBJECT is its API name (e.g. Deal_Support__c), SF_DEAL_SUPPORT_OPP_FIELD its
+// lookup to Opportunity (only needed if it has more than one).
+const DEAL_SUPPORT_OBJECT = process.env.SF_DEAL_SUPPORT_OBJECT || '';
+const DEAL_SUPPORT_OPP_FIELD = process.env.SF_DEAL_SUPPORT_OPP_FIELD || '';
+// Field types the Deal Support form knows how to show.
+const DS_TYPES = new Set(['string', 'textarea', 'email', 'phone', 'url', 'picklist', 'multipicklist', 'boolean',
+  'date', 'datetime', 'double', 'currency', 'percent', 'int', 'reference']);
+
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
 }
@@ -224,7 +233,8 @@ async function sf(req, method, urlPath, { body, headers = {} } = {}, retried = f
 
 function stripAttrs(rec) {
   const { attributes, ...rest } = rec;
-  if (rest.Owner) rest.Owner = { Name: rest.Owner.Name };
+  // Related records (Owner, CreatedBy) come back with their own attributes; keep just the fields.
+  for (const [k, v] of Object.entries(rest)) if (v && typeof v === 'object' && v.attributes) rest[k] = stripAttrs(v);
   return rest;
 }
 
@@ -400,6 +410,95 @@ api.post('/opportunities', wrap(async (req, res) => {
   const created = await sf(req, 'POST', `/services/data/${API}/sobjects/Opportunity`, { body });
   const [rec] = await query(req, `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE Id = '${sfId(created.id)}'`);
   store.saveOpportunities(orgOf(req), [rec]);
+  res.status(201).json(rec);
+}));
+
+// ---------- Deal Support ----------
+
+// Find the Deal Support object, its lookup to Opportunity, and the fields the form can show.
+async function dealSupportMeta(req) {
+  if (req.session.dealSupport) return req.session.dealSupport;
+  const { sobjects } = await sf(req, 'GET', `/services/data/${API}/sobjects`);
+  const obj = DEAL_SUPPORT_OBJECT
+    ? sobjects.find((o) => o.name.toLowerCase() === DEAL_SUPPORT_OBJECT.toLowerCase())
+    : sobjects.filter((o) => /^deal\s*supports?$/i.test(o.label.trim()) || /^deal\s*supports$/i.test(o.labelPlural.trim()))
+      .sort((a, b) => b.custom - a.custom)[0];
+  if (!obj) {
+    throw new HttpError(404, 'No "Deal Support" object found in your org, or your user can\'t see it. ' +
+      'Set SF_DEAL_SUPPORT_OBJECT in .env to its API name (e.g. Deal_Support__c) and restart.');
+  }
+  const d = await sf(req, 'GET', `/services/data/${API}/sobjects/${obj.name}/describe`);
+  const lookups = d.fields.filter((f) => f.type === 'reference' && f.referenceTo.includes('Opportunity'));
+  const opp = DEAL_SUPPORT_OPP_FIELD
+    ? lookups.find((f) => f.name.toLowerCase() === DEAL_SUPPORT_OPP_FIELD.toLowerCase())
+    : lookups.sort((a, b) => b.createable - a.createable)[0];
+  if (!opp) {
+    throw new HttpError(404, `${d.label} has no lookup to Opportunity. ` +
+      'Set SF_DEAL_SUPPORT_OPP_FIELD in .env to the field that links it to an opportunity and restart.');
+  }
+  const fields = d.fields
+    .filter((f) => f.name !== opp.name && DS_TYPES.has(f.type) && (f.createable || f.nameField))
+    .map((f) => ({
+      name: f.name,
+      label: f.label,
+      type: f.type,
+      createable: f.createable,
+      required: f.createable && !f.nillable && !f.defaultedOnCreate && f.type !== 'boolean',
+      length: f.length || null,
+      referenceTo: f.referenceTo?.length ? f.referenceTo : null,
+      picklist: f.picklistValues?.length ? f.picklistValues.filter((v) => v.active).map((v) => v.value) : null,
+      defaultValue: f.defaultValue ?? null,
+    }));
+  const meta = {
+    object: d.name,
+    label: d.label,
+    labelPlural: d.labelPlural,
+    oppField: opp.name,
+    canCreate: d.createable && opp.createable,
+    fields,
+  };
+  req.session.dealSupport = meta;
+  return meta;
+}
+
+const dsReadFields = (meta) =>
+  ['Id', 'CreatedDate', 'CreatedBy.Name', 'Owner.Name', ...meta.fields.map((f) => f.name)]
+    .filter((f, i, all) => all.indexOf(f) === i);
+
+async function listDealSupports(req, meta, oppId, extraWhere = '') {
+  // Not every custom object has an owner (master-detail children don't); retry without it.
+  const run = (fields) => query(req, `SELECT ${fields.join(', ')} FROM ${meta.object} ` +
+    `WHERE ${meta.oppField} = '${oppId}'${extraWhere} ORDER BY CreatedDate DESC`, 500);
+  try {
+    return await run(dsReadFields(meta));
+  } catch (err) {
+    if (err.status !== 400) throw err;
+    return run(dsReadFields(meta).filter((f) => f !== 'Owner.Name'));
+  }
+}
+
+api.get('/deal-supports/meta', wrap(async (req, res) => res.json(await dealSupportMeta(req))));
+
+api.get('/opportunities/:id/deal-supports', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  res.json(await listDealSupports(req, meta, id));
+}));
+
+api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  if (!meta.canCreate) throw new HttpError(403, `Your Salesforce user can't create ${meta.labelPlural}.`);
+  const byName = new Map(meta.fields.filter((f) => f.createable).map((f) => [f.name, f]));
+  const body = { [meta.oppField]: id };
+  for (const [k, v] of Object.entries(req.body?.fields || {})) {
+    if (!byName.has(k)) throw new HttpError(400, `Field not settable in this app: ${k}`);
+    if (v !== '' && v !== null && v !== undefined) body[k] = v;
+  }
+  const missing = [...byName.values()].filter((f) => f.required && body[f.name] === undefined);
+  if (missing.length) throw new HttpError(400, 'Required: ' + missing.map((f) => f.label).join(', '));
+  const created = await sf(req, 'POST', `/services/data/${API}/sobjects/${meta.object}`, { body });
+  const [rec] = await listDealSupports(req, meta, id, ` AND Id = '${sfId(created.id)}'`);
   res.status(201).json(rec);
 }));
 

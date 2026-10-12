@@ -10,6 +10,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
 - Shows account details plus all its opportunities, with open pipeline total
 - Edits account fields and opportunity fields inline; changed fields are highlighted before saving
 - Creates new opportunities on an account
+- **Open** on an opportunity focuses on it: edit its fields, see its Deal Support records (click one for all
+  its fields), and create new ones with a form built from your org's Deal Support fields
 - Picklists (Type, Industry, Stage) come from your org; fields you can't edit are greyed out
 - If someone else changed a record after you loaded it, the save is refused rather than overwriting their work
 - Keeps a local SQLite copy of every account and opportunity you load, so if Salesforce can't be reached
@@ -66,6 +68,14 @@ Sandbox? Set `SF_LOGIN_URL=https://test.salesforce.com`. Using a My Domain login
 Edit `ACCOUNT_FIELDS` / `OPP_FIELDS` near the top of `server.js` (the server only allows writes
 to those fields), and `ACCOUNT_UI` / `OPP_UI` near the top of `public/index.html` to show them.
 Custom fields work too, e.g. `Region__c`.
+
+## Deal Support
+
+SF Desk finds the Deal Support object by its label ("Deal Support") and uses its lookup to Opportunity.
+The new-record form shows every field your user can set: required ones first, the rest under **More fields**.
+If it can't find the object, set `SF_DEAL_SUPPORT_OBJECT` in `.env` to its API name (e.g. `Deal_Support__c`);
+if the object has more than one lookup to Opportunity, set `SF_DEAL_SUPPORT_OPP_FIELD` to the right one.
+Deal Supports are read live from Salesforce and aren't kept in the local copy.
 
 ## Security notes
 
