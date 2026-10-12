@@ -176,6 +176,8 @@
   .ev .t { font-size: 11px; opacity: .8; }
   .ev .s { font-weight: 600; overflow-wrap: anywhere; }
   .cal-panel section { margin-bottom: 14px; }
+  button.linkish { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; text-align: left; display: block; }
+  .deals tr.sel td { background: var(--accent-soft); }
   .cal-panel .grid { grid-template-columns: 1fr; }
   .cal-panel .desc { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 13px; background: var(--bg); border-radius: 6px; padding: 8px; }
   .cal-panel dl { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; margin: 0 0 10px; font-size: 13px; }
@@ -1743,8 +1745,38 @@ function renderCalendar() {
     allDay.length ? el('div', { class: 'week-row' }, el('div', { class: 'gutter-label' }, 'All day'),
       days.map((d) => el('div', { class: 'allday' }, allDay.filter((e) => e.date === d).map(evBox)))) : null,
     el('div', { class: 'week-row' }, gutter, cols),
-  ));
+  ), el('section', { id: 'calWeekDs', style: 'margin-top:18px' }));
+  renderWeekDealSupports();
   renderEventPanel();
+}
+
+// My Deal Supports dated in the week shown, with a total; "Event" picks the meeting each one covers.
+function renderWeekDealSupports() {
+  const sec = document.getElementById('calWeekDs');
+  const { week = [], weekHours, activityLabel } = cal.data;
+  const unit = weekHours?.unit;
+  const toHours = (v) => v == null || v === '' ? 0 : unit === 'text' ? parseDuration(v) : unit === 'minutes' ? Number(v) / 60 : Number(v) || 0;
+  const num = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
+  const evTitle = (id) => cal.data.events.find((e) => e.id === id)?.title || 'event';
+  const tbody = el('tbody', {}, week.map((r) => el('tr', { class: 'nolink' + (r.events.includes(cal.sel) ? ' sel' : '') },
+    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, num(r.Name) || r.Id)),
+    el('td', {}, r.date),
+    activityLabel ? el('td', { class: 'wrap' }, r.activity) : null,
+    el('td', { class: 'wrap' }, [r.accountName, r.oppName].filter(Boolean).join(' · ')),
+    el('td', { class: 'wrap' }, r.events.length
+      ? r.events.map((id) => el('button', { class: 'linkish', onclick: () => { cal.sel = id; renderCalendar(); } }, evTitle(id)))
+      : el('span', { class: 'sub', style: 'margin:0' }, 'No matching event')),
+    el('td', { class: 'n' }, fmtH(toHours(r.hours))))));
+  if (!week.length) tbody.append(el('tr', {}, el('td', { colspan: 6, class: 'empty' }, `None of your ${dsMeta.labelPlural.toLowerCase()} are dated this week.`)));
+  sec.replaceChildren(
+    el('h3', {}, `Your ${dsMeta.labelPlural} this week (${week.length})`),
+    el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
+      el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Date'), activityLabel ? el('th', {}, activityLabel) : null,
+        el('th', {}, 'Account · Opportunity'), el('th', {}, 'Event'), el('th', { class: 'n' }, 'Hours'))),
+      tbody,
+      week.length ? el('tfoot', {}, el('tr', {}, el('td', { colspan: activityLabel ? 5 : 4 }, `Total (${week.length})`),
+        el('td', { class: 'n' }, fmtH(week.reduce((s, r) => s + toHours(r.hours), 0))))) : null)),
+  );
 }
 
 function selectEvent(id) {

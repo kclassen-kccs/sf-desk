@@ -913,9 +913,11 @@ const isoDate = (v) => {
 async function myDealSupportsBetween(req, ds, cm, d0, d1) {
   if (!cm.matchDate) return [];
   const me = sfId(req.session.sf.user.id);
-  const opp = (await timeMeta(req).catch(() => null))?.oppRel;
+  const tm = await timeMeta(req).catch(() => null);
+  const opp = tm?.oppRel;
   const acct = cm.matchAccount && cm.matchAccountRel;
-  const fields = ['Id', 'Name', cm.matchDate, ds.oppField,
+  const hours = tm?.hoursFields[0], activity = activityField(ds);
+  const fields = ['Id', 'Name', cm.matchDate, ds.oppField, ...(hours ? [hours.name] : []), ...(activity ? [activity.name] : []),
     ...(opp ? [`${opp}.Name`, `${opp}.AccountId`, `${opp}.Account.Name`, `${opp}.Account.Website`] : []),
     ...(cm.matchAccount ? [cm.matchAccount] : []), ...(acct ? [`${acct}.Name`, `${acct}.Website`] : [])];
   const dateType = cm.dateField?.name === cm.matchDate ? cm.dateField.type : 'date';
@@ -936,6 +938,7 @@ async function myDealSupportsBetween(req, ds, cm, d0, d1) {
       oppId: r[ds.oppField] || null, oppName: opp ? r[opp]?.Name || null : null,
       accountIds: [cm.matchAccount && r[cm.matchAccount], opp && r[opp]?.AccountId].filter(Boolean),
       accountNames: accts.map((a) => a.Name).filter(Boolean),
+      hours: hours ? r[hours.name] ?? null : null, activity: activity ? String(r[activity.name] ?? '').split(';').join(', ') : '',
       domains: accts.map((a) => domainOf(a.Website)).filter(Boolean) };
   });
 }
@@ -1107,7 +1110,14 @@ api.get('/calendar', wrap(async (req, res) => {
       const { accountIds, oppId, ...shown } = e;
       return { ...shown, supports, skipped: [e.id, ...e.copies].some((id) => marks[id]?.skipped) };
     });
-    const data = { source, events: out, prefill: cm, dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } };
+    // My Deal Supports dated this week, for the list under the calendar, with the events each covers.
+    const tm = await timeMeta(req).catch(() => null);
+    const hoursF = tm?.hoursFields[0];
+    const week = mine.map((r) => ({ Id: r.Id, Name: r.Name, date: r.date, activity: r.activity, hours: r.hours,
+      oppName: r.oppName, accountName: r.accountNames[0] || '', events: out.filter((e) => e.supports.some((x) => x.Id === r.Id)).map((e) => e.id) }))
+      .sort((a, b) => a.date.localeCompare(b.date) || String(a.Name).localeCompare(String(b.Name)));
+    const data = { source, events: out, prefill: cm, week, weekHours: hoursF ? { label: hoursF.label, unit: hoursF.unit } : null,
+      activityLabel: activityField(ds)?.label || null, dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } };
     store.saveSetting(orgOf(req), kind, data);
     return data;
   }, () => {
@@ -1193,6 +1203,10 @@ api.get('/opportunities/open', wrap(async (req, res) => {
     records: top.slice(0, limit).map((o) => ({ ...o, suggested: !!suggested(o) || undefined })) });
 }));
 
+// The activity done on a Deal Support: Requested Activity in Kerry's org, else a field labelled like it.
+const activityField = (ds) => ds.fields.find((f) => f.name === 'Requested_SaaS_Activity__c') ||
+  ds.fields.find((f) => /^(requested )?activity( type)?$/i.test(f.label.trim()) && f.type !== 'date' && f.type !== 'datetime');
+
 // Deal Supports on an account and all its opportunities (everyone's, not just mine) dated on or after
 // `since`, newest first, for the account screen. Uses My Time's date, hours and person fields.
 api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
@@ -1202,9 +1216,7 @@ api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
   const tm = await timeMeta(req);
   const cm = await calendarMeta(req).catch(() => ({}));
   const date = tm.dateFields[0], hours = tm.hoursFields[0], who = tm.userFields.find((f) => f.rel) || null;
-  // The activity done: Requested Activity in Kerry's org, else a field labelled like it.
-  const activity = ds.fields.find((f) => f.name === 'Requested_SaaS_Activity__c') ||
-    ds.fields.find((f) => /^(requested )?activity( type)?$/i.test(f.label.trim()) && f.type !== 'date' && f.type !== 'datetime');
+  const activity = activityField(ds);
   const onAccount = [cm.matchAccount && `${cm.matchAccount} = '${id}'`, tm.oppRel && `${tm.oppRel}.AccountId = '${id}'`].filter(Boolean);
   if (!onAccount.length) throw new HttpError(404, `Can't tell which ${ds.labelPlural} belong to an account.`);
   const fields = ['Id', 'Name', date.name, hours.name, ds.oppField, ...(tm.oppRel ? [`${tm.oppRel}.Name`] : []),
