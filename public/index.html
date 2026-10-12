@@ -139,6 +139,7 @@
   #tip i { display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; }
   .deals td { white-space: nowrap; } .deals td.n { text-align: right; font-variant-numeric: tabular-nums; }
   .deals th.n { text-align: right; }
+  .deals tfoot td { font-weight: 600; border-top: 2px solid var(--line); border-bottom: 0; }
   .deals tbody tr { cursor: pointer; } .deals tbody tr:hover td { background: var(--bg); }
   .deals td.wrap { white-space: normal; min-width: 180px; }
   .pastdue { color: var(--err); }
@@ -1047,21 +1048,25 @@ function renderDeals(opps, today) {
     el('td', { class: 'wrap' }, o.Name),
     el('td', { class: 'wrap' }, o.Account?.Name || ''),
     el('td', {}, o.StageName || ''),
-    showCat ? el('td', {}, o.ForecastCategoryName || '') : null,
-    el('td', { class: 'n' }, money(amt(o))),
     el('td', { class: 'n' }, o.Probability != null ? o.Probability + '%' : ''),
     el('td', { class: o.CloseDate < today ? 'pastdue' : null }, o.CloseDate + (o.CloseDate < today ? ' ⚠' : '')),
     el('td', {}, o.Owner?.Name || ''),
+    showCat ? el('td', {}, o.ForecastCategoryName || '') : null,
+    el('td', { class: 'n' }, money(amt(o))),
   )));
-  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 8, class: 'empty' }, 'No open deals here.')));
+  const ncols = showCat ? 8 : 7;
+  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: ncols, class: 'empty' }, 'No open deals here.')));
   sec.replaceChildren(
     el('h3', {}, title, el('span', { class: 'spacer' }),
       p ? el('button', { onclick: () => { dash.pick = null; renderDashboard(); } }, 'Show this quarter') : el('span', { class: 'sub', style: 'margin:0' }, 'Click a bar to list its deals')),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
       el('thead', {}, el('tr', {}, el('th', {}, 'Opportunity'), el('th', {}, 'Account'), el('th', {}, 'Stage'),
-        showCat ? el('th', {}, 'Forecast') : null, el('th', { class: 'n' }, 'Amount'), el('th', { class: 'n' }, 'Prob.'),
-        el('th', {}, 'Close date'), el('th', {}, 'Owner'))),
-      tbody)),
+        el('th', { class: 'n' }, 'Prob.'), el('th', {}, 'Close date'), el('th', {}, 'Owner'),
+        showCat ? el('th', {}, 'Forecast') : null, el('th', { class: 'n' }, 'Amount'))),
+      tbody,
+      list.length ? el('tfoot', {}, el('tr', {},
+        el('td', { colspan: ncols - 1 }, `Total (${plural(list.length, 'deal')})`),
+        el('td', { class: 'n' }, money(sum(list))))) : null)),
   );
 }
 
