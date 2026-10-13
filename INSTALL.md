@@ -13,8 +13,8 @@ for calendar access.
    Exchange account if it isn't there (**Add Account... > Microsoft Exchange**, sign in with your
    SailPoint email) and turn on **Calendars**. Check that this week's meetings show in Calendar.app.
 2. **Get `SF-Desk.dmg`** from Kerry Classen and double-click it. In the window that opens, drag **SF Desk**
-   onto the **Applications** folder. The window also has these instructions ("Read Me First"), the Outlook
-   add-in guide and the full SF Desk guide. Then eject the disk image. (`SF-Desk-app.zip` has just the app:
+   onto the **Applications** folder. The window also has short install instructions ("Read Me First"), the
+   Outlook add-in guide and the full SF Desk guide. Then eject the disk image. (`SF-Desk-app.zip` has just the app:
    double-click it and drag **SF Desk** into Applications.)
 3. **Open it once with Open Anyway.** The app isn't signed by Apple, so the first time macOS says it
    can't verify the developer. Click **Done**, open **System Settings > Privacy & Security**, scroll
@@ -62,7 +62,8 @@ built anywhere npm and nodejs.org are reachable. So:
    checkout's current commit, compiles the app and the calendar reader for Apple Silicon and Intel, puts the server, its
    `node_modules` and Node.js inside, signs it ad hoc, and writes `dist/SF Desk.app`, `dist/SF-Desk-app.zip`
    and `dist/SF-Desk.dmg`. The disk image, the file to hand out, holds the app, a shortcut to Applications
-   and this guide, the README and OUTLOOK.md as web pages (made by `scripts/md-to-html.mjs`).
+   and, as web pages made by `scripts/md-to-html.mjs`, a short install guide (`mac/app/READ ME FIRST.md`),
+   the README and OUTLOOK.md.
 
 With `node_modules` in your checkout and a nodejs.org build of Node, `scripts/build-mac-app.sh --node
 /path/to/node` skips step 1. The bundled Node is for Apple Silicon; on an Intel Mac the app uses Node.js
