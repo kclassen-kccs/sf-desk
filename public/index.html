@@ -2156,7 +2156,7 @@ function renderEventPanel() {
 
   panel.replaceChildren(
     el('section', {},
-      el('h3', {}, e.title || e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), 'aria-label': 'Close' }, '✕')),
+      el('h3', {}, e.title || e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), title: 'Close this event' }, 'Close')),
       el('div', { style: 'margin:-6px 0 10px' }, el('span', { class: 'status-pill ' + st }, STATUS_TEXT[st])),
       el('dl', {},
         el('dt', {}, 'When'), el('dd', {}, when),
