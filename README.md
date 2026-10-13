@@ -4,7 +4,8 @@ A small local web app for viewing and editing your Salesforce Accounts and Oppor
 It uses the Salesforce REST API with your own OAuth login, so it only sees and changes what
 your Salesforce user is already allowed to, and it only writes when you click **Save** or **Add**.
 
-**Setting it up on a SailPoint Mac?** Follow [INSTALL.md](INSTALL.md): it covers Node, the Salesforce CLI
+**Setting it up on a SailPoint Mac?** The easiest way is the **SF Desk app**, which has everything inside
+([INSTALL.md](INSTALL.md#the-sf-desk-app-recommended)). For a Git checkout, INSTALL.md also covers Node, the Salesforce CLI
 login, getting dependencies past the npm block, the Exchange calendar and calendar permission, and
 troubleshooting.
 

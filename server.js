@@ -1578,6 +1578,9 @@ app.use((err, req, res, next) => {
   res.status(status).type('text').send(message);
 });
 
+// Started by the Mac app (mac/app): stop when it quits or dies, which closes our stdin.
+if (process.env.SF_DESK_APP) process.stdin.on('end', () => process.exit(0)).on('error', () => process.exit(0)).resume();
+
 app.listen(PORT, 'localhost', () => {
   console.log(`SF Desk running at http://localhost:${PORT}`);
   if (USE_CLI) console.log(`No SF_CLIENT_ID set: signing in with the Salesforce CLI login${SF_TARGET_ORG ? ` for "${SF_TARGET_ORG}"` : ' (default org)'}.`);

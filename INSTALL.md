@@ -3,7 +3,67 @@
 SF Desk runs entirely on your Mac. It signs in to Salesforce as you, through the Salesforce CLI, and
 only sees and changes what your own Salesforce user can. Nothing is hosted anywhere else.
 
-## Quick install (recommended)
+## The SF Desk app (recommended)
+
+**SF Desk.app** has everything inside it: the SF Desk server, Node.js, its dependencies and the calendar
+reader. There's nothing else to install, no Terminal window to keep open, and macOS asks SF Desk itself
+for calendar access.
+
+1. **Set up your calendar first.** In **System Settings > Internet Accounts**, add your SailPoint
+   Exchange account if it isn't there (**Add Account... > Microsoft Exchange**, sign in with your
+   SailPoint email) and turn on **Calendars**. Check that this week's meetings show in Calendar.app.
+2. **Get `SF-Desk-app.zip`** from Kerry Classen, double-click it, and drag **SF Desk** into your
+   **Applications** folder.
+3. **Open it once with Open Anyway.** The app isn't signed by Apple, so the first time macOS says it
+   can't verify the developer. Click **Done**, open **System Settings > Privacy & Security**, scroll
+   down, click **Open Anyway** next to "SF Desk" and confirm with your password. (On some macOS versions
+   right-click > **Open** > **Open** works too.) You only do this once per new version.
+4. **Follow its prompts.** The first time, SF Desk:
+   - copies your settings and data from an earlier install (`~/SF-Desk`) or Git checkout, if you have one;
+   - offers to download the Salesforce CLI if it can't find one (no admin rights needed);
+   - opens your browser to sign in to `sailpoint.my.salesforce.com` with SSO, if the CLI isn't signed in.
+5. **Click Connect**, then open **Time Entry**. When macOS asks whether **SF Desk** may access your
+   calendars, choose **Allow Full Access**.
+
+Keep SF Desk in the Dock (right-click its icon > **Options > Keep in Dock**). Closing the window keeps it
+running in the background, so the Outlook add-in keeps working; click the Dock icon to bring it back, and
+quit it (**SF Desk > Quit SF Desk**) to stop it. If SF Desk is already running from a Terminal window or a
+checkout, the app shows that one instead of starting another.
+
+**Your data** lives in `~/Library/Application Support/SF Desk` (**Help > Show Data Folder**): `.env` for
+settings (**SF Desk > Edit Settings...**, then **File > Restart Server**), `data/` for the local copy of
+your records, `certs/` for the Outlook add-in's certificate and `sf-cli/` if the app downloaded the CLI.
+To update, replace the app with the new one; all of that is kept. The server's log is in
+`~/Library/Logs/SF Desk` (**Help > Show Server Log**).
+
+**Outlook add-in:** choose **SF Desk > Set Up Outlook Add-in...**. It makes and trusts the HTTPS
+certificate (macOS asks for your password), restarts the server and offers to download the add-in's
+manifest. Then follow [OUTLOOK.md](OUTLOOK.md) from step 2.
+
+**Uninstalling:** quit SF Desk, delete it from Applications, and delete
+`~/Library/Application Support/SF Desk` and `~/Library/Logs/SF Desk`.
+
+If calendar access goes missing after updating to a new build, open **System Settings > Privacy &
+Security > Calendars**, remove SF Desk with the minus button (or turn it off and on), and open Time Entry
+again. macOS ties the permission to each unsigned build.
+
+### Building the app
+
+The app has to be compiled on a Mac with the Xcode Command Line Tools (`xcode-select --install`), but its
+contents come from the same download as the Terminal installer below, which can be built anywhere npm and
+nodejs.org are reachable. So:
+
+1. Anywhere (e.g. in the cloud): `scripts/build-mac-package.sh` writes `dist/SF-Desk-mac.zip`.
+2. On a Mac, in a checkout of the same commit: `scripts/build-mac-app.sh --from path/to/SF-Desk-mac.zip`.
+   It compiles the app and the calendar reader for Apple Silicon and Intel, puts the server, its
+   `node_modules` and Node.js inside, signs it ad hoc, and writes `dist/SF Desk.app` and
+   `dist/SF-Desk-app.zip`, the file to hand out.
+
+With `node_modules` in your checkout and a nodejs.org build of Node, `scripts/build-mac-app.sh --node
+/path/to/node` skips step 1. The bundled Node is for Apple Silicon; on an Intel Mac the app uses Node.js
+22 or newer installed from nodejs.org instead.
+
+## Quick install with the Terminal installer
 
 Get `SF-Desk-mac.zip` from Kerry Classen. It bundles everything SF Desk needs on an Apple Silicon Mac
 (Node.js and all dependencies), so there's no npm, Git or Node install, and Cisco Umbrella's npm
@@ -238,6 +298,10 @@ redo step 4's dependency step first.
 
 ### Time Entry lists no calendars, or only "Salesforce events"
 
+With the SF Desk app, check step 1, then that **SF Desk** is on in **System Settings > Privacy &
+Security > Calendars** (quit and reopen the app after turning it on). Steps 2 to 4 are for starting SF
+Desk from Terminal or a checkout.
+
 Work through these in order:
 
 1. **Is the Exchange account in Calendar.app?** If your meetings don't show there, go back to step 2.
@@ -257,7 +321,7 @@ Work through these in order:
 ### macOS says the installer, `node` or `better_sqlite3.node` can't be opened
 
 Files from a browser download are quarantined by macOS. Open the installer with **Open Anyway** as in
-Quick install step 2; it then clears the quarantine on everything it installs. If a dialog still
+the Terminal installer's step 2; it then clears the quarantine on everything it installs. If a dialog still
 names a file in `~/SF-Desk`, run `xattr -dr com.apple.quarantine ~/SF-Desk` in Terminal and start
 SF Desk again.
 
