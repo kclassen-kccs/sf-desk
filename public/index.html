@@ -1067,6 +1067,20 @@ function dealSupportForm(o, close, opts = {}) {
     else if (f.type === 'datetime') n.value = `${localDay(new Date(v))}T${hhmm24(new Date(v))}`;
     else n.value = v;
   }
+  // opts.derived fills one field from others as they change, e.g. the details from the activity and platform,
+  // until it is typed in.
+  if (opts.derived) {
+    const { field, from, value } = opts.derived;
+    const target = fields.find((f) => f.name === field), srcs = from.map((n) => fields.find((f) => f.name === n)).filter(Boolean);
+    if (target && srcs.length) {
+      const t = inputs.get(target);
+      let typed = false;
+      t.addEventListener('input', () => { typed = true; });
+      const update = () => { if (!typed) t.value = value(srcs.map((f) => dsText(f, dsValue(f, inputs.get(f))))); };
+      for (const f of srcs) for (const ev of ['input', 'change']) inputs.get(f).addEventListener(ev, update);
+      update();
+    }
+  }
   const initial = new Map([...inputs].map(([f, n]) => [f, JSON.stringify(dsValue(f, n))]));
   // A lookup on a saved record shows its record's name, with the Id it holds underneath (until it's changed).
   const refName = (f) => {
@@ -2053,9 +2067,30 @@ function eventPrefill(e) {
       if (opt) v[p.hoursField.name] = opt;
     } else v[p.hoursField.name] = String(hours);
   }
-  if (p.descField && e.description) v[p.descField.name] = e.description.slice(0, p.descField.length || 32000);
+  const desc = meetingNotes(e.description);
+  if (p.descField && desc) v[p.descField.name] = desc.slice(0, p.descField.length || 32000);
   if (p.userField?.onForm) v[p.userField.name] = me.user.id;
   return v;
+}
+// An event's description without the online-meeting invitation (Teams, Zoom, Webex, Google Meet):
+// the block from its "____" divider or "Microsoft Teams meeting" / "Join ..." line through the meeting
+// Id, passcode, dial-in numbers and help links. What's left is what was written about the meeting.
+function meetingNotes(text) {
+  let lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const divider = (l) => /^\s*[_\-=]{10,}\s*$/.test(l);
+  const opener = (l) => /^\s*(microsoft teams( meeting| need help)?|join (the meeting now|on your computer|zoom meeting|with google meet|webex meeting|from the meeting link)|.*is inviting you to a scheduled zoom meeting|you have been invited to a webex|join meeting)\b/i.test(l);
+  const invite = (l) => /^\s*(meeting id|passcode|password|phone conference id|dial[- ]?in|dial by your location|one tap mobile|join by phone|find a local number|reset (dial-in )?pin|need help\?|meeting options|learn more|for organizers|join with a video conferencing device|or call in|access code|tap to join|\+?\d[\d\s().,#*-]{7,})/i.test(l) ||
+    /(teams\.microsoft\.com|teams\.live\.com|zoom\.us\/|webex\.com|meet\.google\.com|aka\.ms\/JoinTeamsMeeting)/i.test(l);
+  // Drop each invitation block: from an opening divider or line to the closing divider (or the end).
+  for (let i = 0; i < lines.length; i++) {
+    if (!(divider(lines[i]) && lines.slice(i + 1, i + 4).some(opener)) && !opener(lines[i])) continue;
+    let j = i + 1;
+    while (j < lines.length && !divider(lines[j])) j++;
+    lines.splice(i, Math.min(j + 1, lines.length) - i);
+    i--;
+  }
+  lines = lines.filter((l) => !invite(l) && !divider(l));
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 const hhmm24 = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
 const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
@@ -2110,6 +2145,17 @@ function renderEventPanel() {
 }
 
 // The "create from event" form: pick an opportunity, then the Deal Support fields, prefilled from the event.
+// With nothing written about the meeting but the invitation, the details default to
+// "<Requested Activity> - <Platform Request>" from the form, kept up to date as those are picked.
+function descDefault(e) {
+  const p = cal.data.prefill;
+  if (!p.descField || meetingNotes(e.description)) return null;
+  const find = (name, re) => dsMeta.fields.find((f) => f.name === name) || dsMeta.fields.find((f) => re.test(f.label));
+  const from = [find('Requested_SaaS_Activity__c', /requested.*activity/i), find('IdentityNow_Platform_Modules__c', /platform/i)]
+    .filter((f) => f && f.name !== p.descField.name).map((f) => f.name);
+  return from.length ? { field: p.descField.name, from, value: (vals) => vals.filter(Boolean).join(' - ') } : null;
+}
+
 function createFromEvent(e, close) {
   // The event's opportunity (its own, or borrowed from the Salesforce copy of a Mac event) is preselected.
   const oppId = e.oppId || (e.what?.type === 'Opportunity' || String(e.what?.id || '').startsWith('006') ? e.what.id : null);
@@ -2124,6 +2170,7 @@ function createFromEvent(e, close) {
   const form = dealSupportForm(null, close, {
     title: `New ${dsMeta.label} from this event`,
     values: eventPrefill(e),
+    derived: descDefault(e),
     submit: async (fields) => {
       if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
       const rec = await api(`/calendar/events/${e.id}/deal-support`, { method: 'POST', body: { opportunityId: picked.Id, fields } });
