@@ -29,7 +29,7 @@ your Salesforce user is already allowed to, and it only writes when you click **
   all open opportunities (opportunities on accounts named in the meeting title come first), and the form is
   prefilled from the event: name from the title, activity date from the start, meeting duration in hours, the
   event description in the details field (without the Teams, Zoom or Webex joining details; when nothing else is
-  written, the details default to "Requested Activity - Platform" from the form), and you as the Assigned SE. An event counts as covered when a Deal
+  written, the details default to "Requested Activity - Platform Request" from the form), and you as the Assigned SE. An event counts as covered when a Deal
   Support was created from it here (remembered in the local database), or when one of yours has the same
   activity date and the same opportunity, account or name. For Mac calendar events the account and opportunity
   come from the matching Salesforce event (e.g. synced by Outreach) at the same time, else from the meeting

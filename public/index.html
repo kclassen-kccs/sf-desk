@@ -2153,8 +2153,9 @@ function renderEventPanel() {
 function descDefault(e) {
   const p = cal.data.prefill;
   if (!p.descField || meetingNotes(e.description)) return null;
-  const find = (name, re) => dsMeta.fields.find((f) => f.name === name) || dsMeta.fields.find((f) => re.test(f.label));
-  const from = [find('Requested_SaaS_Activity__c', /requested.*activity/i), find('IdentityNow_Platform_Modules__c', /platform/i)]
+  const find = (...tests) => tests.map((t) => dsMeta.fields.find((f) => typeof t === 'string' ? f.name === t : t.test(f.label))).find(Boolean);
+  const from = [find('Requested_SaaS_Activity__c', /requested.*activity/i),
+    find('Platform_Request__c', /^platform request$/i, 'IdentityNow_Platform_Modules__c', /platform/i)]
     .filter((f) => f && f.name !== p.descField.name).map((f) => f.name);
   return from.length ? { field: p.descField.name, from, value: (vals) => vals.filter(Boolean).join(' - ') } : null;
 }
