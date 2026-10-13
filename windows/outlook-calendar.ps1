@@ -26,8 +26,18 @@ try {
     Fail 'nooutlook' ('SF Desk reads your calendar from classic Outlook, which isn''t installed here. ' +
       'If you use the new Outlook, switch back to classic Outlook (the "New Outlook" toggle at the top right), or pick Salesforce events.')
   }
-  if ($hr -eq -2146959355) { # CO_E_SERVER_EXEC_FAILURE: Outlook runs as administrator and SF Desk doesn't, or the reverse
-    Fail 'elevation' 'Outlook and SF Desk are running with different permissions (one as administrator). Start both normally, then reload.'
+  if ($hr -eq -2146959355) { # CO_E_SERVER_EXEC_FAILURE: classic Outlook didn't start as a COM server
+    # With the new Outlook switched on, starting classic Outlook hands over to the new one, which has no COM.
+    $newOutlook = $false
+    try { $newOutlook = (Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Outlook\Preferences' -Name UseNewOutlook -ErrorAction Stop).UseNewOutlook -eq 1 } catch {}
+    if ($newOutlook) {
+      Fail 'newoutlook' 'Classic Outlook can''t be read while the new Outlook is switched on. Use your Microsoft 365 calendar instead, or turn off the "New Outlook" toggle.'
+    }
+    $elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    if ($elevated) {
+      Fail 'elevation' 'SF Desk is running as administrator, and Outlook won''t talk to it then. Quit SF Desk and start it from its Start menu or Desktop shortcut (not from an administrator window), then reload.'
+    }
+    Fail 'elevation' 'Classic Outlook didn''t start for SF Desk. If Outlook is running as administrator, close it and start it normally, then reload; otherwise use your Microsoft 365 calendar.'
   }
   Fail 'outlook' ("Couldn't open Outlook: " + $_.Exception.Message)
 }

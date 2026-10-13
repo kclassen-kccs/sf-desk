@@ -277,6 +277,13 @@ function Restart-Server {
 
 # ---------- start ----------
 
+# Started as administrator (e.g. from an elevated PowerShell), classic Outlook won't talk to SF Desk.
+$elevated = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+if ($elevated -and -not (Ask 'SF Desk is running as administrator' ("SF Desk was started as administrator, so it can't read classic Outlook's calendar " +
+    "(Microsoft 365 and Salesforce events still work). Start it from its Start menu or Desktop shortcut instead.`n`nKeep going as administrator?"))) {
+  exit 0
+}
+
 # One launcher at a time. A second one (e.g. the shortcut clicked again) just opens another window.
 $created = $false
 $mutex = New-Object Threading.Mutex($true, 'Local\SFDeskLauncher', [ref]$created)
