@@ -1,6 +1,8 @@
 // SF Desk — local Salesforce account & opportunity editor.
 // Talks to the Salesforce REST API using your own OAuth login (PKCE).
 // Runs on localhost only; tokens live in server memory for the session.
+// Records loaded from Salesforce are kept in a local SQLite file (see db.js) so the
+// last-seen data can still be shown when Salesforce can't be reached.
 
 import 'dotenv/config';
 import express from 'express';
@@ -8,6 +10,7 @@ import session from 'express-session';
 import crypto from 'node:crypto';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openDb } from './db.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -17,6 +20,7 @@ const API = process.env.SF_API_VERSION || 'v62.0';
 const CLIENT_ID = process.env.SF_CLIENT_ID;
 const CLIENT_SECRET = process.env.SF_CLIENT_SECRET || '';
 const REDIRECT_URI = `http://localhost:${PORT}/oauth/callback`;
+const DB_FILE = process.env.SF_DESK_DB || path.join(__dirname, 'data', 'sf-desk.db');
 
 if (!CLIENT_ID) {
   console.error('Missing SF_CLIENT_ID in .env. See README.md for setup.');
@@ -39,6 +43,8 @@ class HttpError extends Error {
 }
 const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 const b64url = (buf) => buf.toString('base64url');
+
+const store = openDb(DB_FILE);
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
@@ -90,7 +96,7 @@ app.get('/oauth/callback', wrap(async (req, res) => {
     instance_url: tok.instance_url,
   };
   const me = await sf(req, 'GET', '/services/oauth2/userinfo');
-  req.session.sf.user = { id: me.user_id, name: me.name, username: me.preferred_username };
+  req.session.sf.user = { id: me.user_id, orgId: me.organization_id, name: me.name, username: me.preferred_username };
   res.redirect('/');
 }));
 
@@ -127,16 +133,21 @@ async function refreshAccess(req) {
 async function sf(req, method, urlPath, { body, headers = {} } = {}, retried = false) {
   const t = req.session.sf;
   if (!t) throw new HttpError(401, 'Not connected to Salesforce');
-  const r = await fetch(t.instance_url + urlPath, {
-    method,
+  let r;
+  try {
+    r = await fetch(t.instance_url + urlPath, {
+      method,
     headers: {
-      Authorization: `Bearer ${t.access_token}`,
-      Accept: 'application/json',
-      ...(body ? { 'Content-Type': 'application/json' } : {}),
-      ...headers,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
+        Authorization: `Bearer ${t.access_token}`,
+        Accept: 'application/json',
+        ...(body ? { 'Content-Type': 'application/json' } : {}),
+        ...headers,
+      },
+      body: body ? JSON.stringify(body) : undefined,
+    });
+  } catch {
+    throw new HttpError(503, "Can't reach Salesforce. Check your connection and try again.");
+  }
 
   if (r.status === 401 && !retried && t.refresh_token) {
     await refreshAccess(req);
@@ -205,6 +216,26 @@ async function updateRecord(req, sobject, allowed, readFields) {
   return rec;
 }
 
+// ---------- Local SQLite copy ----------
+
+const orgOf = (req) => req.session.sf.user.orgId;
+
+// Run a Salesforce read; if Salesforce is unreachable or erroring, answer from the local copy
+// instead, marking the response so the page can say it is showing saved data.
+async function withCacheFallback(req, res, live, cached) {
+  try {
+    return await live();
+  } catch (err) {
+    if (!(err.status >= 502)) throw err;
+    const saved = cached();
+    if (!saved) throw err;
+    res.set('X-SFDesk-Cached', saved.syncedAt || 'unknown');
+    return saved.data;
+  }
+}
+
+// ---------- Lead SE filter ----------
+
 // Find the Lead SE field on an object: by API name if configured, else by its label.
 function findLeadSe(describe) {
   const f = describe.fields.find((x) => LEAD_SE_FIELD
@@ -213,13 +244,26 @@ function findLeadSe(describe) {
   return f ? { name: f.name, isUser: f.type === 'reference' } : null;
 }
 
-async function leadSeFields(req) {
+// Look up (once per session, falling back to the saved copy offline) which fields are Lead SE.
+async function knownLeadSeFields(req) {
   if (!req.session.leadSe) {
-    const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
-    const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
-    req.session.leadSe = { Account: findLeadSe(acct), Opportunity: findLeadSe(opp) };
+    try {
+      const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
+      const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
+      req.session.leadSe = { Account: findLeadSe(acct), Opportunity: findLeadSe(opp) };
+      store.saveSetting(orgOf(req), 'leadSe', req.session.leadSe);
+    } catch (err) {
+      if (!(err.status >= 502)) throw err;
+      // Offline and never looked up: reads still work, only the filter itself can't run.
+      return store.getSetting(orgOf(req), 'leadSe') || { offline: true };
+    }
   }
-  const fields = req.session.leadSe;
+  return req.session.leadSe;
+}
+
+async function leadSeFields(req) {
+  const fields = await knownLeadSeFields(req);
+  if (fields.offline) throw new HttpError(503, "Can't reach Salesforce to find the Lead SE field. Untick the filter to browse your saved copy.");
   if (!fields.Account && !fields.Opportunity) {
     throw new HttpError(400, 'No "Lead SE" field found on Account or Opportunity. ' +
       'Set SF_LEAD_SE_FIELD in .env to its API name (e.g. Lead_SE__c) and restart.');
@@ -227,12 +271,26 @@ async function leadSeFields(req) {
   return fields;
 }
 
-// SOQL condition matching the signed-in user: by User Id for a lookup field, else by full name.
+// The value a Lead SE field holds when it is the signed-in user: User Id for a lookup, else full name.
+const leadSeValue = (req, field) => (field.isUser ? req.session.sf.user.id : String(req.session.sf.user.name));
+
+// SOQL condition matching the signed-in user.
 function leadSeIsMe(req, field) {
-  const user = req.session.sf.user;
   return field.isUser
-    ? `${field.name} = '${sfId(user.id)}'`
-    : `${field.name} = '${String(user.name).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+    ? `${field.name} = '${sfId(leadSeValue(req, field))}'`
+    : `${field.name} = '${leadSeValue(req, field).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+}
+
+// Fields to read for each object, plus its Lead SE field when there is one, so saved records
+// carry it and the filter also works on the saved copy offline.
+const withField = (base, f) => (f && !base.includes(f.name) ? [...base, f.name] : base);
+const accountRead = (lse) => withField(ACCOUNT_READ, lse?.Account);
+const oppRead = (lse) => withField(OPP_READ, lse?.Opportunity);
+
+// The same test in JS, for records already loaded (SOQL text comparison ignores case).
+function leadSeMatches(req, field, rec) {
+  const v = rec[field.name];
+  return v != null && String(v).toLowerCase() === leadSeValue(req, field).toLowerCase();
 }
 
 // ---------- JSON API used by the page ----------
@@ -265,74 +323,113 @@ api.post('/logout', wrap(async (req, res) => {
 api.use((req, res, next) => (req.session.sf ? next() : next(new HttpError(401, 'Not connected to Salesforce'))));
 
 api.get('/meta', wrap(async (req, res) => {
-  if (!req.session.meta) {
-    const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
-    const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
-    const picklist = (d, name) =>
-      (d.fields.find((f) => f.name === name)?.picklistValues || []).filter((v) => v.active).map((v) => v.value);
-    const editable = (d, names) =>
-      d.fields.filter((f) => names.includes(f.name) && f.updateable).map((f) => f.name);
-    const creatable = (d, names) =>
-      d.fields.filter((f) => names.includes(f.name) && f.createable).map((f) => f.name);
-    req.session.meta = {
-      picklists: {
-        Type: picklist(acct, 'Type'),
-        Industry: picklist(acct, 'Industry'),
-        StageName: picklist(opp, 'StageName'),
-      },
-      editable: { Account: editable(acct, ACCOUNT_FIELDS), Opportunity: editable(opp, OPP_FIELDS) },
-      canCreateOpportunity: opp.createable && creatable(opp, ['Name', 'StageName', 'CloseDate']).length === 3,
-    };
-  }
-  res.json(req.session.meta);
+  if (req.session.meta) return res.json(req.session.meta);
+  const meta = await withCacheFallback(req, res, () => loadMeta(req), () => {
+    const saved = store.getSetting(orgOf(req), 'meta');
+    return saved && { data: saved };
+  });
+  if (!res.get('X-SFDesk-Cached')) req.session.meta = meta;
+  res.json(meta);
 }));
+
+async function loadMeta(req) {
+  const describe = (o) => sf(req, 'GET', `/services/data/${API}/sobjects/${o}/describe`);
+  const [acct, opp] = await Promise.all([describe('Account'), describe('Opportunity')]);
+  const picklist = (d, name) =>
+    (d.fields.find((f) => f.name === name)?.picklistValues || []).filter((v) => v.active).map((v) => v.value);
+  const editable = (d, names) =>
+    d.fields.filter((f) => names.includes(f.name) && f.updateable).map((f) => f.name);
+  const creatable = (d, names) =>
+    d.fields.filter((f) => names.includes(f.name) && f.createable).map((f) => f.name);
+  const meta = {
+    picklists: {
+      Type: picklist(acct, 'Type'),
+      Industry: picklist(acct, 'Industry'),
+      StageName: picklist(opp, 'StageName'),
+    },
+    editable: { Account: editable(acct, ACCOUNT_FIELDS), Opportunity: editable(opp, OPP_FIELDS) },
+    canCreateOpportunity: opp.createable && creatable(opp, ['Name', 'StageName', 'CloseDate']).length === 3,
+  };
+  store.saveSetting(orgOf(req), 'meta', meta);
+  return meta;
+}
 
 api.get('/accounts', wrap(async (req, res) => {
   const where = [];
   const q = String(req.query.q || '').trim().slice(0, 80);
   if (q) where.push(`Name LIKE '%${soqlLike(q)}%'`);
+  // Read the Lead SE fields too, so the saved copy can apply the same filter offline.
+  const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
+  const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'Owner.Name', 'LastModifiedDate'],
+    (await knownLeadSeFields(req)).Account);
   const soql = (extra = []) => {
     const w = [...where, ...extra];
-    return 'SELECT Id, Name, Type, Industry, BillingCity, BillingState, Owner.Name, LastModifiedDate ' +
+    return `SELECT ${fields.join(', ')} ` +
       `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY LastModifiedDate DESC LIMIT 200`;
   };
-  if (req.query.leadse !== '1') return res.json(await query(req, soql()));
 
-  // An account is "mine" if I'm its Lead SE, or Lead SE on any of its opportunities.
-  // SOQL can't OR a sub-select, so run one query per field and merge.
-  const lse = await leadSeFields(req);
-  const queries = [];
-  if (lse.Account) queries.push(query(req, soql([leadSeIsMe(req, lse.Account)])));
-  if (lse.Opportunity) {
-    queries.push(query(req, soql([`Id IN (SELECT AccountId FROM Opportunity WHERE ${leadSeIsMe(req, lse.Opportunity)})`])));
-  }
-  const byId = new Map();
-  for (const rec of (await Promise.all(queries)).flat()) byId.set(rec.Id, rec);
-  res.json([...byId.values()]
-    .sort((a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate)))
-    .slice(0, 200));
+  res.json(await withCacheFallback(req, res, async () => {
+    let accounts;
+    if (!lse) {
+      accounts = await query(req, soql());
+    } else {
+      // An account is "mine" if I'm its Lead SE, or Lead SE on any of its opportunities.
+      // SOQL can't OR a sub-select, so run one query per field and merge.
+      const queries = [];
+      if (lse.Account) queries.push(query(req, soql([leadSeIsMe(req, lse.Account)])));
+      if (lse.Opportunity) {
+        queries.push(query(req, soql([`Id IN (SELECT AccountId FROM Opportunity WHERE ${leadSeIsMe(req, lse.Opportunity)})`])));
+      }
+      const byId = new Map();
+      for (const rec of (await Promise.all(queries)).flat()) byId.set(rec.Id, rec);
+      accounts = [...byId.values()]
+        .sort((a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate)))
+        .slice(0, 200);
+    }
+    store.saveAccounts(orgOf(req), accounts);
+    return accounts;
+  }, () => {
+    const side = (f) => f && { field: f.name, value: leadSeValue(req, f) };
+    const saved = store.listAccounts(orgOf(req), {
+      q,
+      leadSe: lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) },
+    });
+    return { data: saved.records, syncedAt: saved.syncedAt };
+  }));
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
-  const [account] = await query(req, `SELECT ${ACCOUNT_READ.join(', ')} FROM Account WHERE Id = '${id}'`);
-  if (!account) throw new HttpError(404, 'Account not found');
-  const where = [`AccountId = '${id}'`];
-  if (req.query.leadse === '1') {
-    const lse = await leadSeFields(req);
-    if (lse.Opportunity) where.push(leadSeIsMe(req, lse.Opportunity));
-  }
-  const opportunities = await query(req,
-    `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE ${where.join(' AND ')} ORDER BY IsClosed ASC, CloseDate ASC`);
-  res.json({ account, opportunities });
+  const known = await knownLeadSeFields(req);
+  const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
+  // Load and save every opportunity on the account, so the saved copy stays complete whichever
+  // way the filter is set, then apply the Lead SE filter here.
+  const onlyMine = (detail) => (lse?.Opportunity
+    ? { ...detail, opportunities: detail.opportunities.filter((o) => leadSeMatches(req, lse.Opportunity, o)) }
+    : detail);
+  res.json(await withCacheFallback(req, res, async () => {
+    const [account] = await query(req, `SELECT ${accountRead(known).join(', ')} FROM Account WHERE Id = '${id}'`);
+    if (!account) throw new HttpError(404, 'Account not found');
+    const opportunities = await query(req,
+      `SELECT ${oppRead(known).join(', ')} FROM Opportunity WHERE AccountId = '${id}' ORDER BY IsClosed ASC, CloseDate ASC`);
+    store.saveAccountDetail(orgOf(req), account, opportunities);
+    return onlyMine({ account, opportunities });
+  }, () => {
+    const saved = store.getAccountDetail(orgOf(req), id);
+    return saved && { data: onlyMine({ account: saved.account, opportunities: saved.opportunities }), syncedAt: saved.syncedAt };
+  }));
 }));
 
 api.patch('/accounts/:id', wrap(async (req, res) => {
-  res.json(await updateRecord(req, 'Account', ACCOUNT_FIELDS, ACCOUNT_READ));
+  const rec = await updateRecord(req, 'Account', ACCOUNT_FIELDS, accountRead(await knownLeadSeFields(req)));
+  store.saveAccounts(orgOf(req), [rec], { replace: true });
+  res.json(rec);
 }));
 
 api.patch('/opportunities/:id', wrap(async (req, res) => {
-  res.json(await updateRecord(req, 'Opportunity', OPP_FIELDS, OPP_READ));
+  const rec = await updateRecord(req, 'Opportunity', OPP_FIELDS, oppRead(await knownLeadSeFields(req)));
+  store.saveOpportunities(orgOf(req), [rec]);
+  res.json(rec);
 }));
 
 api.post('/opportunities', wrap(async (req, res) => {
@@ -341,7 +438,8 @@ api.post('/opportunities', wrap(async (req, res) => {
   for (const k of OPP_FIELDS) if (fields[k] !== undefined && fields[k] !== '' && fields[k] !== null) body[k] = fields[k];
   for (const k of ['Name', 'StageName', 'CloseDate']) if (!body[k]) throw new HttpError(400, `${k} is required`);
   const created = await sf(req, 'POST', `/services/data/${API}/sobjects/Opportunity`, { body });
-  const [rec] = await query(req, `SELECT ${OPP_READ.join(', ')} FROM Opportunity WHERE Id = '${sfId(created.id)}'`);
+  const [rec] = await query(req, `SELECT ${oppRead(await knownLeadSeFields(req)).join(', ')} FROM Opportunity WHERE Id = '${sfId(created.id)}'`);
+  store.saveOpportunities(orgOf(req), [rec]);
   res.status(201).json(rec);
 }));
 
