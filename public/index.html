@@ -154,7 +154,12 @@
   /* ---------- my calendar ---------- */
   .cal { --covered: #c9f2d6; --covered-line: #12924a; --open: #fdd3cf; --open-line: #d92d20; --skip: #eef0f3; --skip-line: #98a2b3; --hour: 48px;
     display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px clamp(12px, 2vw, 32px) 40px; height: calc(100vh - 50px); height: calc(100dvh - 50px); overflow: auto; }
-  .cal.with-panel { grid-template-columns: minmax(0, 1fr) clamp(360px, 24vw, 460px); }
+  .cal.with-panel { grid-template-columns: minmax(0, 1fr) clamp(380px, 28vw, 540px); }
+  .cal-panel { position: sticky; top: 0; align-self: start; max-height: calc(100vh - 50px - 36px); max-height: calc(100dvh - 50px - 36px); overflow: auto; }
+  .cal.with-panel #calWeekDs .deals td { white-space: normal; } .cal.with-panel #calWeekDs .deals td.wrap { min-width: 0; }
+  .cal.with-panel #calWeekDs .deals td:nth-child(3), .cal.with-panel #calWeekDs .deals td.n { white-space: nowrap; }
+  .cal-empty { border-style: dashed; text-align: center; padding: 28px 20px; }
+  .cal-empty h3 { justify-content: center; }
   #calWeekDs { margin: 18px 0 0; }
   .agenda { display: grid; gap: 10px; }
   .agenda-day { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; }
@@ -195,7 +200,7 @@
   td.edit-cell { width: 1%; padding-right: 0; }
   section.ds-edit { margin-bottom: 14px; }
   .deals tr.sel td { background: var(--accent-soft); }
-  .cal-panel .grid { grid-template-columns: 1fr; }
+  .cal-panel .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
   .cal-panel .desc { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 13px; background: var(--bg); border-radius: 6px; padding: 8px; }
   .cal-panel dl { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; margin: 0 0 10px; font-size: 13px; }
   .cal-panel dt { color: var(--muted); } .cal-panel dd { margin: 0; overflow-wrap: anywhere; }
@@ -210,19 +215,9 @@
   .opp-pick .m { color: var(--muted); font-size: 12px; }
   .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
   /* ---------- responsive ---------- */
-  /* Wide screens: the week's Deal Supports sit beside the calendar. */
-  @media (min-width: 1600px) {
-    .cal-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(460px, 38%); gap: 18px; align-items: start; }
-    .cal-body #calWeekDs .deals td { white-space: normal; } .cal-body #calWeekDs .deals td.wrap { min-width: 0; }
-    .cal-body #calWeekDs .deals td:nth-child(3), .cal-body #calWeekDs .deals td.n { white-space: nowrap; }
-    .cal-body #calWeekDs { margin: 0; }
-    .cal.with-panel .cal-body { grid-template-columns: minmax(0, 1fr); }
-    .cal.with-panel .cal-body #calWeekDs { margin-top: 18px; }
-  }
-  @media (min-width: 2000px) { .cal.with-panel .cal-body { grid-template-columns: minmax(0, 1fr) minmax(420px, 34%); } .cal.with-panel .cal-body #calWeekDs { margin: 0; } }
   @media (max-width: 1000px) {
     .cal.with-panel { grid-template-columns: minmax(0, 1fr); }
-    .cal-panel { order: -1; scroll-margin-top: 60px; }
+    .cal-panel { order: -1; scroll-margin-top: 60px; position: static; max-height: none; overflow: visible; }
     .tiles { grid-template-columns: repeat(2, 1fr); } .tile.hero { grid-column: 1 / -1; }
     .tiles.even { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .charts { grid-template-columns: 1fr; }
@@ -1964,7 +1959,7 @@ function renderWeekDealSupports() {
   if (!week.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, `None of your ${dsMeta.labelPlural.toLowerCase()} are dated this week.`)));
   sec.replaceChildren(
     el('h3', {}, `Your ${dsMeta.labelPlural} this week (${week.length})`),
-    cal.editing?.box || el('div'),
+    (!CAL_WIDE.matches && cal.editing?.box) || el('div'),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
       el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, '#'), el('th', {}, 'Date'), activityLabel ? el('th', {}, activityLabel) : null,
         el('th', {}, 'Account · Opportunity'), el('th', {}, 'Event'), el('th', { class: 'n' }, 'Hours'))),
@@ -1975,7 +1970,11 @@ function renderWeekDealSupports() {
 }
 
 // Edit one of the week's Deal Supports, above the list.
-const editWeekDealSupport = (r) => editDealSupport(r.Id, cal, renderWeekDealSupports, loadCalendar);
+// On wide screens the form opens in the panel beside the calendar, in place of a selected event.
+const editWeekDealSupport = (r) => {
+  if (CAL_WIDE.matches) cal.sel = null;
+  editDealSupport(r.Id, cal, () => { renderWeekDealSupports(); renderEventPanel(); renderCalendarSel(); }, loadCalendar);
+};
 
 // Edit a Deal Support in the create form, prefilled from the record. `host` is the page's state, whose
 // `editing` holds the open form; rerender() redraws the list it sits above, reload() refreshes after saving.
@@ -2022,10 +2021,17 @@ const editPencil = (name, onclick) => el('td', { class: 'edit-cell' }, el('butto
 
 function selectEvent(id) {
   cal.sel = cal.sel === id ? null : id;
+  if (cal.sel && CAL_WIDE.matches) cal.editing = null;
   renderCalendar();
   // Below 1000px the event panel sits above the calendar: bring it into view.
   if (cal.sel && window.matchMedia('(max-width: 1000px)').matches) document.getElementById('calPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
+// Keep the calendar's selected-event outline in step without redrawing it.
+function renderCalendarSel() {
+  document.querySelectorAll('#calBody .ev.sel').forEach((n) => n.classList.remove('sel'));
+}
+const CAL_WIDE = window.matchMedia('(min-width: 1100px)');
+CAL_WIDE.addEventListener('change', () => { if (cal.data && document.getElementById('calBody')) renderCalendar(); });
 const CAL_NARROW = window.matchMedia('(max-width: 640px)');
 CAL_NARROW.addEventListener('change', () => { if (cal.data && document.getElementById('calBody')) renderCalendar(); });
 
@@ -2057,9 +2063,15 @@ const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(
 function renderEventPanel() {
   const panel = document.getElementById('calPanel');
   const e = cal.data?.events.find((x) => x.id === cal.sel);
-  document.getElementById('cal').classList.toggle('with-panel', !!e);
-  panel.hidden = !e;
-  if (!e) return panel.replaceChildren();
+  // Wide screens keep the panel beside the calendar as the place to enter time: the event and its
+  // create form, a Deal Support being edited, or a prompt when neither is picked.
+  const wide = CAL_WIDE.matches;
+  document.getElementById('cal').classList.toggle('with-panel', !!e || wide);
+  panel.hidden = !e && !wide;
+  if (wide && cal.editing) return panel.replaceChildren(cal.editing.box);
+  if (!e) return panel.replaceChildren(wide ? el('section', { class: 'cal-empty' }, el('h3', {}, 'Enter time'),
+    el('p', { class: 'sub', style: 'margin:0' }, `Select an event on the calendar to create a ${dsMeta.label} from it, ` +
+      `or click ✎ on one of your ${dsMeta.labelPlural} below to edit it.`)) : '');
   const st = evStatus(e);
   const when = e.allDay ? `${localDate(e.date).toLocaleDateString()} (all day)`
     : `${evTime(e.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`;

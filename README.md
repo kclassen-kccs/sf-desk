@@ -38,7 +38,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
   Supports dated that week; the pencil on a row opens it in the same form to edit (only changed fields are saved)
 - Works from phone width up to wide desktops: on phones the tabs fold into a ☰ menu, Accounts shows the list
   or the account (with a back button), Time Entry lists the week day by day, and list tables become cards; on wide
-  screens Time Entry shows the week's Deal Supports beside the calendar
+  screens (1100px and up) Time Entry keeps a panel beside the calendar for entering time: the selected event and its
+  create form, the Deal Support being edited, or a prompt when nothing is picked
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - The account screen shows the sales rep prominently, and a **Deal Supports** panel with everyone's Deal Supports
   on the account and its opportunities for the last 30, 60 or 90 days or the fiscal year to date: count, total
