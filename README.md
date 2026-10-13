@@ -89,7 +89,7 @@ signs you in (Option A below), so the setup steps that follow are only for runni
 ## Windows
 
 SF Desk also runs on Windows 10 and 11 (source in `windows/`, packaged by `scripts/build-windows-package.sh`;
-see [INSTALL.md](INSTALL.md#windows)). `SF-Desk-windows.zip` holds the app, Node.js for 64-bit Windows and an
+see [INSTALL.md](INSTALL.md#windows)). `SF-Desk-windows.zip` holds the app, Node.js for Windows (Intel/AMD, or ARM64 in `SF-Desk-windows-arm64.zip`) and an
 **Install SF Desk** script that needs no admin rights. SF Desk opens in an Edge window of its own and keeps an
 icon by the clock to reopen it, edit settings, restart the server, see the log or quit.
 

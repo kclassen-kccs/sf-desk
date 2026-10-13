@@ -13,6 +13,13 @@ function Die($text) { Write-Host "`n$text`n" -ForegroundColor Red; exit 1 }
 if (-not (Test-Path (Join-Path $From 'app\server.js'))) {
   Die 'Can''t find the app folder next to the installer. Unzip the whole download first, then run "Install SF Desk" from the unzipped folder.'
 }
+# SF-Desk-windows.zip is for Intel/AMD PCs and SF-Desk-windows-arm64.zip for ARM ones (e.g. Snapdragon).
+# ARM PCs can run either; an Intel/AMD PC can't run the ARM one.
+$version = ''
+try { $version = & (Join-Path $From 'runtime\node.exe') -v 2>$null } catch {}
+if (-not $version) {
+  Die 'This download''s Node.js doesn''t run on this PC. Use SF-Desk-windows.zip on Intel or AMD PCs and SF-Desk-windows-arm64.zip on ARM PCs.'
+}
 Write-Host "`nInstalling SF Desk into $dest" -ForegroundColor Cyan
 
 # 1. Stop a running SF Desk, whose files would otherwise be in use. Its launcher's end of the server's
