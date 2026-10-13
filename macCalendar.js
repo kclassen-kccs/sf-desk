@@ -25,10 +25,13 @@ class CalendarError extends Error {
 export function macCalendar(rootDir, dataDir) {
   const src = path.join(rootDir, 'mac', 'calendar.swift');
   const plist = path.join(rootDir, 'mac', 'Info.plist');
-  const bin = path.join(dataDir, 'bin', 'sfdesk-calendar');
+  // The Mac app ships the helper prebuilt (SF_DESK_CALENDAR_HELPER), so it needs no Command Line Tools.
+  const prebuilt = process.env.SF_DESK_CALENDAR_HELPER;
+  const bin = prebuilt || path.join(dataDir, 'bin', 'sfdesk-calendar');
   let ready = null; // Promise of 'eventkit' | 'jxa'
 
   async function build() {
+    if (prebuilt && fs.existsSync(prebuilt)) return 'eventkit';
     try {
       const stale = !fs.existsSync(bin) || fs.statSync(bin).mtimeMs < fs.statSync(src).mtimeMs;
       if (stale) {

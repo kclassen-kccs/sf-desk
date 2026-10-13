@@ -22,7 +22,22 @@ the first time you open it. It doesn't work with the OAuth app login (Option B).
 ## 1. Make the HTTPS certificate (one time)
 
 Outlook only loads add-ins over HTTPS, so SF Desk also listens on `https://localhost:3443` once it has a
-certificate. In the SF Desk folder, in Terminal:
+certificate.
+
+**In the Mac app, setup is one click:** choose **SF Desk > Set Up Outlook Add-in...** (the app also offers
+it once, the first time it runs). It:
+
+1. makes the certificate in `~/Library/Application Support/SF Desk/certs` and trusts it (macOS asks for
+   your Mac password once), then restarts its server so it listens on HTTPS;
+2. saves the add-in's manifest to `~/Downloads/sf-desk-outlook.xml`;
+3. opens Outlook's add-in page (https://aka.ms/olksideload) in your browser and tells you what to click.
+
+All that's left is adding the file in Outlook, which Microsoft only lets you do yourself: **My add-ins** >
+**Custom Addins** > **Add a custom add-in** > **Add from File...**, pick `sf-desk-outlook.xml` from
+Downloads (**Show File in Finder** in the app's dialog shows it) and confirm. That's step 2 below, so skip
+straight to step 3 once it's added. Running it again is safe: it only redoes what's missing.
+
+**From a checkout or the Terminal install:** in the SF Desk folder, in Terminal:
 
 ```bash
 sh scripts/outlook-cert.sh --trust
@@ -33,11 +48,12 @@ authority of your own ("SF Desk local CA") and a `localhost` certificate signed 
 for your Mac password to trust the authority in your login keychain. Only your user trusts it, and its key
 never leaves `certs/`, which git ignores.
 
-Then restart SF Desk (`npm start`). The terminal now also shows
+Then restart SF Desk (`npm start`, or quit and reopen the app). The terminal now also shows
 `Outlook add-in served at https://localhost:3443/outlook/pane`. Open that address in Safari to check: it
 should load without a certificate warning. Set `HTTPS_PORT` in `.env` to use another port.
 
 The certificate lasts 825 days (the most macOS allows); `sh scripts/outlook-cert.sh --renew` makes a new one.
+For the Mac app, delete its `certs` folder (**Help > Show Data Folder**) and run **Set Up Outlook Add-in...** again.
 
 ## 2. Add the add-in to Outlook (one time)
 
@@ -68,14 +84,16 @@ meeting, then the form. Check the opportunity and fields and click **Create Deal
 gets the **Deal Support** category. Meetings that already had a Deal Support (for example, made in Time Entry)
 get it the next time you open the panel on them.
 
-If the panel says it can't connect, check that SF Desk is running and that you are signed in to the
-Salesforce CLI (`sf org display`); then click **Connect** in the panel.
+If the panel says it can't connect, check that SF Desk is running (with the Mac app, closing its window
+keeps it running, but quitting stops it) and that you are signed in to the Salesforce CLI (`sf org display`);
+then click **Connect** in the panel.
 
 ## Remove it
 
 - In Outlook: **Get Add-ins** > **My add-ins** > SF Desk > **•••** > **Remove**.
 - The certificate: `security delete-certificate -c "SF Desk local CA"` (or delete it in Keychain Access), then
-  delete the `certs/` folder. SF Desk stops listening on HTTPS when `certs/` is gone.
+  delete the `certs/` folder (for the Mac app, the one in `~/Library/Application Support/SF Desk`). SF Desk
+  stops listening on HTTPS when `certs/` is gone.
 
 ## How it works
 
