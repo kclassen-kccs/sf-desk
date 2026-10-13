@@ -43,14 +43,23 @@ function Read-Env {
   }
   return $vars
 }
-# Replace KEY's line in .env, or add one. Written without a byte-order mark, which dotenv would misread.
+# Write .env without a byte-order mark, which dotenv would misread. A copied .env can come out read-only
+# or hidden (attributes carried over from the zip or a sync tool), and .NET's WriteAllLines is then
+# refused with "Access to the path is denied", so clear those first and overwrite in place.
+function Write-EnvFile($lines) {
+  if (Test-Path -LiteralPath $envFile) { (Get-Item -LiteralPath $envFile -Force).Attributes = 'Normal' }
+  $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes((($lines | ForEach-Object { $_ }) -join "`r`n") + "`r`n")
+  $fs = [IO.File]::Open($envFile, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
+  try { $fs.SetLength(0); $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Close() }
+}
+# Replace KEY's line in .env, or add one.
 function Set-Env($key, $value) {
   $lines = New-Object System.Collections.Generic.List[string]
-  if (Test-Path $envFile) { $lines.AddRange([IO.File]::ReadAllLines($envFile)) }
+  if (Test-Path -LiteralPath $envFile) { $lines.AddRange([IO.File]::ReadAllLines($envFile)) }
   $i = 0; $found = $false
   for (; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^\s*$key\s*=") { $lines[$i] = "$key=$value"; $found = $true } }
   if (-not $found) { $lines.Add("$key=$value") }
-  [IO.File]::WriteAllLines($envFile, $lines, (New-Object System.Text.UTF8Encoding $false))
+  Write-EnvFile $lines
 }
 
 # ---------- the server ----------
@@ -256,7 +265,8 @@ if (-not $created) {
 try {
   New-Item -ItemType Directory -Force (Join-Path $dataDir 'data') | Out-Null
   if (-not (Test-Path $envFile)) {
-    Copy-Item (Join-Path $appDir '.env.example') $envFile
+    # Written fresh rather than copied, so it doesn't inherit the installed file's attributes.
+    Write-EnvFile ([IO.File]::ReadAllLines((Join-Path $appDir '.env.example')))
     Set-Env 'SF_TARGET_ORG' $sfAlias
   }
 
