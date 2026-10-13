@@ -1901,6 +1901,9 @@ async function loadSources() {
   select.replaceChildren(el('option', { value: 'salesforce' }, 'Salesforce events'),
     ...[...groups].map(([account, list]) => el('optgroup', { label: `${account}${kind(list[0])}` },
       list.map((c) => el('option', { value: c.id }, c.title)))),
+    // On Windows, say why there are no classic Outlook calendars rather than leaving the group out.
+    cal.sources.platform === 'win32' && !cal.sources.calendars.length ? el('optgroup', { label: 'Outlook (classic)' },
+      el('option', { disabled: true, title: error || '' }, error ? `Not available: ${error.length > 90 ? error.slice(0, 90) + '…' : error}` : 'No calendars found in classic Outlook')) : null,
     graph ? el('optgroup', { label: 'Microsoft 365' },
       graph.signedIn ? el('option', { value: 'graph:signout' }, `Sign out of Microsoft 365${graph.account ? ` (${graph.account})` : ''}`)
         : el('option', { value: 'graph:signin' }, 'Sign in to read your Microsoft 365 calendar…')) : null);
