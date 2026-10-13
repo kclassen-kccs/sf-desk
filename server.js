@@ -816,17 +816,21 @@ async function myTimeOn(req, oppId) {
   if (!opp) throw new HttpError(404, 'Opportunity not found');
   const records = await query(req, `SELECT ${[...new Set(['Id', 'Name', date.name, hours.name])].join(', ')} FROM ${ds.object} ` +
     `WHERE ${ds.oppField} = '${oppId}' AND ${by.name} = '${sfId(req.session.sf.user.id)}' ORDER BY ${date.name} DESC NULLS LAST`, 2000);
-  return { ds, opp, by, hours, date, records };
+  // Everyone else's on this opportunity stay; counted only so the page can say so.
+  const others = await sf(req, 'GET', `/services/data/${API}/query?q=${encodeURIComponent(`SELECT COUNT() FROM ${ds.object} ` +
+    `WHERE ${ds.oppField} = '${oppId}' AND (${by.name} != '${sfId(req.session.sf.user.id)}' OR ${by.name} = null)`)}`)
+    .then((r) => r.totalSize, () => null);
+  return { ds, opp, by, hours, date, records, others };
 }
 
 api.get('/opportunities/:id/move-time', wrap(async (req, res) => {
-  const { ds, opp, by, hours, date, records } = await myTimeOn(req, sfId(req.params.id));
+  const { ds, opp, by, hours, date, records, others } = await myTimeOn(req, sfId(req.params.id));
   const targets = opp.AccountId ? await query(req, 'SELECT Id, Name, StageName, CloseDate FROM Opportunity ' +
     `WHERE AccountId = '${sfId(opp.AccountId)}' AND IsClosed = false AND Id != '${opp.Id}' ORDER BY CloseDate ASC`) : [];
   res.json({
     label: ds.label, labelPlural: ds.labelPlural, canMove: ds.canUpdate && ds.oppUpdateable,
     from: { Id: opp.Id, Name: opp.Name, IsClosed: opp.IsClosed, accountName: opp.Account?.Name || '' },
-    mineLabel: by.label, hoursUnit: hours.unit,
+    mineLabel: by.label, hoursUnit: hours.unit, others,
     records: records.map((r) => ({ Id: r.Id, Name: r.Name, date: String(r[date.name] || '').slice(0, 10), hours: r[hours.name] ?? null })),
     targets,
   });
