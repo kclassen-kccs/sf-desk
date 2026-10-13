@@ -2089,7 +2089,10 @@ function meetingNotes(text) {
     lines.splice(i, Math.min(j + 1, lines.length) - i);
     i--;
   }
-  lines = lines.filter((l) => !invite(l) && !divider(l));
+  // Meeting footers: image placeholders ("[Company Logo]"), copyright notices and "Org help | Privacy and security" links.
+  const footer = (l) => /^\s*\[[^\]]{1,60}\]\s*$/.test(l) || /^\s*(©|\(c\)|copyright\b)/i.test(l) || /all rights reserved\.?\s*$/i.test(l) ||
+    /^\s*(org help|privacy and security|privacy statement)\b/i.test(l);
+  lines = lines.filter((l) => !invite(l) && !divider(l) && !footer(l));
   return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
 }
 const hhmm24 = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
