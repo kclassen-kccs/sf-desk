@@ -10,6 +10,8 @@ import express from 'express';
 import session from 'express-session';
 import crypto from 'node:crypto';
 import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import https from 'node:https';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
@@ -18,6 +20,10 @@ import { isMac, macCalendar } from './macCalendar.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const PORT = Number(process.env.PORT || 3000);
+// The Outlook add-in needs HTTPS. When the certificate made by scripts/outlook-cert.sh is there, SF Desk also
+// listens on https://localhost:HTTPS_PORT (see OUTLOOK.md).
+const HTTPS_PORT = Number(process.env.HTTPS_PORT || 3443);
+const CERT_DIR = process.env.SF_DESK_CERTS || path.join(__dirname, 'certs');
 const LOGIN_URL = (process.env.SF_LOGIN_URL || 'https://login.salesforce.com').replace(/\/$/, '');
 const API = process.env.SF_API_VERSION || 'v62.0';
 const CLIENT_ID = process.env.SF_CLIENT_ID;
@@ -68,13 +74,30 @@ const macCal = isMac ? macCalendar(__dirname, path.dirname(DB_FILE)) : null;
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
-app.use(session({
-  secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'),
-  resave: false,
-  saveUninitialized: false,
-  cookie: { httpOnly: true, sameSite: 'lax' },
-}));
+// Separate sessions for the two listeners (express-session can't share a store between cookie settings).
+// Outlook's task pane may be framed by Outlook, so the HTTPS cookie is SameSite=None; writes still need
+// the X-SFDesk header (see the API's CSRF guard).
+const sessionOpts = { secret: process.env.SESSION_SECRET || crypto.randomBytes(32).toString('hex'), resave: false, saveUninitialized: false };
+const httpSession = session({ ...sessionOpts, cookie: { httpOnly: true, sameSite: 'lax' } });
+const httpsSession = session({ ...sessionOpts, name: 'sfdesk.sid', cookie: { httpOnly: true, sameSite: 'none', secure: true } });
+app.use((req, res, next) => (req.secure ? httpsSession : httpSession)(req, res, next));
 app.use(express.static(path.join(__dirname, 'public')));
+
+// ---------- Outlook add-in ----------
+
+// The task pane is the app itself with Office.js added; the page sees the path and shows only the
+// "create from this meeting" form.
+const OFFICE_JS = '<script src="https://appsforoffice.microsoft.com/lib/1/hosted/office.js"></script>';
+app.get('/outlook/pane', (req, res) => {
+  const page = fs.readFileSync(path.join(__dirname, 'public', 'index.html'), 'utf8');
+  res.type('html').set('Cache-Control', 'no-store').send(page.replace('<script src="xlsx.js"></script>', `${OFFICE_JS}\n<script src="/xlsx.js"></script>`));
+});
+// The add-in manifest to sideload, pointing at this server's HTTPS address.
+app.get('/outlook/manifest.xml', (req, res) => {
+  const xml = fs.readFileSync(path.join(__dirname, 'outlook', 'manifest.xml'), 'utf8');
+  res.type('application/xml').set('Content-Disposition', 'attachment; filename="sf-desk-outlook.xml"')
+    .send(xml.replaceAll('https://localhost:3443', `https://localhost:${HTTPS_PORT}`));
+});
 
 // ---------- Salesforce CLI login ----------
 
@@ -114,6 +137,8 @@ async function cliToken() {
 
 app.get('/login', (req, res, next) => {
   if (USE_CLI) return cliLogin(req, res).catch(next);
+  // The OAuth callback is registered on http://localhost, whose session the task pane doesn't share.
+  if (req.secure) return next(new HttpError(400, 'The Outlook add-in can only connect with the Salesforce CLI login. See OUTLOOK.md.'));
   const verifier = b64url(crypto.randomBytes(32));
   const challenge = b64url(crypto.createHash('sha256').update(verifier).digest());
   const state = b64url(crypto.randomBytes(16));
@@ -133,7 +158,8 @@ app.get('/login', (req, res, next) => {
 async function cliLogin(req, res) {
   req.session.sf = { ...(await cliToken()), cli: true };
   await loadUser(req);
-  res.redirect('/');
+  // The Outlook task pane comes back to itself.
+  res.redirect(String(req.query.next || '').startsWith('/outlook/pane') ? '/outlook/pane' : '/');
 }
 
 async function loadUser(req) {
@@ -380,7 +406,7 @@ api.use((req, res, next) => {
 
 api.get('/me', (req, res) => {
   const t = req.session.sf;
-  res.json(t ? { connected: true, user: t.user, instanceUrl: t.instance_url } : { connected: false });
+  res.json(t ? { connected: true, user: t.user, instanceUrl: t.instance_url } : { connected: false, cli: USE_CLI });
 });
 
 api.post('/logout', wrap(async (req, res) => {
@@ -1219,27 +1245,13 @@ api.get('/calendar', wrap(async (req, res) => {
     const linkedIds = [...new Set(Object.values(marks).map((m) => m.dsId).filter(Boolean))];
     const [linked, mine] = await Promise.all([dealSupportsById(req, ds, linkedIds), myDealSupportsBetween(req, ds, cm, range.d0, range.d1)]);
     const linkedById = new Map(linked.map((r) => [r.Id, r]));
-    const norm = (s) => cleanSubject(s).toLowerCase();
 
     // Covered: a Deal Support created from the event (or a copy of it), or one of mine on the same date
     // with the event's opportunity, the event's account, or the event's title as its name. Mac events
     // have no Salesforce links, so for those the account is found from the title and attendee domains.
     const out = events.map((e) => {
-      const supports = [];
-      for (const id of [e.id, ...e.copies]) {
-        const m = marks[id];
-        if (m?.dsId && linkedById.has(m.dsId) && !supports.some((x) => x.Id === m.dsId)) supports.push({ ...linkedById.get(m.dsId), how: 'created' });
-      }
-      for (const r of mine) {
-        if (r.date !== e.date || supports.some((x) => x.Id === r.Id)) continue;
-        const hit = (e.oppId && r.oppId === e.oppId) || norm(r.Name) === norm(e.subject) ||
-          r.accountIds.some((a) => e.accountIds.includes(a)) ||
-          (!e.sfEvent && (r.accountNames.some((n) => titleNamesAccount(e.title, n)) ||
-            r.domains.some((d) => e.domains.some((x) => x === d || x.endsWith('.' + d) || domainLabel(x) === domainLabel(d)))));
-        if (hit) supports.push({ ...r, how: 'matched' });
-      }
       const { oppId, ...shown } = e;
-      return { ...shown, supports, skipped: [e.id, ...e.copies].some((id) => marks[id]?.skipped) };
+      return { ...shown, supports: coveringSupports(e, marks, linkedById, mine), skipped: [e.id, ...e.copies].some((id) => marks[id]?.skipped) };
     });
     // My Deal Supports dated this week, for the list under the calendar, with the events each covers.
     const tm = await timeMeta(req).catch(() => null);
@@ -1257,19 +1269,75 @@ api.get('/calendar', wrap(async (req, res) => {
   }));
 }));
 
-// Event Ids: Salesforce Ids, or "mac_" plus a hash for events from the Mac's calendar.
+// The Deal Supports covering an event: those created from it (or a copy of it) here, then mine on the same
+// date with the event's opportunity, account or title as their name. Events from outside Salesforce have no
+// links of their own unless borrowed, so for those the account is also found from the title and attendee domains.
+function coveringSupports(e, marks, linkedById, mine) {
+  const norm = (s) => cleanSubject(s).toLowerCase();
+  const supports = [];
+  for (const id of [e.id, ...e.copies]) {
+    const m = marks[id];
+    if (m?.dsId && linkedById.has(m.dsId) && !supports.some((x) => x.Id === m.dsId)) supports.push({ ...linkedById.get(m.dsId), how: 'created' });
+  }
+  for (const r of mine) {
+    if (r.date !== e.date || supports.some((x) => x.Id === r.Id)) continue;
+    const hit = (e.oppId && r.oppId === e.oppId) || norm(r.Name) === norm(e.subject) ||
+      r.accountIds.some((a) => e.accountIds.includes(a)) ||
+      (!e.sfEvent && (r.accountNames.some((n) => titleNamesAccount(e.title, n)) ||
+        r.domains.some((d) => e.domains.some((x) => x === d || x.endsWith('.' + d) || domainLabel(x) === domainLabel(d)))));
+    if (hit) supports.push({ ...r, how: 'matched' });
+  }
+  return supports;
+}
+
+// Event Ids: Salesforce Ids, or "mac_" (Mac calendar) or "ol_" (Outlook add-in) plus a hash.
 function eventId(value) {
   const id = String(value || '');
-  if (/^mac_[0-9a-f]{24}$/.test(id)) return id;
+  if (/^(mac|ol)_[0-9a-f]{24}$/.test(id)) return id;
   return sfId(id);
 }
+
+// The meeting open in Outlook (sent by the add-in's task pane), as a calendar event like the Time Entry
+// tab's, with the account and opportunity of the Salesforce copy at the same time (e.g. synced by
+// Outreach), the Deal Supports already covering it and what the create form prefills.
+api.post('/outlook/event', wrap(async (req, res) => {
+  const b = req.body || {};
+  const str = (v, max) => String(v ?? '').slice(0, max);
+  const start = isoDateTime(b.start), end = isoDateTime(b.end);
+  const tz = Math.max(-840, Math.min(840, Number(b.tz) || 0));
+  const subject = str(b.subject, 255);
+  const date = b.allDay ? isoDate(b.date) : new Date(Date.parse(start) - tz * 60_000).toISOString().slice(0, 10);
+  const myDomain = String(req.session.sf.user.username || '').split('@')[1]?.toLowerCase();
+  const attendees = (Array.isArray(b.attendees) ? b.attendees : []).slice(0, 200)
+    .map((a) => ({ name: str(a?.name, 120), email: str(a?.email, 254).toLowerCase() }));
+  const others = attendees.filter((a) => a.email && !a.email.endsWith('@' + myDomain));
+  const e = {
+    id: 'ol_' + crypto.createHash('sha1').update(str(b.itemId, 1000) || `${subject}|${start}`).digest('hex').slice(0, 24),
+    copies: [], sfEvent: false,
+    subject: subject || '(no subject)', title: cleanSubject(subject) || '(no subject)', start, end,
+    allDay: !!b.allDay, date, minutes: null, location: str(b.location, 255),
+    description: str(b.body, 32000), who: others.map((a) => a.name || a.email).join(', '), showAs: '',
+    what: null, oppId: null, accountIds: [], domains: customerDomains(others.map((a) => a.email), myDomain),
+  };
+  const ds = await dealSupportMeta(req);
+  const cm = await calendarMeta(req);
+  const to = Date.parse(end) > Date.parse(start) ? end : new Date(Date.parse(start) + 60_000).toISOString().replace(/\.\d+Z$/, 'Z');
+  await borrowSalesforceLinks(req, [e], { from: start, to, d0: date, d1: date, tz });
+  const marks = store.eventMarks(orgOf(req), [e.id]);
+  const linkedIds = [...new Set(Object.values(marks).map((m) => m.dsId).filter(Boolean))];
+  const [linked, mine] = await Promise.all([dealSupportsById(req, ds, linkedIds),
+    myDealSupportsBetween(req, ds, cm, date, date)]);
+  const supports = coveringSupports(e, marks, new Map(linked.map((r) => [r.Id, r])), mine);
+  res.json({ event: { ...e, supports, skipped: !!marks[e.id]?.skipped }, prefill: cm,
+    dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } });
+}));
 
 // Create a Deal Support from an event, on the opportunity the page picked, and remember the link.
 api.post('/calendar/events/:id/deal-support', wrap(async (req, res) => {
   const evId = eventId(req.params.id);
   const oppId = sfId(req.body?.opportunityId);
   const me = sfId(req.session.sf.user.id);
-  if (!evId.startsWith('mac_')) {
+  if (!/^(mac|ol)_/.test(evId)) {
     const [ev] = await query(req, `SELECT Id FROM Event WHERE Id = '${evId}' AND OwnerId = '${me}'`);
     if (!ev) throw new HttpError(404, 'That event is not on your calendar.');
   }
@@ -1417,3 +1485,11 @@ app.listen(PORT, 'localhost', () => {
   console.log(`SF Desk running at http://localhost:${PORT}`);
   if (USE_CLI) console.log(`No SF_CLIENT_ID set: signing in with the Salesforce CLI login${SF_TARGET_ORG ? ` for "${SF_TARGET_ORG}"` : ' (default org)'}.`);
 });
+
+// HTTPS for the Outlook add-in, only when its certificate has been made (scripts/outlook-cert.sh).
+const certFile = path.join(CERT_DIR, 'localhost.pem'), keyFile = path.join(CERT_DIR, 'localhost-key.pem');
+if (fs.existsSync(certFile) && fs.existsSync(keyFile)) {
+  https.createServer({ cert: fs.readFileSync(certFile), key: fs.readFileSync(keyFile) }, app)
+    .on('error', (err) => console.error(`Outlook add-in HTTPS listener not started: ${err.message}`))
+    .listen(HTTPS_PORT, 'localhost', () => console.log(`Outlook add-in served at https://localhost:${HTTPS_PORT}/outlook/pane`));
+}
