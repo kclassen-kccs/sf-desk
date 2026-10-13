@@ -177,6 +177,10 @@
   .ev .s { font-weight: 600; overflow-wrap: anywhere; }
   .cal-panel section { margin-bottom: 14px; }
   button.linkish { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; text-align: left; display: block; }
+  button.icon-btn { border: 0; background: none; padding: 0 4px; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
+  button.icon-btn:hover { color: var(--accent); }
+  td.edit-cell { width: 1%; padding-right: 0; }
+  section.ds-edit { margin-bottom: 14px; }
   .deals tr.sel td { background: var(--accent-soft); }
   .cal-panel .grid { grid-template-columns: 1fr; }
   .cal-panel .desc { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 13px; background: var(--bg); border-radius: 6px; padding: 8px; }
@@ -914,17 +918,25 @@ function dsValue(f, n) {
 }
 
 // opts.values prefills fields by name; opts.submit(fields) does the create instead of posting to `o`
-// (My Calendar uses both); opts.title replaces the heading.
+// (My Calendar uses both); opts.title replaces the heading. opts.edit makes it an edit form for the
+// record in opts.values: fields Salesforce won't let you change are read-only, and submit gets only
+// the changed fields (null for a cleared one).
 function dealSupportForm(o, close, opts = {}) {
   const fields = dsMeta.fields.filter((f) => f.createable);
   const inputs = new Map(fields.map((f) => [f, dsInput(f)]));
   for (const [f, n] of inputs) {
+    if (opts.edit) {
+      if (f.type === 'boolean') n.checked = false; else if (f.type !== 'multipicklist') n.value = '';
+      if (f.updateable === false) n.disabled = true;
+    }
     const v = opts.values?.[f.name];
     if (v == null || v === '') continue;
     if (f.type === 'boolean') n.checked = !!v;
     else if (f.type === 'multipicklist') for (const x of n.options) x.selected = String(v).split(';').includes(x.value);
+    else if (f.type === 'datetime') n.value = `${localDay(new Date(v))}T${hhmm24(new Date(v))}`;
     else n.value = v;
   }
+  const initial = new Map([...inputs].map(([f, n]) => [f, JSON.stringify(dsValue(f, n))]));
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
     el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f));
   // Shown up front: required fields, then the time fields (customer-facing, internal, travel) with a live total.
@@ -938,7 +950,7 @@ function dealSupportForm(o, close, opts = {}) {
   };
   for (const f of time) inputs.get(f).addEventListener('input', showTotal);
   showTotal();
-  const create = el('button', { class: 'primary' }, `Create ${dsMeta.label}`);
+  const create = el('button', { class: 'primary' }, opts.edit ? 'Save changes' : `Create ${dsMeta.label}`);
   const box = el('section', {},
     el('h3', {}, opts.title || `New ${dsMeta.label} for ${o.Name}`),
     el('div', { class: 'grid' }, required.map(cell)),
@@ -949,12 +961,14 @@ function dealSupportForm(o, close, opts = {}) {
     el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
   );
   create.addEventListener('click', async () => {
-    const body = {};
+    const body = {}, now = new Map();
     for (const [f, n] of inputs) {
       const v = dsValue(f, n);
-      if (v !== null && !(f.type === 'boolean' && v === false && f.defaultValue !== true)) body[f.name] = v;
+      now.set(f, v);
+      if (opts.edit) { if (!n.disabled && JSON.stringify(v) !== initial.get(f)) body[f.name] = v; }
+      else if (v !== null && !(f.type === 'boolean' && v === false && f.defaultValue !== true)) body[f.name] = v;
     }
-    const missing = fields.filter((f) => f.required && body[f.name] == null);
+    const missing = fields.filter((f) => f.required && now.get(f) == null);
     if (missing.length) return toast('Required: ' + missing.map((f) => f.label).join(', '), 'err');
     create.disabled = true;
     try {
@@ -1769,7 +1783,10 @@ function renderWeekDealSupports() {
   const toHours = (v) => v == null || v === '' ? 0 : unit === 'text' ? parseDuration(v) : unit === 'minutes' ? Number(v) / 60 : Number(v) || 0;
   const num = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
   const evTitle = (id) => cal.data.events.find((e) => e.id === id)?.title || 'event';
-  const tbody = el('tbody', {}, week.map((r) => el('tr', { class: 'nolink' + (r.events.includes(cal.sel) ? ' sel' : '') },
+  const canEdit = dsMeta.canUpdate;
+  const tbody = el('tbody', {}, week.map((r) => el('tr', { class: 'nolink' + (r.events.includes(cal.sel) ? ' sel' : '') + (cal.editing?.id === r.Id ? ' sel' : '') },
+    canEdit ? el('td', { class: 'edit-cell' }, el('button', { class: 'icon-btn', title: `Edit ${r.Name || dsMeta.label}`, 'aria-label': `Edit ${r.Name || dsMeta.label}`,
+      onclick: () => editWeekDealSupport(r) }, '✎')) : null,
     el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, num(r.Name) || r.Id)),
     el('td', {}, r.date),
     activityLabel ? el('td', { class: 'wrap' }, r.activity) : null,
@@ -1778,16 +1795,48 @@ function renderWeekDealSupports() {
       ? r.events.map((id) => el('button', { class: 'linkish', onclick: () => { cal.sel = id; renderCalendar(); } }, evTitle(id)))
       : el('span', { class: 'sub', style: 'margin:0' }, 'No matching event')),
     el('td', { class: 'n' }, fmtH(toHours(r.hours))))));
-  if (!week.length) tbody.append(el('tr', {}, el('td', { colspan: 6, class: 'empty' }, `None of your ${dsMeta.labelPlural.toLowerCase()} are dated this week.`)));
+  if (!week.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, `None of your ${dsMeta.labelPlural.toLowerCase()} are dated this week.`)));
   sec.replaceChildren(
     el('h3', {}, `Your ${dsMeta.labelPlural} this week (${week.length})`),
+    cal.editing?.box || el('div'),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
-      el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, 'Date'), activityLabel ? el('th', {}, activityLabel) : null,
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, '#'), el('th', {}, 'Date'), activityLabel ? el('th', {}, activityLabel) : null,
         el('th', {}, 'Account · Opportunity'), el('th', {}, 'Event'), el('th', { class: 'n' }, 'Hours'))),
       tbody,
-      week.length ? el('tfoot', {}, el('tr', {}, el('td', { colspan: activityLabel ? 5 : 4 }, `Total (${week.length})`),
+      week.length ? el('tfoot', {}, el('tr', {}, el('td', { colspan: (activityLabel ? 5 : 4) + (canEdit ? 1 : 0) }, `Total (${week.length})`),
         el('td', { class: 'n' }, fmtH(week.reduce((s, r) => s + toHours(r.hours), 0))))) : null)),
   );
+}
+
+// Edit one of the week's Deal Supports: the create form, prefilled from the record, above the list.
+async function editWeekDealSupport(r) {
+  if (cal.editing?.id === r.Id) return cal.editing.box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const close = () => { cal.editing = null; renderWeekDealSupports(); };
+  let data;
+  try { data = await api(`/deal-supports/${r.Id}`); } catch (err) { return toast(err.message, 'err'); }
+  let picked = data.opportunity;
+  const picker = dsMeta.oppUpdateable ? oppCombobox({ picked, onPick: (o) => { picked = o; } }) : null;
+  const box = dealSupportForm(null, close, {
+    edit: true,
+    title: `Edit ${dsMeta.label} ${data.record.Name || ''}`.trim(),
+    values: data.record,
+    submit: async (fields) => {
+      if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
+      const moved = picked.Id !== data.opportunity?.Id;
+      await api(`/deal-supports/${r.Id}`, { method: 'PATCH', body: { fields, opportunityId: moved ? picked.Id : undefined } });
+      toast(`Saved ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
+      cal.editing = null;
+      await loadCalendar();
+    },
+  });
+  box.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
+    picker ? [el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), picker.input)),
+      picker.list, picker.status]
+      : el('div', {}, 'Opportunity: ', el('b', {}, picked?.Name || '—'))));
+  box.classList.add('ds-edit');
+  cal.editing = { id: r.Id, box };
+  renderWeekDealSupports();
+  box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
 
 function selectEvent(id) {
@@ -1818,6 +1867,7 @@ function eventPrefill(e) {
   return v;
 }
 const hhmm24 = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 
 function renderEventPanel() {
   const panel = document.getElementById('calPanel');

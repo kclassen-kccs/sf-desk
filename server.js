@@ -566,6 +566,7 @@ async function dealSupportMeta(req) {
       label: f.label,
       type: f.type,
       createable: f.createable && onForm,
+      updateable: !!f.updateable,
       required: f.createable && onForm && f.type !== 'boolean' && (!f.nillable && !f.defaultedOnCreate ||
         (!!required && !DEAL_SUPPORT_OPTIONAL.includes(f.name.toLowerCase()) && !optionalByLabel.test(f.label))),
       length: f.length || null,
@@ -584,7 +585,7 @@ async function dealSupportMeta(req) {
   for (const f of timeEntry) {
     let entry = fields.find((x) => x.name === f.name);
     if (!entry) {
-      entry = { name: f.name, label: f.label, type: f.type, createable: true, required: false, length: null,
+      entry = { name: f.name, label: f.label, type: f.type, createable: true, updateable: !!f.updateable, required: false, length: null,
         referenceTo: null, picklist: null, defaultValue: null };
       fields.push(entry);
     }
@@ -603,6 +604,9 @@ async function dealSupportMeta(req) {
     oppField: opp.name,
     roleDefault: role ? { field: role.name, value: leadSe || null, options: role.picklist } : null,
     canCreate: d.createable && opp.createable,
+    canUpdate: !!d.updateable,
+    oppUpdateable: !!opp.updateable,
+    oppRel: opp.relationshipName || null,
     fields,
   };
   req.session.dealSupport = meta;
@@ -686,6 +690,39 @@ api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const meta = await dealSupportMeta(req);
   res.status(201).json(await createDealSupport(req, meta, id, req.body?.fields));
+}));
+
+// One Deal Support with the form's fields and its opportunity, for the edit form.
+api.get('/deal-supports/:id', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  const fields = [...dsReadFields(meta), meta.oppField, ...(meta.oppRel ? [`${meta.oppRel}.Name`, `${meta.oppRel}.Account.Name`] : [])];
+  const [rec] = await query(req, `SELECT ${[...new Set(fields)].join(', ')} FROM ${meta.object} WHERE Id = '${id}'`);
+  if (!rec) throw new HttpError(404, `${meta.label} not found.`);
+  const opp = meta.oppRel && rec[meta.oppRel];
+  res.json({ record: rec, opportunity: rec[meta.oppField]
+    ? { Id: rec[meta.oppField], Name: opp?.Name || rec[meta.oppField], Account: { Name: opp?.Account?.Name || '' } } : null });
+}));
+
+// Save changes to a Deal Support from the edit form: the form's fields (null clears one) and, optionally, its opportunity.
+api.patch('/deal-supports/:id', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  if (!meta.canUpdate) throw new HttpError(403, `Your Salesforce user can't edit ${meta.labelPlural}.`);
+  const byName = new Map(meta.fields.filter((f) => f.createable && f.updateable).map((f) => [f.name, f]));
+  const body = {};
+  for (const [k, v] of Object.entries(req.body?.fields || {})) {
+    const f = byName.get(k);
+    if (!f) throw new HttpError(400, `Field not editable in this app: ${k}`);
+    if ((v === '' || v == null) && f.required) throw new HttpError(400, `Required: ${f.label}`);
+    body[k] = v === '' || v === undefined ? null : v;
+  }
+  if (req.body?.opportunityId) {
+    if (!meta.oppUpdateable) throw new HttpError(403, "Your Salesforce user can't move this record to another opportunity.");
+    body[meta.oppField] = sfId(req.body.opportunityId);
+  }
+  if (Object.keys(body).length) await sf(req, 'PATCH', `/services/data/${API}/sobjects/${meta.object}/${id}`, { body });
+  res.json({ ok: true });
 }));
 
 // ---------- Pipeline dashboard ----------

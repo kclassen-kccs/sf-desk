@@ -33,7 +33,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
   come from the matching Salesforce event (e.g. synced by Outreach) at the same time, else from the meeting
   title and the attendees' email domains. Salesforce events logged twice at the same time (e.g. by
   Outreach, on the account and on the opportunity) are shown once. The open opportunity list is kept in the
-  local database and refreshed from Salesforce every 4 hours
+  local database and refreshed from Salesforce every 4 hours. Under the calendar is the list of your Deal
+  Supports dated that week; the pencil on a row opens it in the same form to edit (only changed fields are saved)
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - The account screen shows the sales rep prominently, and a **Deal Supports** panel with everyone's Deal Supports
   on the account and its opportunities for the last 30, 60 or 90 days or the fiscal year to date: count, total
