@@ -88,55 +88,91 @@ $me = ''
 try { $me = [string]$ns.CurrentUser.AddressEntry.GetExchangeUser().PrimarySmtpAddress } catch {}
 if (-not $me) { try { $me = Smtp $ns.CurrentUser } catch {} }
 
-# Outlook's Restrict wants local times written the way this PC writes dates. Pad a day on each side,
-# since that format drops seconds and all-day events are stored at local midnight, then filter exactly.
-$fmt = { param($d) $d.ToLocalTime().ToString('g', [Globalization.CultureInfo]::CurrentCulture) }
-$filter = "[Start] < '" + (& $fmt $toUtc.AddDays(1)) + "' AND [End] > '" + (& $fmt $fromUtc.AddDays(-1)) + "'"
 $iso = 'yyyy-MM-dd''T''HH:mm:ss''Z'''
+$inRange = { param($i) $i.Class -eq 26 -and $i.StartUTC -lt $toUtc -and $i.EndUTC -gt $fromUtc } # olAppointment
+
+# The folder's appointments (one per occurrence of a repeating one) in the range.
+# Outlook's Restrict takes dates as text and parses them by the PC's regional format, which goes wrong on
+# some PCs, so try this PC's short format, then an ISO-like one. Pad a day on each side, since these drop
+# seconds and all-day events sit at local midnight, then filter exactly. If neither finds anything, walk
+# the whole calendar instead, expanding repeating meetings ourselves: slower, but needs no date text.
+function Find-Items($folder) {
+  $found = New-Object System.Collections.ArrayList
+  $from = $fromUtc.AddDays(-1).ToLocalTime(); $to = $toUtc.AddDays(1).ToLocalTime()
+  foreach ($f in @($from.ToString('g', [Globalization.CultureInfo]::CurrentCulture), $to.ToString('g', [Globalization.CultureInfo]::CurrentCulture)),
+                 @($from.ToString('yyyy-MM-dd HH:mm', $inv), $to.ToString('yyyy-MM-dd HH:mm', $inv))) {
+    try {
+      $items = $folder.Items
+      $items.Sort('[Start]')
+      $items.IncludeRecurrences = $true # one item per occurrence; Count is meaningless after this, so walk with GetNext
+      $hits = $items.Restrict("[Start] < '" + $f[1] + "' AND [End] > '" + $f[0] + "'")
+      $item = $hits.GetFirst()
+      while ($null -ne $item) {
+        if (& $inRange $item) { [void]$found.Add($item) }
+        $item = $hits.GetNext()
+      }
+    } catch {}
+    if ($found.Count) { return $found }
+  }
+
+  $days = [Math]::Ceiling(($toUtc - $fromUtc).TotalDays) + 1
+  foreach ($item in $folder.Items) {
+    try {
+      if ($item.Class -ne 26) { continue }
+      if (-not $item.IsRecurring) { if (& $inRange $item) { [void]$found.Add($item) }; continue }
+      $pattern = $item.GetRecurrencePattern()
+      if ($pattern.PatternStartDate -gt $to -or ($pattern.PatternEndDate -lt $from.Date)) { continue }
+      $time = $item.Start.TimeOfDay
+      for ($d = 0; $d -le $days; $d++) {
+        try {
+          $occurrence = $pattern.GetOccurrence($from.Date.AddDays($d) + $time)
+          if (& $inRange $occurrence) { [void]$found.Add($occurrence) }
+        } catch {} # no occurrence that day
+      }
+      # Occurrences moved to another time aren't found by their usual start; the exceptions list them.
+      foreach ($x in $pattern.Exceptions) {
+        try { if (-not $x.Deleted -and (& $inRange $x.AppointmentItem)) { [void]$found.Add($x.AppointmentItem) } } catch {}
+      }
+    } catch {}
+  }
+  # A moved occurrence can be found both ways; keep one per start.
+  $seen = @{}
+  return @($found | Where-Object { $k = [string]$_.GlobalAppointmentID + '|' + $_.StartUTC.Ticks; if ($seen[$k]) { $false } else { $seen[$k] = $true; $true } })
+}
 
 $out = New-Object System.Collections.ArrayList
 foreach ($c in @(Calendar-Folders | Where-Object { $ids -contains $_.id })) {
-  $items = $c.folder.Items
-  $items.Sort('[Start]')
-  $items.IncludeRecurrences = $true # one item per occurrence; Count is meaningless after this, so walk with GetNext
-  $found = $items.Restrict($filter)
-  $item = $found.GetFirst()
-  while ($null -ne $item) {
-    if ($item.Class -eq 26) { # olAppointment
-      $startUtc = $item.StartUTC; $endUtc = $item.EndUTC
-      if ($startUtc -lt $toUtc -and $endUtc -gt $fromUtc) {
-        $attendees = New-Object System.Collections.ArrayList
-        $n = 0
-        foreach ($r in $item.Recipients) {
-          if ($r.Type -eq 3) { continue } # olResource: rooms and equipment
-          if (++$n -gt 60) { break }      # enough to find the customer's domain; big invites get slow
-          $email = Smtp $r
-          [void]$attendees.Add(@{ name = [string]$r.Name; email = $email; me = [bool]($me -and $email -eq $me) })
-        }
-        $notes = [string]$item.Body
-        if ($notes.Length -gt 20000) { $notes = $notes.Substring(0, 20000) }
-        $uid = [string]$item.GlobalAppointmentID
-        if (-not $uid) { $uid = [string]$item.EntryID }
-        [void]$out.Add(@{
-          # Occurrences of a repeating meeting share an ID; the server adds the start to tell them apart.
-          uid = $uid
-          title = [string]$item.Subject
-          start = $startUtc.ToString($iso, $inv)
-          end = $endUtc.ToString($iso, $inv)
-          date = $item.Start.ToString('yyyy-MM-dd', $inv)
-          allDay = [bool]$item.AllDayEvent
-          location = [string]$item.Location
-          notes = $notes
-          calendar = $c.title
-          calendarId = $c.id
-          organizer = [string]$item.Organizer
-          attendees = $attendees.ToArray()
-          canceled = ($item.MeetingStatus -eq 5 -or $item.MeetingStatus -eq 7) # olMeetingCanceled, olMeetingReceivedAndCanceled
-          free = ($item.BusyStatus -eq 0) # olFree
-        })
-      }
+  foreach ($item in @(Find-Items $c.folder)) {
+    $startUtc = $item.StartUTC; $endUtc = $item.EndUTC
+    $attendees = New-Object System.Collections.ArrayList
+    $n = 0
+    foreach ($r in $item.Recipients) {
+      if ($r.Type -eq 3) { continue } # olResource: rooms and equipment
+      if (++$n -gt 60) { break }      # enough to find the customer's domain; big invites get slow
+      $email = Smtp $r
+      [void]$attendees.Add(@{ name = [string]$r.Name; email = $email; me = [bool]($me -and $email -eq $me) })
     }
-    $item = $found.GetNext()
+    $notes = [string]$item.Body
+    if ($notes.Length -gt 20000) { $notes = $notes.Substring(0, 20000) }
+    $uid = [string]$item.GlobalAppointmentID
+    if (-not $uid) { $uid = [string]$item.EntryID }
+    [void]$out.Add(@{
+      # Occurrences of a repeating meeting share an ID; the server adds the start to tell them apart.
+      uid = $uid
+      title = [string]$item.Subject
+      start = $startUtc.ToString($iso, $inv)
+      end = $endUtc.ToString($iso, $inv)
+      date = $item.Start.ToString('yyyy-MM-dd', $inv)
+      allDay = [bool]$item.AllDayEvent
+      location = [string]$item.Location
+      notes = $notes
+      calendar = $c.title
+      calendarId = $c.id
+      organizer = [string]$item.Organizer
+      attendees = $attendees.ToArray()
+      canceled = ($item.MeetingStatus -eq 5 -or $item.MeetingStatus -eq 7) # olMeetingCanceled, olMeetingReceivedAndCanceled
+      free = ($item.BusyStatus -eq 0) # olFree
+    })
   }
 }
 Out-Json $out.ToArray()
