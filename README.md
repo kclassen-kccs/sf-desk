@@ -12,7 +12,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
   starts Feb 1 and is named for the calendar year it ends in (FY27 = Feb 2026 – Jan 2027)
 - **My Time** totals the hours on your Deal Supports across all opportunities: this week, the previous week,
   the last 30 days, this fiscal quarter and this fiscal year, hours per week for the last 13 weeks, and hours
-  per opportunity for any of those periods. Click a tile, week or opportunity to list its activities. Weeks
+  per opportunity for any of those periods. Click a tile, week or opportunity to list its activities (the pencil
+  on a row edits that Deal Support). Weeks
   start on Monday
 - **Export to Excel** on the Pipeline deal list and the My Time activity list downloads the rows shown (after
   filters, hidden records and any clicked bar, tile or opportunity) as an .xlsx with typed dates, amounts and

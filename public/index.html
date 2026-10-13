@@ -1415,7 +1415,8 @@ async function showTime() {
 async function loadTime() {
   try {
     const by = timePrefs().by;
-    time.data = await api('/my-time' + (by ? '?by=' + encodeURIComponent(by) : ''));
+    [time.data] = await Promise.all([api('/my-time' + (by ? '?by=' + encodeURIComponent(by) : '')),
+      dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {})]);
     if (document.getElementById('timeBody')) renderTime();
   } catch (e) {
     const sub = document.getElementById('timeSub');
@@ -1573,7 +1574,12 @@ function renderTimeList(all, today) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const oppName = time.opp !== null ? list[0]?.oppName : null;
   const showRole = list.some((e) => e.role);
-  const tbody = el('tbody', {}, list.map((e) => el('tr', e.oppId && e.accountId ? { onclick: () => openDeal({ Id: e.oppId, AccountId: e.accountId }), title: 'Open this opportunity' } : {},
+  const canEdit = !!dsMeta?.canUpdate;
+  const edit = (e) => editDealSupport(e.id, time, () => renderTimeList(all, today), loadTime);
+  const tbody = el('tbody', {}, list.map((e) => el('tr', {
+    ...(e.oppId && e.accountId ? { onclick: () => openDeal({ Id: e.oppId, AccountId: e.accountId }), title: 'Open this opportunity' } : {}),
+    class: time.editing?.id === e.id ? 'sel' : null },
+    canEdit ? editPencil(e.name, () => edit(e)) : null,
     el('td', {}, e.date || '—'),
     el('td', { class: 'wrap' }, e.oppName),
     el('td', { class: 'wrap' }, e.accountName),
@@ -1581,15 +1587,16 @@ function renderTimeList(all, today) {
     el('td', { class: 'wrap' }, e.name || ''),
     el('td', { class: 'n' }, fmtH(e.hours)),
   )));
-  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 6, class: 'empty' }, 'No activities here.')));
+  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, 'No activities here.')));
   sec.replaceChildren(
     el('h3', {}, `${range.label}${oppName ? ` · ${oppName}` : ''}: ${plural(list.length, 'activity', 'activities')}, ${fmtH(hoursOf(list))}`,
       el('span', { class: 'spacer' }),
       time.opp !== null ? el('button', { onclick: () => { time.opp = null; renderTime(); } }, 'All opportunities')
         : el('span', { class: 'sub', style: 'margin:0' }, 'Click a tile, week or opportunity to narrow this list'),
       el('button', { disabled: !list.length, onclick: () => exportTime(list, showRole, range.label + (oppName ? ` - ${oppName}` : '')) }, 'Export to Excel')),
+    time.editing?.box || el('div'),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
-      el('thead', {}, el('tr', {}, el('th', {}, 'Date'), el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, 'Date'), el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
         showRole ? el('th', {}, 'Role') : null, el('th', {}, time.data.label), el('th', { class: 'n' }, 'Hours'))),
       tbody)),
   );
@@ -1797,8 +1804,7 @@ function renderWeekDealSupports() {
   const evTitle = (id) => cal.data.events.find((e) => e.id === id)?.title || 'event';
   const canEdit = dsMeta.canUpdate;
   const tbody = el('tbody', {}, week.map((r) => el('tr', { class: 'nolink' + (r.events.includes(cal.sel) ? ' sel' : '') + (cal.editing?.id === r.Id ? ' sel' : '') },
-    canEdit ? el('td', { class: 'edit-cell' }, el('button', { class: 'icon-btn', title: `Edit ${r.Name || dsMeta.label}`, 'aria-label': `Edit ${r.Name || dsMeta.label}`,
-      onclick: () => editWeekDealSupport(r) }, '✎')) : null,
+    canEdit ? editPencil(r.Name, () => editWeekDealSupport(r)) : null,
     el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, num(r.Name) || r.Id)),
     el('td', {}, r.date),
     activityLabel ? el('td', { class: 'wrap' }, r.activity) : null,
@@ -1820,12 +1826,19 @@ function renderWeekDealSupports() {
   );
 }
 
-// Edit one of the week's Deal Supports: the create form, prefilled from the record, above the list.
-async function editWeekDealSupport(r) {
-  if (cal.editing?.id === r.Id) return cal.editing.box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-  const close = () => { cal.editing = null; renderWeekDealSupports(); };
+// Edit one of the week's Deal Supports, above the list.
+const editWeekDealSupport = (r) => editDealSupport(r.Id, cal, renderWeekDealSupports, loadCalendar);
+
+// Edit a Deal Support in the create form, prefilled from the record. `host` is the page's state, whose
+// `editing` holds the open form; rerender() redraws the list it sits above, reload() refreshes after saving.
+async function editDealSupport(id, host, rerender, reload) {
+  if (host.editing?.id === id) return host.editing.box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const close = () => { host.editing = null; rerender(); };
   let data;
-  try { data = await api(`/deal-supports/${r.Id}`); } catch (err) { return toast(err.message, 'err'); }
+  try {
+    dsMeta ||= await api('/deal-supports/meta');
+    data = await api(`/deal-supports/${id}`);
+  } catch (err) { return toast(err.message, 'err'); }
   let picked = data.opportunity;
   const picker = dsMeta.oppUpdateable ? oppCombobox({ picked, onPick: (o) => { picked = o; } }) : null;
   const box = dealSupportForm(null, close, {
@@ -1835,10 +1848,10 @@ async function editWeekDealSupport(r) {
     submit: async (fields) => {
       if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
       const moved = picked.Id !== data.opportunity?.Id;
-      await api(`/deal-supports/${r.Id}`, { method: 'PATCH', body: { fields, opportunityId: moved ? picked.Id : undefined } });
+      await api(`/deal-supports/${id}`, { method: 'PATCH', body: { fields, opportunityId: moved ? picked.Id : undefined } });
       toast(`Saved ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
-      cal.editing = null;
-      await loadCalendar();
+      host.editing = null;
+      await reload();
     },
   });
   box.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
@@ -1846,10 +1859,14 @@ async function editWeekDealSupport(r) {
       picker.list, picker.status]
       : el('div', {}, 'Opportunity: ', el('b', {}, picked?.Name || '—'))));
   box.classList.add('ds-edit');
-  cal.editing = { id: r.Id, box };
-  renderWeekDealSupports();
+  host.editing = { id, box };
+  rerender();
   box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
+
+// The pencil that opens a Deal Support's edit form (shown when your user can edit them).
+const editPencil = (name, onclick) => el('td', { class: 'edit-cell' }, el('button', { class: 'icon-btn', title: `Edit ${name || dsMeta.label}`,
+  'aria-label': `Edit ${name || dsMeta.label}`, onclick: (ev) => { ev.stopPropagation(); onclick(); } }, '✎'));
 
 function selectEvent(id) {
   cal.sel = cal.sel === id ? null : id;
