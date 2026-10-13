@@ -15,7 +15,24 @@ your Salesforce user is already allowed to, and it only writes when you click **
 - Keeps a local SQLite copy of every account and opportunity you load, so if Salesforce can't be reached
   you can still browse what you last saw (read-only until the connection is back)
 
-## 1. Create an app in Salesforce (one-time)
+## 1. Choose how to sign in (one-time)
+
+### Option A: Salesforce CLI login (no app needed)
+
+If you can't create an External Client App, SF Desk can reuse the login from the Salesforce CLI.
+This works with SSO, because the CLI signs you in through your normal browser login.
+
+1. Install the CLI from Salesforce's macOS installer (the `.pkg` at
+   https://developer.salesforce.com/tools/salesforcecli). Don't use `npm install @salesforce/cli`;
+   that needs registry.npmjs.org, which some company networks block.
+2. Sign in once: `sf org login web --set-default` (add `--instance-url https://yourcompany.my.salesforce.com`
+   for a My Domain/SSO login, or `--alias work` to name it).
+3. Leave `SF_CLIENT_ID` empty in `.env`. If you used an alias, set `SF_TARGET_ORG=work`.
+
+SF Desk runs `sf org display` (and `sf org auth show-access-token` on CLI versions that hide the token there) when you click **Connect** and whenever the token expires.
+**Disconnect** only signs SF Desk out; your CLI login stays as it is (`sf org logout` ends that).
+
+### Option B: Create an app in Salesforce
 
 In Setup, create an **External Client App** (or a classic **Connected App**) with OAuth enabled:
 
@@ -35,7 +52,7 @@ Requires Node.js 22 or newer.
 
 ```bash
 cd sf-desk
-cp .env.example .env      # then paste your Consumer Key into SF_CLIENT_ID
+cp .env.example .env      # Option B: paste your Consumer Key into SF_CLIENT_ID
 npm install
 npm start
 ```
