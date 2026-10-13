@@ -269,18 +269,20 @@ Calendars**, turn on **Terminal**, then stop SF Desk with Ctrl+C, run `npm start
 ## Optional: the Outlook add-in
 
 SF Desk can also put a **Create Deal Support** button on meetings in Outlook. It needs a one-time HTTPS
-certificate and adding the add-in to Outlook. In Terminal, in the SF Desk folder (`~/SF-Desk` for a quick
-install), run `sh scripts/outlook-cert.sh --trust`, restart SF Desk, then follow
+certificate and adding the add-in to Outlook. In the Mac app, choose **SF Desk > Set Up Outlook Add-in...**.
+Otherwise, in Terminal, in the SF Desk folder (`~/SF-Desk` for the Terminal installer), run `sh scripts/outlook-cert.sh --trust`, restart SF Desk, then follow
 [OUTLOOK.md](OUTLOOK.md) from step 2. Updates keep the certificate.
 
 ## Where your data lives
 
-Paths are inside `~/SF-Desk` for a quick install, or your checkout for a manual one.
+Paths are inside `~/Library/Application Support/SF Desk` for the Mac app, `~/SF-Desk` for the Terminal
+installer, or your checkout for a manual one.
 
 - `data/sf-desk.db` holds a local copy of the accounts and opportunities you've loaded, your hidden
   records, and which meetings you've logged or marked as not needing a Deal Support. Deleting the
   `data` folder resets all of that; it's rebuilt as you use the app.
-- `data/bin/sfdesk-calendar` is the compiled calendar reader. Delete it to force a rebuild.
+- `data/bin/sfdesk-calendar` is the compiled calendar reader (not used by the Mac app, which has its own).
+  Delete it to force a rebuild.
 - Your Salesforce token is only held in memory and never written to disk. Every edit goes straight to
   Salesforce when you click **Save** or **Add**.
 - The server only listens on `localhost`, so nobody else on the network can reach it.

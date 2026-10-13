@@ -1,13 +1,15 @@
 # SF Desk
 
-A small local web app for viewing and editing your Salesforce Accounts and Opportunities.
-It uses the Salesforce REST API with your own OAuth login, so it only sees and changes what
-your Salesforce user is already allowed to, and it only writes when you click **Save** or **Add**.
+A small local app for viewing and editing your Salesforce Accounts and Opportunities, and logging your
+time as Deal Supports. It runs on your own computer, as **SF Desk.app** on a Mac or as a local web server
+you open in the browser. It uses the Salesforce REST API with your own login, so it only sees and changes
+what your Salesforce user is already allowed to, and it only writes when you click **Save** or **Add**.
 
-**Setting it up on a SailPoint Mac?** The easiest way is the **SF Desk app**, which has everything inside
-([INSTALL.md](INSTALL.md#the-sf-desk-app-recommended)). For a Git checkout, INSTALL.md also covers Node, the Salesforce CLI
-login, getting dependencies past the npm block, the Exchange calendar and calendar permission, and
-troubleshooting.
+**Setting it up on a SailPoint Mac?** Use the **SF Desk app**: unzip it, drag it to Applications and open it.
+Everything it needs is inside, and it walks you through the Salesforce sign-in
+([INSTALL.md](INSTALL.md#the-sf-desk-app-recommended)). INSTALL.md also covers running SF Desk from a Git
+checkout (Node, the Salesforce CLI login, getting dependencies past the npm block), the Exchange calendar,
+calendar permission and troubleshooting.
 
 ## What it does
 
@@ -26,9 +28,10 @@ troubleshooting.
 - **Time Entry** shows your calendar a week at a time. On a Mac it reads the calendars from your Internet
   Accounts (System Settings > Internet Accounts), starting with the Exchange account's calendar if there is
   one; pick another calendar, or **Salesforce events** (the Event records you own), from the list at the top.
-  The first time, macOS asks to let the app you run SF Desk from (e.g. Terminal) access your calendars; if you
-  say no, the tab says so and shows Salesforce events. SF Desk builds a small calendar reader (`mac/calendar.swift`)
-  with the Xcode Command Line Tools on first use; without them it asks Calendar.app instead, which is slower.
+  The first time, macOS asks to let SF Desk access your calendars (when you run the server yourself, it asks
+  for the app you started it from, e.g. Terminal); if you say no, the tab says so and shows Salesforce events.
+  The calendar reader (`mac/calendar.swift`) is built into the Mac app; a checkout builds it with the Xcode
+  Command Line Tools on first use, and without them asks Calendar.app instead, which is slower.
   Events with a Deal Support are green, events without one are red, and ones you mark **No Deal Support needed**
   turn grey. Click an event to see its details, then **Create Deal Support**: type to find the opportunity among
   all open opportunities (opportunities on accounts named in the meeting title come first), and the form is
@@ -65,6 +68,23 @@ troubleshooting.
 - If someone else changed a record after you loaded it, the save is refused rather than overwriting their work
 - Keeps a local SQLite copy of every account and opportunity you load, so if Salesforce can't be reached
   you can still browse what you last saw (read-only until the connection is back)
+
+## The Mac app
+
+SF Desk.app (source in `mac/app`, built by `scripts/build-mac-app.sh`; see
+[INSTALL.md](INSTALL.md#the-sf-desk-app-recommended)) carries the server, Node.js and the calendar reader, and
+shows SF Desk in its own window. On first launch it downloads the Salesforce CLI if you don't have one and
+signs you in (Option A below), so the setup steps that follow are only for running from a checkout.
+
+- **Settings:** the `.env` settings below live in `~/Library/Application Support/SF Desk/.env`. Open it
+  with **SF Desk > Edit Settings...**, then **File > Restart Server**.
+- **Data:** the same folder holds `data/` (the local copy), `certs/` (the Outlook certificate) and `sf-cli/`
+  if the app downloaded the CLI. Updating the app keeps all of it. The first launch copies these from
+  `~/SF-Desk` or a Git checkout.
+- **Running:** closing the window keeps SF Desk running in the background (for the Outlook add-in); click
+  the Dock icon to get it back, and quit to stop it. **File > Open in Browser** opens the same SF Desk in
+  your browser. If SF Desk is already running (e.g. `npm start` in a checkout), the app shows that one.
+- **Logs:** `~/Library/Logs/SF Desk/server.log` (**Help > Show Server Log**).
 
 ## 1. Choose how to sign in (one-time)
 
@@ -159,9 +179,11 @@ to the field's API name.
 
 - The server listens on `localhost` only.
 - Tokens are held in server memory for the session and never written to disk. Restarting the app means reconnecting.
-- Account and opportunity records you load are saved to `data/sf-desk.db` (set `SF_DESK_DB` to move it).
+- Account and opportunity records you load are saved to `data/sf-desk.db` (set `SF_DESK_DB` to move it;
+  the Mac app keeps it in `~/Library/Application Support/SF Desk/data`).
   Delete that file to clear the local copy; it is rebuilt as you browse. Edits always go straight to
   Salesforce; nothing is queued locally.
 - **Disconnect** revokes the token with Salesforce.
 - For the Outlook add-in, SF Desk also listens on `https://localhost:3443` (still `localhost` only) once
-  `certs/` holds the certificate from `scripts/outlook-cert.sh`. Its keys stay in `certs/`, which git ignores.
+  `certs/` holds the certificate from `scripts/outlook-cert.sh` (or **Set Up Outlook Add-in...** in the Mac
+  app). Its keys stay in `certs/`, which git ignores.
