@@ -33,7 +33,7 @@ foreach ($name in 'app', 'runtime') {
 }
 # Files from a browser download carry a "from the internet" mark that makes Windows warn about each one.
 Get-ChildItem -Recurse -File $dest | Unblock-File
-Say "Copied the app and Node.js $(& (Join-Path $dest 'runtime\node.exe') -v)."
+Say "Copied $((Get-Content (Join-Path $dest 'app\VERSION.txt') -ErrorAction SilentlyContinue) -join ' ')."
 
 # 3. Shortcuts that start SF Desk (windows/SFDesk.ps1) without a console window.
 $powershell = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe'

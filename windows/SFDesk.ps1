@@ -25,41 +25,60 @@ $sfAlias = 'sailpoint'
 $sfTarball = 'https://developer.salesforce.com/media/salesforce-cli/sf/channels/stable/sf-win32-x64.tar.gz'
 $env:SF_AUTOUPDATE_DISABLE = 'true'
 
+# The build (from VERSION.txt, written by scripts/build-windows-package.sh), shown on errors.
+$build = ''
+try { $build = ([IO.File]::ReadAllText((Join-Path $appDir 'VERSION.txt'))).Trim() } catch {}
 function Show-Error($message) {
+  if ($build) { $message += "`n`n($build)" }
   [void][Windows.Forms.MessageBox]::Show($message, 'SF Desk', 'OK', 'Error')
 }
 function Ask($title, $message) {
   return [Windows.Forms.MessageBox]::Show($message, $title, 'YesNo', 'Question') -eq 'Yes'
 }
 
-# ---------- .env ----------
+# ---------- settings ----------
+
+# .env is yours to edit (Edit Settings...); the launcher never writes it, since some PCs refuse writes to
+# it (security tools guarding ".env" files, or attributes it picked up). What the launcher works out
+# itself (where sf is, which org alias) goes in launcher.json, and reaches the server as environment
+# variables unless .env sets them.
+$stateFile = Join-Path $dataDir 'launcher.json'
 
 function Read-Env {
   $vars = @{}
-  if (Test-Path $envFile) {
-    foreach ($line in [IO.File]::ReadAllLines($envFile)) {
-      if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$') { $vars[$Matches[1]] = $Matches[2].Trim().Trim('"') }
+  try {
+    if (Test-Path -LiteralPath $envFile) {
+      foreach ($line in [IO.File]::ReadAllLines($envFile)) {
+        if ($line -match '^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=(.*)$') { $vars[$Matches[1]] = $Matches[2].Trim().Trim('"') }
+      }
     }
-  }
+  } catch {}
   return $vars
 }
-# Write .env without a byte-order mark, which dotenv would misread. A copied .env can come out read-only
-# or hidden (attributes carried over from the zip or a sync tool), and .NET's WriteAllLines is then
-# refused with "Access to the path is denied", so clear those first and overwrite in place.
-function Write-EnvFile($lines) {
-  if (Test-Path -LiteralPath $envFile) { (Get-Item -LiteralPath $envFile -Force).Attributes = 'Normal' }
-  $bytes = (New-Object System.Text.UTF8Encoding $false).GetBytes((($lines | ForEach-Object { $_ }) -join "`r`n") + "`r`n")
-  $fs = [IO.File]::Open($envFile, [IO.FileMode]::OpenOrCreate, [IO.FileAccess]::Write, [IO.FileShare]::ReadWrite)
-  try { $fs.SetLength(0); $fs.Write($bytes, 0, $bytes.Length) } finally { $fs.Close() }
+function Read-State {
+  $state = @{}
+  try {
+    if (Test-Path -LiteralPath $stateFile) {
+      $json = [IO.File]::ReadAllText($stateFile) | ConvertFrom-Json
+      foreach ($p in $json.PSObject.Properties) { $state[$p.Name] = [string]$p.Value }
+    }
+  } catch {}
+  return $state
 }
-# Replace KEY's line in .env, or add one.
-function Set-Env($key, $value) {
-  $lines = New-Object System.Collections.Generic.List[string]
-  if (Test-Path -LiteralPath $envFile) { $lines.AddRange([IO.File]::ReadAllLines($envFile)) }
-  $i = 0; $found = $false
-  for (; $i -lt $lines.Count; $i++) { if ($lines[$i] -match "^\s*$key\s*=") { $lines[$i] = "$key=$value"; $found = $true } }
-  if (-not $found) { $lines.Add("$key=$value") }
-  Write-EnvFile $lines
+# A setting from .env if it has a value there, else from launcher.json.
+function Get-Setting($key) {
+  $v = (Read-Env)[$key]
+  if ($v) { return $v }
+  return (Read-State)[$key]
+}
+function Save-Setting($key, $value) {
+  $state = Read-State
+  $state[$key] = $value
+  try {
+    [IO.File]::WriteAllText($stateFile, (ConvertTo-Json -InputObject $state), (New-Object System.Text.UTF8Encoding $false))
+  } catch {
+    Write-Warning "Couldn't save $key to ${stateFile}: $($_.Exception.Message)"
+  }
 }
 
 # ---------- the server ----------
@@ -112,6 +131,10 @@ function Start-Server {
   $psi.EnvironmentVariables['SF_DESK_APP'] = '1'
   $psi.EnvironmentVariables['SF_DESK_DB'] = Join-Path $dataDir 'data\sf-desk.db'
   $psi.EnvironmentVariables['SF_DESK_CERTS'] = Join-Path $dataDir 'certs'
+  foreach ($key in 'SF_CLI_PATH', 'SF_TARGET_ORG') {
+    $value = Get-Setting $key
+    if ($value) { $psi.EnvironmentVariables[$key] = $value }
+  }
   $script:server = [Diagnostics.Process]::Start($psi)
 
   $url = Get-Url
@@ -142,7 +165,7 @@ function Get-LogTail {
 # ---------- Salesforce CLI ----------
 
 function Find-Sf {
-  $configured = (Read-Env)['SF_CLI_PATH']
+  $configured = Get-Setting 'SF_CLI_PATH'
   if ($configured -and (Test-Path $configured)) { return $configured }
   $cmd = Get-Command sf.cmd -ErrorAction SilentlyContinue
   $candidates = @(
@@ -187,7 +210,7 @@ function Connect-Salesforce($target) {
       throw "Couldn't download the Salesforce CLI ($($_.Exception.Message)). Install it with the Windows installer on the page that just opened, then open SF Desk again."
     }
   }
-  if ((Read-Env)['SF_CLI_PATH'] -ne $sf) { Set-Env 'SF_CLI_PATH' $sf }
+  if ((Get-Setting 'SF_CLI_PATH') -ne $sf) { Save-Setting 'SF_CLI_PATH' $sf }
 
   Show-Status 'Checking your Salesforce login...'
   $targetArgs = @(); if ($target) { $targetArgs = @('--target-org', $target) }
@@ -199,7 +222,7 @@ function Connect-Salesforce($target) {
   $alias = $target; if (-not $alias) { $alias = $sfAlias }
   $login = (& $sf org login web --instance-url $sfInstance --alias $alias 2>&1) -join "`n"
   if ($LASTEXITCODE -ne 0) { throw "Salesforce sign-in didn't finish. Quit SF Desk and open it again to retry.`n`n$login" }
-  if (-not $target) { Set-Env 'SF_TARGET_ORG' $alias }
+  if (-not $target) { Save-Setting 'SF_TARGET_ORG' $alias }
 }
 
 # ---------- the window and the tray icon ----------
@@ -264,11 +287,11 @@ if (-not $created) {
 
 try {
   New-Item -ItemType Directory -Force (Join-Path $dataDir 'data') | Out-Null
-  if (-not (Test-Path $envFile)) {
-    # Written fresh rather than copied, so it doesn't inherit the installed file's attributes.
-    Write-EnvFile ([IO.File]::ReadAllLines((Join-Path $appDir '.env.example')))
-    Set-Env 'SF_TARGET_ORG' $sfAlias
+  # A commented .env to edit, if there isn't one yet. Optional: the server runs without it.
+  if (-not (Test-Path -LiteralPath $envFile)) {
+    try { [IO.File]::WriteAllText($envFile, [IO.File]::ReadAllText((Join-Path $appDir '.env.example'))) } catch {}
   }
+  if (-not (Get-Setting 'SF_TARGET_ORG')) { Save-Setting 'SF_TARGET_ORG' $sfAlias }
 
   $script:tray = New-Object Windows.Forms.NotifyIcon
   $script:tray.Icon = New-Object Drawing.Icon $icon
@@ -279,7 +302,7 @@ try {
   $ownServer = -not (Test-Answers $url) # else already running (a checkout's "npm start", say): just show it
   if ($ownServer) {
     $vars = Read-Env
-    if (-not $vars['SF_CLIENT_ID']) { Connect-Salesforce $vars['SF_TARGET_ORG'] }
+    if (-not $vars['SF_CLIENT_ID']) { Connect-Salesforce (Get-Setting 'SF_TARGET_ORG') }
     Show-Status 'Starting SF Desk...'
     Start-Server
   }
