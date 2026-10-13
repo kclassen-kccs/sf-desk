@@ -1025,11 +1025,15 @@ function renderDealSupports(o, records) {
   );
 }
 
+// Multi-select picklists picked one value at a time here, as a dropdown like Role.
+const singlePick = (f) => f.type === 'multipicklist' && (f.name === 'Platform_Request__c' || /^platform request$/i.test(f.label));
+
 function dsInput(f) {
   let n;
   if (f.type === 'picklist' || f.type === 'multipicklist') {
-    n = el('select', { multiple: f.type === 'multipicklist' },
-      f.type === 'picklist' ? el('option', { value: '' }, '—') : null,
+    const multiple = f.type === 'multipicklist' && !singlePick(f);
+    n = el('select', { multiple },
+      !multiple ? el('option', { value: '' }, '—') : null,
       (f.picklist || []).map((v) => el('option', { value: v }, v)));
   } else if (f.type === 'boolean') {
     n = el('input', { type: 'checkbox' });
@@ -1067,13 +1071,14 @@ function dealSupportForm(o, close, opts = {}) {
   const inputs = new Map(fields.map((f) => [f, dsInput(f)]));
   for (const [f, n] of inputs) {
     if (opts.edit) {
-      if (f.type === 'boolean') n.checked = false; else if (f.type !== 'multipicklist') n.value = '';
+      if (f.type === 'boolean') n.checked = false; else if (!n.multiple) n.value = '';
       if (f.updateable === false) n.disabled = true;
     }
     const v = opts.values?.[f.name];
     if (v == null || v === '') continue;
     if (f.type === 'boolean') n.checked = !!v;
-    else if (f.type === 'multipicklist') for (const x of n.options) x.selected = String(v).split(';').includes(x.value);
+    else if (f.type === 'multipicklist' && n.multiple) for (const x of n.options) x.selected = String(v).split(';').includes(x.value);
+    else if (f.type === 'multipicklist') n.value = String(v).split(';')[0];
     else if (f.type === 'datetime') n.value = `${localDay(new Date(v))}T${hhmm24(new Date(v))}`;
     else n.value = v;
   }
