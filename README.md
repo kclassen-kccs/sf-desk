@@ -36,6 +36,9 @@ your Salesforce user is already allowed to, and it only writes when you click **
   Outreach, on the account and on the opportunity) are shown once. The open opportunity list is kept in the
   local database and refreshed from Salesforce every 4 hours. Under the calendar is the list of your Deal
   Supports dated that week; the pencil on a row opens it in the same form to edit (only changed fields are saved)
+- Works from phone width up to wide desktops: on phones the tabs fold into a ☰ menu, Accounts shows the list
+  or the account (with a back button), Time Entry lists the week day by day, and list tables become cards; on wide
+  screens Time Entry shows the week's Deal Supports beside the calendar
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - The account screen shows the sales rep prominently, and a **Deal Supports** panel with everyone's Deal Supports
   on the account and its opportunities for the last 30, 60 or 90 days or the fiscal year to date: count, total

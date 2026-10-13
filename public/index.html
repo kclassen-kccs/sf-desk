@@ -13,7 +13,9 @@
   body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
   header { display: flex; align-items: center; gap: 12px; height: 50px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
   header h1 { font-size: 15px; margin: 0; letter-spacing: .2px; }
-  #who { margin-left: auto; color: var(--muted); font-size: 13px; }
+  #who { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  #navToggle { display: none; margin-left: auto; font-size: 18px; line-height: 1; padding: 6px 10px; }
   button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
   button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:disabled { opacity: .45; cursor: default; }
@@ -21,7 +23,7 @@
   input:disabled, select:disabled, textarea:disabled { background: var(--bg); color: var(--muted); }
   .dirty { background: var(--dirty); border-color: #e6b94a; }
 
-  main { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 50px); }
+  main { display: grid; grid-template-columns: clamp(280px, 20vw, 380px) minmax(0, 1fr); height: calc(100vh - 50px); height: calc(100dvh - 50px); }
   #list { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
   #list .controls { padding: 10px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
   #list .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
@@ -46,7 +48,7 @@
   td.pick, th.pick { width: 1%; }
   .empty { padding: 24px 16px; color: var(--muted); }
 
-  #detail { overflow: auto; padding: 18px 22px 40px; min-width: 0; }
+  #detail { overflow: auto; padding: 18px clamp(12px, 2vw, 32px) 40px; min-width: 0; }
   .title-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
   .title-row h2 { margin: 0; font-size: 20px; }
   .rep-pill { align-self: center; display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 12px; border-radius: 999px;
@@ -54,7 +56,7 @@
   .rep-pill .k { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .4px; opacity: .85; }
   .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; }
-  section h3 { margin: 0 0 12px; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  section h3 { margin: 0 0 12px; font-size: 14px; display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
   section h3 .spacer { flex: 1; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; }
   .grid label span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
@@ -86,15 +88,17 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px; max-width: 420px; text-align: center; }
   .card p { color: var(--muted); }
 
-  #toast { position: fixed; right: 16px; bottom: 16px; max-width: 420px; padding: 10px 14px; border-radius: 8px; background: #1b1f24; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; }
+  #toast { position: fixed; right: 16px; bottom: 16px; max-width: min(420px, calc(100vw - 32px)); z-index: 30; padding: 10px 14px; border-radius: 8px; background: #1b1f24; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; }
   #toast.ok { background: var(--ok); } #toast.err { background: var(--err); }
 
   /* ---------- dashboard ---------- */
-  header nav { display: flex; gap: 4px; margin-left: 12px; }
+  header { position: sticky; top: 0; z-index: 20; }
+  header nav { display: flex; gap: 4px; margin-left: 12px; flex: 1; align-items: center; min-width: 0; }
   header nav button { border-color: transparent; background: none; color: var(--muted); }
+  header nav .hdr-right button { border-color: var(--line); background: var(--panel); color: var(--ink); }
   header nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .dash { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #a3a29c; --grid: #eceef1;
-    max-width: 1180px; margin: 0 auto; padding: 18px 22px 48px; height: calc(100vh - 50px); overflow: auto; }
+    max-width: 1720px; margin: 0 auto; padding: 18px clamp(12px, 2vw, 32px) 48px; height: calc(100vh - 50px); height: calc(100dvh - 50px); overflow: auto; }
   .dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 2px; }
   .dash-head h2 { margin: 0; font-size: 20px; }
   .dash-head label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
@@ -115,6 +119,7 @@
   .charts { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px; }
   .charts section { margin-bottom: 0; }
   .dash section { margin-bottom: 18px; }
+  .dash .charts { margin-bottom: 18px; } .dash .charts section { margin-bottom: 0; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; padding: 4px 10px; font-size: 13px; }
   .seg button + button { border-left: 1px solid var(--line); }
@@ -148,8 +153,16 @@
   .pastdue { color: var(--err); }
   /* ---------- my calendar ---------- */
   .cal { --covered: #c9f2d6; --covered-line: #12924a; --open: #fdd3cf; --open-line: #d92d20; --skip: #eef0f3; --skip-line: #98a2b3; --hour: 48px;
-    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px 22px 40px; height: calc(100vh - 50px); overflow: auto; }
-  .cal.with-panel { grid-template-columns: minmax(0, 1fr) 400px; }
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px clamp(12px, 2vw, 32px) 40px; height: calc(100vh - 50px); height: calc(100dvh - 50px); overflow: auto; }
+  .cal.with-panel { grid-template-columns: minmax(0, 1fr) clamp(360px, 24vw, 460px); }
+  #calWeekDs { margin: 18px 0 0; }
+  .agenda { display: grid; gap: 10px; }
+  .agenda-day { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; }
+  .agenda-head { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .agenda-day.today .agenda-head { color: var(--accent); }
+  .agenda .ev { position: static; display: block; width: 100%; padding: 8px 10px; font-size: 14px; }
+  .agenda .ev .t { font-size: 12px; }
+  .mobile-only { display: none; }
   .cal-main { min-width: 0; }
   .cal-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
   .cal-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; border-left: 3px solid; }
@@ -196,31 +209,110 @@
   .opp-pick button.active { outline: 2px solid var(--accent); outline-offset: -2px; }
   .opp-pick .m { color: var(--muted); font-size: 12px; }
   .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
-  @media (max-width: 1000px) { .cal.with-panel { grid-template-columns: minmax(0, 1fr); } }
+  /* ---------- responsive ---------- */
+  /* Wide screens: the week's Deal Supports sit beside the calendar. */
+  @media (min-width: 1600px) {
+    .cal-body { display: grid; grid-template-columns: minmax(0, 1fr) minmax(460px, 38%); gap: 18px; align-items: start; }
+    .cal-body #calWeekDs .deals td { white-space: normal; } .cal-body #calWeekDs .deals td.wrap { min-width: 0; }
+    .cal-body #calWeekDs .deals td:nth-child(3), .cal-body #calWeekDs .deals td.n { white-space: nowrap; }
+    .cal-body #calWeekDs { margin: 0; }
+    .cal.with-panel .cal-body { grid-template-columns: minmax(0, 1fr); }
+    .cal.with-panel .cal-body #calWeekDs { margin-top: 18px; }
+  }
+  @media (min-width: 2000px) { .cal.with-panel .cal-body { grid-template-columns: minmax(0, 1fr) minmax(420px, 34%); } .cal.with-panel .cal-body #calWeekDs { margin: 0; } }
   @media (max-width: 1000px) {
+    .cal.with-panel { grid-template-columns: minmax(0, 1fr); }
+    .cal-panel { order: -1; scroll-margin-top: 60px; }
     .tiles { grid-template-columns: repeat(2, 1fr); } .tile.hero { grid-column: 1 / -1; }
     .tiles.even { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .charts { grid-template-columns: 1fr; }
   }
 
+  /* Phones and small tablets: one column, tabs in a menu, the page scrolls as a whole. */
   @media (max-width: 760px) {
+    header { padding: 0 12px; }
+    #navToggle { display: inline-block; }
+    header nav { display: none; }
+    header.menu-open nav:not([hidden]) { display: flex; flex-direction: column; align-items: stretch; gap: 2px; position: absolute; top: 50px; left: 0; right: 0;
+      margin: 0; padding: 8px 12px 12px; background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 8px 20px rgba(0,0,0,.12); }
+    header.menu-open nav button { text-align: left; padding: 10px 12px; }
+    .hdr-right { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--line); justify-content: space-between; }
+    .dash, .cal, main, #detail { height: auto; overflow: visible; }
+    .dash, .cal, #detail { padding: 14px 12px 32px; }
+    main { grid-template-columns: minmax(0, 1fr); }
+    #list { border-right: 0; }
+    #accounts { overflow: visible; }
+    main.has-detail #list { display: none; }
+    main:not(.has-detail) #detail { display: none; }
+    .mobile-only { display: inline-block; }
     .tiles.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    main { grid-template-columns: 1fr; height: auto; }
-    #list { max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    .tile { padding: 12px; }
+    .tile .v { font-size: 20px; }
+    section { padding: 12px; }
+    .dash-head { gap: 8px 10px; }
+    .dash-head h2, .title-row h2 { font-size: 18px; }
+    .picks { gap: 8px; width: 100%; }
+    .picks label, .picks > * { flex: 1 1 140px; }
+    .picks select { max-width: none; width: 100%; }
+    .cal-legend { flex-wrap: wrap; gap: 6px 12px; }
+    #calSource { max-width: 100% !important; flex: 1 1 100%; }
+    .form-actions { position: sticky; bottom: 0; background: var(--panel); padding: 10px 0 2px; margin-bottom: -2px; }
+    .form-actions button { flex: 1; }
+    .cal-panel dl { grid-template-columns: 80px minmax(0, 1fr); }
+    .hbars { grid-template-columns: fit-content(45%) minmax(0, 1fr); }
+    #toast { left: 16px; right: 16px; max-width: none; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); }
+    .cal-panel h3 { flex-wrap: nowrap; align-items: flex-start; }
+    .seg { max-width: 100%; overflow-x: auto; }
+    .seg button { white-space: nowrap; }
+    .charts { grid-template-columns: minmax(0, 1fr); }
+    .tiles.even > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+  }
+
+  /* Phones: list tables become stacked cards, one per row, each value under its column's name. */
+  @media (max-width: 640px) {
+    .tablewrap:has(> table.deals) { overflow: visible; }
+    table.deals thead { display: none; }
+    table.deals, .deals tbody, .deals tfoot { display: block; }
+    .deals tbody tr { display: block; position: relative; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+    .deals tbody td { display: flex; justify-content: space-between; gap: 12px; padding: 2px 4px; border: 0; white-space: normal; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+    .deals tbody td.wrap { min-width: 0; }
+    .deals tbody td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-align: left; flex: none; max-width: 45%; }
+    .deals tbody td:first-child { font-weight: 600; }
+    .deals tbody td.edit-cell { position: absolute; top: 4px; right: 0; width: auto; padding: 0; }
+    .deals tbody td.edit-cell + td { padding-right: 48px; }
+    .deals tbody tr.subtotal, .deals tfoot tr { display: flex; justify-content: space-between; padding: 8px 4px; }
+    .deals tbody tr.subtotal td, .deals tfoot td { display: block; border: 0; padding: 0; }
+    .deals td.empty { display: block; text-align: left; }
+  }
+
+  /* Touch: bigger targets, and 16px text in fields so iOS doesn't zoom in. */
+  @media (pointer: coarse), (max-width: 760px) {
+    button:not(.ev), .btn, select, input:not([type=checkbox]):not([type=radio]) { min-height: 40px; }
+    input, select, textarea { font-size: 16px; }
+    input[type=checkbox] { width: 20px !important; height: 20px; }
+    button.icon-btn { padding: 8px 10px; font-size: 18px; min-height: 0; }
+    button.linkish { min-height: 0; padding: 4px 0; }
+    .seg button { padding: 8px 12px; min-height: 0; }
+    .fynav button { padding: 6px 12px; min-height: 0; }
+    td { padding: 8px 6px; }
   }
 </style>
 </head>
 <body>
-<header>
+<header id="hdr">
   <h1>SF Desk</h1>
+  <button id="navToggle" aria-label="Menu" aria-expanded="false" aria-controls="nav" hidden>☰</button>
   <nav id="nav" hidden>
     <button id="navDash" onclick="showDashboard()">Dashboard</button>
     <button id="navTime" onclick="showTime()">My Time</button>
     <button id="navCal" onclick="showCalendar()">Time Entry</button>
     <button id="navAccts" onclick="showMain()">Accounts</button>
+  <div class="hdr-right">
+    <span id="who"></span>
+    <button id="logout" hidden>Disconnect</button>
+  </div>
   </nav>
-  <span id="who"></span>
-  <button id="logout" hidden>Disconnect</button>
 </header>
 <div id="app"></div>
 <div id="toast" role="status"></div>
@@ -350,10 +442,34 @@ function changes(container, original) {
 }
 
 // ---------- views ----------
+// On phones the tabs fold into a menu under the ☰ button.
+function menu(open) {
+  document.getElementById('hdr').classList.toggle('menu-open', open);
+  document.getElementById('navToggle').setAttribute('aria-expanded', String(open));
+}
+// On phones the list tables (class "deals") show each row as a card: every cell gets its column's
+// heading as a label. Done here for all of them as they're drawn.
+function labelCells(table) {
+  const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+  for (const tr of table.querySelectorAll('tbody tr')) {
+    if (tr.cells.length < 2) continue;
+    let col = 0;
+    for (const td of tr.cells) {
+      if (heads[col] && !td.hasAttribute('data-label')) td.dataset.label = heads[col];
+      col += td.colSpan || 1;
+    }
+  }
+}
+new MutationObserver(() => document.querySelectorAll('#app table.deals').forEach(labelCells))
+  .observe(document.getElementById('app'), { childList: true, subtree: true });
+document.getElementById('navToggle').addEventListener('click', () => menu(!document.getElementById('hdr').classList.contains('menu-open')));
+document.addEventListener('click', (e) => { if (!e.target.closest('#hdr')) menu(false); });
+
 function showConnect(message) {
   document.getElementById('who').textContent = '';
   document.getElementById('logout').hidden = true;
   document.getElementById('nav').hidden = true;
+  document.getElementById('navToggle').hidden = true;
   const app = document.getElementById('app');
   app.replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
     el('h2', {}, 'Connect to Salesforce'),
@@ -364,6 +480,9 @@ function showConnect(message) {
 
 function setNav(which) {
   document.getElementById('nav').hidden = false;
+  document.getElementById('navToggle').hidden = false;
+  menu(false);
+  window.scrollTo(0, 0);
   document.getElementById('navDash').classList.toggle('on', which === 'dash');
   document.getElementById('navTime').classList.toggle('on', which === 'time');
   document.getElementById('navCal').classList.toggle('on', which === 'cal');
@@ -507,6 +626,8 @@ async function openAccount(id) {
     current = await api('/accounts/' + id + (leadSeOnly ? '?leadse=1' : ''));
     renderList();
     renderDetail();
+    document.querySelector('main')?.classList.add('has-detail');
+    if (window.matchMedia('(max-width: 760px)').matches) window.scrollTo(0, 0);
   } catch (e) {
     detail.replaceChildren(el('div', { class: 'empty' }, e.message));
   }
@@ -515,6 +636,7 @@ async function openAccount(id) {
 function renderDetail() {
   const a = current.account;
   document.getElementById('detail').replaceChildren(
+    el('button', { class: 'back mobile-only', onclick: () => { document.querySelector('main').classList.remove('has-detail'); window.scrollTo(0, 0); } }, '‹ Accounts'),
     el('div', { class: 'title-row' },
       el('h2', {}, a.Name),
       el('span', { class: 'rep-pill', title: 'Sales rep (account owner)' }, el('span', { class: 'k' }, 'Sales rep'), a.Owner?.Name || '—'),
@@ -1162,7 +1284,7 @@ function renderForecastChart(opps, now, today) {
   const legend = cats.length > 1 ? el('div', { class: 'legend' },
     cats.map(([c, color]) => el('span', {}, el('i', { style: `background:${color}` }), c))) : null;
   const box = el('div');
-  sec.replaceChildren(el('h3', {}, 'Forecast by close date', el('span', { class: 'spacer' }), fynav, seg), legend, box);
+  sec.replaceChildren(el('h3', {}, 'Forecast by close date', el('span', { class: 'spacer' }), fynav, seg), legend || '', box);
 
   // Draw once the section is in the page, so its width is known.
   const W = Math.max(320, box.clientWidth || 600), H = 250, top = 18, bottom = 26, left = 46, right = 4;
@@ -1636,7 +1758,7 @@ function showCalendar() {
         el('button', { onclick: () => loadSources().then(loadCalendar) }, 'Reload'),
       ),
       el('div', { class: 'sub', id: 'calSub' }, 'Loading…'),
-      el('div', { id: 'calBody' }),
+      el('div', { id: 'calBody', class: 'cal-body' }),
     ),
     el('div', { class: 'cal-panel', id: 'calPanel', hidden: true }),
   ));
@@ -1783,13 +1905,26 @@ function renderCalendar() {
       new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: 'numeric' })));
   }
   const dayName = (d) => localDate(d).toLocaleDateString([], { weekday: 'short' });
+  // Phones get a list of the week's days instead of the time grid.
+  if (CAL_NARROW.matches) {
+    const at = (e) => e.allDay ? '' : e.start;
+    document.getElementById('calBody').replaceChildren(el('div', { class: 'agenda' }, days.map((d) => {
+      const list = events.filter((e) => e.date === d).sort((x, y) => at(x).localeCompare(at(y)));
+      return el('div', { class: 'agenda-day' + (d === today ? ' today' : '') },
+        el('div', { class: 'agenda-head' }, localDate(d).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })),
+        list.length ? list.map(evBox) : el('div', { class: 'sub', style: 'margin:0' }, 'Nothing scheduled'));
+    })), el('section', { id: 'calWeekDs' }));
+    renderWeekDealSupports();
+    renderEventPanel();
+    return;
+  }
   document.getElementById('calBody').replaceChildren(el('div', { class: 'week', style: `--days:${days.length}` },
     el('div', { class: 'week-row' }, el('div', { class: 'day-head' }),
       days.map((d) => el('div', { class: 'day-head' + (d === today ? ' today' : '') }, dayName(d), el('b', {}, +d.slice(8, 10))))),
     allDay.length ? el('div', { class: 'week-row' }, el('div', { class: 'gutter-label' }, 'All day'),
       days.map((d) => el('div', { class: 'allday' }, allDay.filter((e) => e.date === d).map(evBox)))) : null,
     el('div', { class: 'week-row' }, gutter, cols),
-  ), el('section', { id: 'calWeekDs', style: 'margin-top:18px' }));
+  ), el('section', { id: 'calWeekDs' }));
   renderWeekDealSupports();
   renderEventPanel();
 }
@@ -1871,7 +2006,11 @@ const editPencil = (name, onclick) => el('td', { class: 'edit-cell' }, el('butto
 function selectEvent(id) {
   cal.sel = cal.sel === id ? null : id;
   renderCalendar();
+  // Below 1000px the event panel sits above the calendar: bring it into view.
+  if (cal.sel && window.matchMedia('(max-width: 1000px)').matches) document.getElementById('calPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
+const CAL_NARROW = window.matchMedia('(max-width: 640px)');
+CAL_NARROW.addEventListener('change', () => { if (cal.data && document.getElementById('calBody')) renderCalendar(); });
 
 // Values for the new Deal Support form, taken from the event.
 function eventPrefill(e) {
