@@ -937,8 +937,20 @@ function dealSupportForm(o, close, opts = {}) {
     else n.value = v;
   }
   const initial = new Map([...inputs].map(([f, n]) => [f, JSON.stringify(dsValue(f, n))]));
+  // A lookup on a saved record shows its record's name, with the Id it holds underneath (until it's changed).
+  const refName = (f) => {
+    const name = opts.edit && f.relationshipName && opts.values?.[f.relationshipName]?.Name;
+    if (!name) return null;
+    const n = inputs.get(f), id = n.value;
+    const note = el('span', { class: 'sub', style: 'margin:2px 0 0;display:block' }, 'Id: ' + id);
+    const show = el('b', { style: 'display:block;padding:6px 0' }, name);
+    n.hidden = true;
+    const change = el('button', { type: 'button', class: 'linkish', style: 'display:inline;margin-left:8px' }, 'Change');
+    change.addEventListener('click', (ev) => { ev.preventDefault(); n.hidden = false; show.remove(); note.remove(); change.remove(); n.focus(); });
+    return [show, note, n.disabled ? null : change];
+  };
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
-    el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f));
+    el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f), refName(f));
   // Shown up front: required fields, then the time fields (customer-facing, internal, travel) with a live total.
   const time = fields.filter((f) => f.timeEntry);
   const required = fields.filter((f) => f.required && !f.timeEntry);

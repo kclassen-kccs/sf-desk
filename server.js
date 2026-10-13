@@ -571,6 +571,7 @@ async function dealSupportMeta(req) {
         (!!required && !DEAL_SUPPORT_OPTIONAL.includes(f.name.toLowerCase()) && !optionalByLabel.test(f.label))),
       length: f.length || null,
       referenceTo: f.referenceTo?.length ? f.referenceTo : null,
+      relationshipName: f.type === 'reference' ? f.relationshipName || null : null,
       picklist: f.picklistValues?.length ? f.picklistValues.filter((v) => v.active).map((v) => v.value) : null,
       defaultValue: f.defaultValue ?? null,
     }));
@@ -697,7 +698,13 @@ api.get('/deal-supports/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const meta = await dealSupportMeta(req);
   const fields = [...dsReadFields(meta), meta.oppField, ...(meta.oppRel ? [`${meta.oppRel}.Name`, `${meta.oppRel}.Account.Name`] : [])];
-  const [rec] = await query(req, `SELECT ${[...new Set(fields)].join(', ')} FROM ${meta.object} WHERE Id = '${id}'`);
+  // Lookup fields are shown with the related record's name; carry on without them if one can't be read.
+  const names = meta.fields.filter((f) => f.relationshipName).map((f) => `${f.relationshipName}.Name`);
+  const run = (f) => query(req, `SELECT ${[...new Set(f)].join(', ')} FROM ${meta.object} WHERE Id = '${id}'`);
+  const [rec] = await run([...fields, ...names]).catch((err) => {
+    if (err.status !== 400) throw err;
+    return run(fields);
+  });
   if (!rec) throw new HttpError(404, `${meta.label} not found.`);
   const opp = meta.oppRel && rec[meta.oppRel];
   res.json({ record: rec, opportunity: rec[meta.oppField]
