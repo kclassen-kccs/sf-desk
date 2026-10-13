@@ -647,6 +647,41 @@ api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
   const [rec] = await listDealSupports(req, meta, id, ` AND Id = '${sfId(created.id)}'`);
   res.status(201).json(rec);
 }));
+
+// ---------- Pipeline dashboard ----------
+
+// Every open opportunity in the Lead SE view (or all you can see with leadse=0), for the dashboard.
+// Matches the account view: where I'm Lead SE on the opportunity, or, if only Account has a Lead SE
+// field, on its account. The page leaves out hidden records and does the totals.
+const PIPELINE_READ = ['Id', 'Name', 'AccountId', 'Account.Name', 'StageName', 'Amount', 'CloseDate', 'Probability',
+  'ForecastCategoryName', 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
+
+api.get('/pipeline', wrap(async (req, res) => {
+  const known = await knownLeadSeFields(req);
+  const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
+  const where = ['IsClosed = false'];
+  if (lse?.Opportunity) where.push(leadSeIsMe(req, lse.Opportunity));
+  else if (lse?.Account) where.push(leadSeIsMe(req, { ...lse.Account, name: 'Account.' + lse.Account.name }));
+  const run = (fields) => query(req, `SELECT ${withField(fields, known.Opportunity).join(', ')} FROM Opportunity ` +
+    `WHERE ${where.join(' AND ')} ORDER BY CloseDate ASC`, 5000);
+  res.json(await withCacheFallback(req, res, async () => {
+    let opportunities;
+    try {
+      opportunities = await run(PIPELINE_READ);
+    } catch (err) {
+      // Forecast category can be switched off or hidden by field security; carry on without it.
+      if (err.status !== 400) throw err;
+      opportunities = await run(PIPELINE_READ.filter((f) => f !== 'ForecastCategoryName'));
+    }
+    store.saveOpportunities(orgOf(req), opportunities, { merge: true });
+    return { opportunities, leadSeFiltered: !!lse };
+  }, () => {
+    const side = (f) => f && { field: f.name, value: leadSeValue(req, f) };
+    const saved = store.listOpenOpportunities(orgOf(req), lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) });
+    return { data: { opportunities: saved.records, leadSeFiltered: !!lse }, syncedAt: saved.syncedAt };
+  }));
+}));
+
 // Hidden records: local to this machine, never written to Salesforce. The page filters its
 // lists with these ids and can show them again with "Show hidden".
 api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
