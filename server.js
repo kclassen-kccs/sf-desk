@@ -1053,6 +1053,52 @@ function titleNamesAccount(title, account) {
   return words.some((w) => !NAME_STOP.has(w) && (w.length >= 4 || w.includes('&')) && t.includes(` ${w} `));
 }
 
+// Email domains that say nothing about the customer: my company's and free mail.
+const NOT_CUSTOMER = new Set(['sailpoint.com', 'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
+  'yahoo.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'resource.calendar.google.com']);
+
+// The customer domains among a meeting's attendee emails: not mine, not free mail, not room calendars.
+function customerDomains(emails, myDomain) {
+  const own = (d) => d === myDomain || NOT_CUSTOMER.has(d) || [...NOT_CUSTOMER].some((x) => d.endsWith('.' + x)) ||
+    d.endsWith('.onmicrosoft.com');
+  return [...new Set(emails.map((m) => String(m || '').toLowerCase().trim().split('@')[1]).filter((d) => d && /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d) && !own(d)))];
+}
+
+// Accounts an email domain belongs to: those whose Website is the domain (or its parent, for
+// "us.acme.com"), else those with the most Contacts at that domain. Cached for an hour.
+const domainAccountCache = new Map(); // `${org}|${domain}` -> { at, accounts }
+async function accountsForDomains(req, domains) {
+  const org = orgOf(req), out = new Map(), todo = [];
+  for (const d of domains.slice(0, 10)) {
+    const hit = domainAccountCache.get(`${org}|${d}`);
+    if (hit && Date.now() - hit.at < 3600_000) out.set(d, hit.accounts); else todo.push(d);
+  }
+  if (todo.length) {
+    const sites = await query(req, `SELECT Id, Name, Website FROM Account WHERE ` +
+      todo.map((d) => `Website LIKE '%${soqlLike(domainLabel(d) + '.')}%'`).join(' OR '), 500).catch(() => []);
+    const contacts = await query(req, `SELECT AccountId, Account.Name, Email FROM Contact WHERE AccountId != null AND (` +
+      todo.map((d) => `Email LIKE '%@${soqlLike(d)}'`).join(' OR ') + ')', 2000).catch(() => []);
+    for (const d of todo) {
+      let accounts = sites.filter((a) => { const w = domainOf(a.Website); return w && (d === w || d.endsWith('.' + w)); })
+        .map((a) => ({ Id: a.Id, Name: a.Name, how: 'website' }));
+      if (!accounts.length) {
+        const n = new Map();
+        for (const c of contacts) {
+          if (String(c.Email || '').toLowerCase().split('@')[1] !== d) continue;
+          const a = n.get(c.AccountId) || { Id: c.AccountId, Name: c.Account?.Name || '', how: 'contacts', contacts: 0 };
+          a.contacts++;
+          n.set(c.AccountId, a);
+        }
+        const top = Math.max(0, ...[...n.values()].map((a) => a.contacts));
+        accounts = [...n.values()].filter((a) => a.contacts * 2 > top).sort((a, b) => b.contacts - a.contacts);
+      }
+      domainAccountCache.set(`${org}|${d}`, { at: Date.now(), accounts });
+      out.set(d, accounts);
+    }
+  }
+  return out;
+}
+
 // The local calendar date a Salesforce event falls on, given the page's UTC offset in minutes (from getTimezoneOffset).
 function eventDate(e, tzOffset) {
   if (e.IsAllDayEvent) return e.ActivityDate;
@@ -1076,7 +1122,7 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
     groups.get(key).push(e);
   }
   const isOpp = (e) => whatType(e) === 'Opportunity';
-  return [...groups.values()].map((copies) => {
+  const list = [...groups.values()].map((copies) => {
     const e = copies.find(isOpp) || copies[0];
     return {
       id: e.Id, copies: copies.filter((c) => c !== e).map((c) => c.Id), sfEvent: true,
@@ -1089,6 +1135,18 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
       domains: [],
     };
   });
+  // Events linked to nothing: their invitees' email domains help find the account.
+  const bare = list.filter((e) => !e.what && !e.accountIds.length);
+  if (bare.length) {
+    const myDomain = String(req.session.sf.user.username || '').split('@')[1]?.toLowerCase();
+    const rels = await query(req, `SELECT EventId, Relation.Email FROM EventRelation WHERE EventId IN (` +
+      bare.flatMap((e) => [e.id, ...e.copies]).map((id) => `'${sfId(id)}'`).join(', ') + ')', 2000).catch(() => []);
+    for (const e of bare) {
+      const ids = new Set([e.id, ...e.copies]);
+      e.domains = customerDomains(rels.filter((r) => ids.has(r.EventId)).map((r) => r.Relation?.Email), myDomain);
+    }
+  }
+  return list;
 }
 
 // Events from one of the Mac's calendars. Attendee domains other than my own help find the account.
@@ -1103,7 +1161,7 @@ async function macEvents(req, calendarId, { from, to }) {
       allDay: !!e.allDay, date: e.date, minutes: null, location: e.location || '',
       description: e.notes || '', who: others.map((a) => a.name || a.email).join(', '), showAs: e.free ? 'Free' : '',
       what: null, oppId: null, accountIds: [], calendar: e.calendar,
-      domains: [...new Set(others.map((a) => a.email.split('@')[1]?.toLowerCase()).filter(Boolean))],
+      domains: customerDomains(others.map((a) => a.email), myDomain),
     };
   }).sort((a, b) => String(a.start).localeCompare(String(b.start)));
 }
@@ -1180,7 +1238,7 @@ api.get('/calendar', wrap(async (req, res) => {
             r.domains.some((d) => e.domains.some((x) => x === d || x.endsWith('.' + d) || domainLabel(x) === domainLabel(d)))));
         if (hit) supports.push({ ...r, how: 'matched' });
       }
-      const { accountIds, oppId, ...shown } = e;
+      const { oppId, ...shown } = e;
       return { ...shown, supports, skipped: [e.id, ...e.copies].some((id) => marks[id]?.skipped) };
     });
     // My Deal Supports dated this week, for the list under the calendar, with the events each covers.
@@ -1270,10 +1328,24 @@ api.get('/opportunities/open', wrap(async (req, res) => {
   const matches = words.length
     ? records.filter((o) => { const t = `${o.Name} ${o.Account.Name}`.toLowerCase(); return words.every((w) => t.includes(w)); })
     : records;
-  const suggested = (o) => accounts.has(o.AccountId) || (title && o.Account.Name && titleNamesAccount(title, o.Account.Name));
-  const top = (accounts.size || title) ? [...matches.filter(suggested), ...matches.filter((o) => !suggested(o))] : matches;
+  const hinted = (o) => accounts.has(o.AccountId) || (title && o.Account.Name && titleNamesAccount(title, o.Account.Name));
+  // When neither the event's links nor its title point to an account, its attendees' email domains
+  // (domains: customer ones only) are matched to accounts by website or contacts.
+  const domains = String(req.query.domains || '').toLowerCase().split(',').filter((d) => /^[a-z0-9.-]+\.[a-z]{2,}$/.test(d)).slice(0, 10);
+  let byDomain = [];
+  if (domains.length && !records.some(hinted)) {
+    const found = await accountsForDomains(req, domains);
+    byDomain = [...new Map([...found].flatMap(([d, list]) => list.map((a) => [a.Id, { ...a, domain: d }]))).values()];
+  }
+  const domainIds = new Set(byDomain.map((a) => a.Id));
+  const suggested = (o) => hinted(o) || domainIds.has(o.AccountId);
+  const top = (accounts.size || title || domainIds.size) ? [...matches.filter(suggested), ...matches.filter((o) => !suggested(o))] : matches;
+  // One open opportunity across the matched accounts: the page can preselect it.
+  const onDomain = records.filter((o) => domainIds.has(o.AccountId));
   res.json({ total: records.length, matched: matches.length, syncedAt: at,
-    records: top.slice(0, limit).map((o) => ({ ...o, suggested: !!suggested(o) || undefined })) });
+    domainAccounts: byDomain.length ? byDomain : undefined, pick: onDomain.length === 1 ? onDomain[0] : undefined,
+    records: top.slice(0, limit).map((o) => ({ ...o, suggested: !!suggested(o) || undefined,
+      via: !hinted(o) && domainIds.has(o.AccountId) ? 'domain' : undefined })) });
 }));
 
 // The activity done on a Deal Support: Requested Activity in Kerry's org, else a field labelled like it.

@@ -2166,9 +2166,11 @@ function createFromEvent(e, close) {
   let picked = oppId ? { Id: oppId, Name: e.what?.id === oppId ? e.what.name || oppId : oppId } : null;
   const picker = oppCombobox({
     picked,
-    // Opportunities on the event's account, or on accounts named in its title, are listed first.
-    accounts: [e.what?.type === 'Account' && e.what.id].filter(Boolean),
+    // Opportunities on the event's account, or on accounts named in its title, are listed first. Failing
+    // those, the accounts its attendees' email domains belong to (and their only open one is preselected).
+    accounts: [...new Set([e.what?.type === 'Account' && e.what.id, ...(e.accountIds || [])].filter(Boolean))],
     title: e.title || e.subject,
+    domains: picked ? [] : e.domains || [],
     onPick: (o) => { picked = o; },
   });
   const form = dealSupportForm(null, close, {
@@ -2191,16 +2193,17 @@ function createFromEvent(e, close) {
 
 // Type to filter all open opportunities (searched on the server's local copy, sorted by name).
 // Arrow keys move through the list and Enter picks; suggested ones (see /opportunities/open) come first.
-function oppCombobox({ picked, accounts = [], title = '', onPick }) {
+function oppCombobox({ picked, accounts = [], title = '', domains = [], onPick }) {
   const input = el('input', { type: 'search', placeholder: 'Type to find an open opportunity or account…', autocomplete: 'off',
     role: 'combobox', 'aria-label': 'Opportunity', 'aria-expanded': 'true' });
   const list = el('div', { class: 'opp-pick', role: 'listbox' }, el('div', { class: 'empty' }, 'Loading open opportunities…'));
   const status = el('div', { class: 'sub', style: 'margin:6px 0 0' });
-  let rows = [], active = -1, ticket = 0, info = null;
+  let rows = [], active = -1, ticket = 0, info = null, byDomain = null;
   const showStatus = () => {
     status.textContent = (picked ? `Picked: ${picked.Name}${picked.Account?.Name ? ` (${picked.Account.Name})` : ''}` : 'Nothing picked yet.') +
       (info ? ` · ${info.matched.toLocaleString()} of ${info.total.toLocaleString()} open opportunities match` +
-        (info.matched > rows.length ? `, showing the first ${rows.length}` : '') : '');
+        (info.matched > rows.length ? `, showing the first ${rows.length}` : '') : '') +
+      (byDomain ? ` · Attendees from ${byDomain.map((a) => `${a.domain} → ${a.Name}`).join(', ')}` : '');
   };
   const choose = (o) => { picked = o; onPick(o); render(); };
   const render = () => {
@@ -2209,7 +2212,7 @@ function oppCombobox({ picked, accounts = [], title = '', onPick }) {
       type: 'button', role: 'option', 'aria-selected': String(picked?.Id === o.Id),
       class: [picked?.Id === o.Id && 'on', i === active && 'active'].filter(Boolean).join(' ') || null,
       onclick: () => choose(o),
-    }, el('div', {}, o.Name, o.suggested ? el('span', { class: 'tag' }, 'suggested') : null),
+    }, el('div', {}, o.Name, o.suggested ? el('span', { class: 'tag' }, o.via === 'domain' ? 'attendee match' : 'suggested') : null),
       el('div', { class: 'm' }, [o.Account?.Name, o.StageName, o.CloseDate && `closes ${o.CloseDate}`, o.Owner?.Name].filter(Boolean).join(' · '))))
       : [el('div', { class: 'empty' }, input.value.trim() ? 'No open opportunities match.' : 'No open opportunities.')]));
     list.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
@@ -2220,10 +2223,13 @@ function oppCombobox({ picked, accounts = [], title = '', onPick }) {
     const params = new URLSearchParams({ q: input.value.trim(), limit: 100 });
     if (accounts.length) params.set('accounts', accounts.join(','));
     if (title) params.set('title', title);
+    if (domains.length) params.set('domains', domains.join(','));
     try {
       const r = await api('/opportunities/open?' + params);
       if (my !== ticket) return;
       rows = r.records; info = r; active = -1;
+      if (r.domainAccounts) byDomain = r.domainAccounts;
+      if (r.pick && !picked && !input.value.trim()) { picked = r.pick; onPick(r.pick); }
       render();
     } catch (err) { if (my === ticket) list.replaceChildren(el('div', { class: 'empty' }, err.message)); }
   };
