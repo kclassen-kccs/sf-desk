@@ -255,6 +255,11 @@ export function openDb(file) {
       `).run(orgId, eventId, dsId, now());
     },
 
+    // Forget a deleted Deal Support's links to the events it was created from.
+    unlinkDealSupport(orgId, dsId) {
+      db.prepare('UPDATE event_marks SET ds_id = NULL, updated_at = ? WHERE org_id = ? AND ds_id = ?').run(now(), orgId, dsId);
+    },
+
     // Mark (or unmark) an event as needing no Deal Support. Unmarking keeps any link.
     skipEvent(orgId, eventId, skipped) {
       db.prepare(`

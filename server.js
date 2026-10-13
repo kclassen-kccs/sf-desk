@@ -616,6 +616,7 @@ async function dealSupportMeta(req) {
     roleDefault: role ? { field: role.name, value: leadSe || null, options: role.picklist } : null,
     canCreate: d.createable && opp.createable,
     canUpdate: !!d.updateable,
+    canDelete: !!d.deletable,
     oppUpdateable: !!opp.updateable,
     oppRel: opp.relationshipName || null,
     fields,
@@ -739,6 +740,16 @@ api.patch('/deal-supports/:id', wrap(async (req, res) => {
     body[meta.oppField] = sfId(req.body.opportunityId);
   }
   if (Object.keys(body).length) await sf(req, 'PATCH', `/services/data/${API}/sobjects/${meta.object}/${id}`, { body });
+  res.json({ ok: true });
+}));
+
+// Delete a Deal Support in Salesforce, and forget any calendar event it was created from.
+api.delete('/deal-supports/:id', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  if (!meta.canDelete) throw new HttpError(403, `Your Salesforce user can't delete ${meta.labelPlural}.`);
+  await sf(req, 'DELETE', `/services/data/${API}/sobjects/${meta.object}/${id}`);
+  store.unlinkDealSupport(orgOf(req), id);
   res.json({ ok: true });
 }));
 

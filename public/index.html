@@ -19,6 +19,8 @@
   button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
   button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:disabled { opacity: .45; cursor: default; }
+  button.danger { color: #b42318; border-color: #f0b4ae; }
+  button.danger:hover:not(:disabled) { background: #b42318; border-color: #b42318; color: #fff; }
   input, select, textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); }
   input:disabled, select:disabled, textarea:disabled { background: var(--bg); color: var(--muted); }
   .dirty { background: var(--dirty); border-color: #e6b94a; }
@@ -1108,6 +1110,13 @@ function dealSupportForm(o, close, opts = {}) {
   for (const f of time) inputs.get(f).addEventListener('input', showTotal);
   showTotal();
   const create = el('button', { class: 'primary' }, opts.edit ? 'Save changes' : `Create ${dsMeta.label}`);
+  // opts.remove deletes the record, after asking.
+  const remove = el('button', { class: 'danger', style: 'margin-right:auto' }, 'Remove');
+  remove.addEventListener('click', async () => {
+    if (!confirm(`Remove this ${dsMeta.label} from Salesforce? This can't be undone here.`)) return;
+    remove.disabled = create.disabled = true;
+    try { await opts.remove(); } catch (e) { toast(e.message, 'err'); remove.disabled = create.disabled = false; }
+  });
   const box = el('section', {},
     el('h3', {}, opts.title || `New ${dsMeta.label} for ${o.Name}`),
     el('div', { class: 'grid' }, required.map(cell)),
@@ -1115,7 +1124,7 @@ function dealSupportForm(o, close, opts = {}) {
       time.length > 1 ? el('label', {}, el('span', {}, 'Total time'), total) : null) : null,
     optional.length ? el('details', { class: 'optional' },
       el('summary', {}, `More fields (${optional.length})`), el('div', { class: 'grid' }, optional.map(cell))) : null,
-    el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
+    el('div', { class: 'form-actions' }, opts.remove ? remove : null, el('button', { onclick: close }, 'Cancel'), create),
   );
   create.addEventListener('click', async () => {
     const body = {}, now = new Map();
@@ -2014,6 +2023,12 @@ async function editDealSupport(id, host, rerender, reload) {
       host.editing = null;
       await reload();
     },
+    remove: dsMeta.canDelete ? async () => {
+      await api(`/deal-supports/${id}`, { method: 'DELETE' });
+      toast(`Removed ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
+      host.editing = null;
+      await reload();
+    } : null,
   });
   box.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
     picker ? [el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), picker.input)),
@@ -2033,10 +2048,18 @@ const dsNameCell = (name, props = {}) => el('td', { ...props, title: name || nul
 const editPencil = (name, onclick) => el('td', { class: 'edit-cell' }, el('button', { class: 'icon-btn', title: `Edit ${name || dsMeta.label}`,
   'aria-label': `Edit ${name || dsMeta.label}`, onclick: (ev) => { ev.stopPropagation(); onclick(); } }, '✎'));
 
+// The Deal Support being edited from the selected event, shown in the event's panel.
+const evEdit = { editing: null };
+const editFromEvent = (r) => editDealSupport(r.Id, evEdit, renderEventPanel, loadCalendar);
+
 function selectEvent(id) {
   cal.sel = cal.sel === id ? null : id;
   if (cal.sel && CAL_WIDE.matches) cal.editing = null;
+  evEdit.editing = null;
   renderCalendar();
+  // A green event opens its Deal Support for editing.
+  const e = cal.sel && cal.data?.events.find((x) => x.id === cal.sel);
+  if (e?.supports.length && dsMeta.canUpdate) editFromEvent(e.supports[0]);
   // Below 1000px the event panel sits above the calendar: bring it into view.
   if (cal.sel && window.matchMedia('(max-width: 1000px)').matches) document.getElementById('calPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
@@ -2121,8 +2144,10 @@ function renderEventPanel() {
       renderCalendar();
     } catch (err) { toast(err.message, 'err'); }
   } }, e.skipped ? 'Needs a Deal Support after all' : 'No Deal Support needed');
-  const formBox = el('div');
-  const create = el('button', { class: 'primary', onclick: () => { create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
+  // The Deal Support being edited, if it is one of this event's.
+  const editing = e.supports.some((r) => r.Id === evEdit.editing?.id) ? evEdit.editing : null;
+  const formBox = el('div', {}, editing?.box);
+  const create = el('button', { class: 'primary', onclick: () => { evEdit.editing = null; create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
     st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
   if (!dsMeta.canCreate) create.hidden = true;
 
@@ -2138,7 +2163,8 @@ function renderEventPanel() {
         e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
         e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
           el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null)))] : null,
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null,
+          dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: () => editFromEvent(r) }, 'Edit') : null)))] : null,
       ),
       e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
       el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, e.sfEvent === false ? null : sfLink(e.id, 'Open event in Salesforce ↗')),
