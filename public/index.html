@@ -1106,10 +1106,11 @@ function dealSupportForm(o, close, opts = {}) {
   };
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
     el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f), refName(f));
-  // Shown up front: required fields, then the time fields (customer-facing, internal, travel) with a live total.
+  // Shown up front: required fields and Description of Request, then the time fields (customer-facing,
+  // internal, travel) with a live total.
   const time = fields.filter((f) => f.timeEntry);
-  const required = fields.filter((f) => f.required && !f.timeEntry);
-  const optional = fields.filter((f) => !f.required && !f.timeEntry);
+  const required = fields.filter((f) => (f.required || f.upFront) && !f.timeEntry);
+  const optional = fields.filter((f) => !f.required && !f.upFront && !f.timeEntry);
   const total = el('output', { style: 'display:block;padding:6px 0;font-weight:600' });
   const showTotal = () => {
     const h = time.reduce((s, f) => s + (Number(inputs.get(f).value) || 0), 0);

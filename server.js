@@ -638,6 +638,18 @@ async function dealSupportMeta(req) {
     entry.timeEntry = true;
   }
 
+  // Description of Request is always on the form, up front, even when the layout leaves it off.
+  if (descOfRequest?.createable) {
+    let entry = fields.find((x) => x.name === descOfRequest.name);
+    if (!entry) {
+      entry = { name: descOfRequest.name, label: descOfRequest.label, type: 'textarea', createable: true, updateable: !!descOfRequest.updateable,
+        required: false, length: descOfRequest.length || null, referenceTo: null, picklist: null, defaultValue: null };
+      fields.push(entry);
+    }
+    entry.createable = true;
+    entry.upFront = true;
+  }
+
   // New Deal Supports default Role to "Lead SE" (matched ignoring case) when the picklist has it.
   const role = fields.find((f) => f.picklist && (f.name === 'Role__c' || /^role$/i.test(f.label)));
   const leadSe = role?.picklist.find((v) => v.trim().toLowerCase() === 'lead se');
