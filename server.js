@@ -806,6 +806,62 @@ api.delete('/deal-supports/:id', wrap(async (req, res) => {
   res.json({ ok: true });
 }));
 
+// Move My Time: my Deal Supports (Assigned SE = me) on a closed opportunity, and the open opportunities on
+// the same account they can be moved to. Only the opportunity lookup changes; the account lookup stays.
+async function myTimeOn(req, oppId) {
+  const ds = await dealSupportMeta(req);
+  const tm = await timeMeta(req);
+  const by = tm.userFields[0], hours = tm.hoursFields[0], date = tm.dateFields[0];
+  const [opp] = await query(req, `SELECT Id, Name, AccountId, Account.Name, IsClosed FROM Opportunity WHERE Id = '${oppId}'`);
+  if (!opp) throw new HttpError(404, 'Opportunity not found');
+  const records = await query(req, `SELECT ${[...new Set(['Id', 'Name', date.name, hours.name])].join(', ')} FROM ${ds.object} ` +
+    `WHERE ${ds.oppField} = '${oppId}' AND ${by.name} = '${sfId(req.session.sf.user.id)}' ORDER BY ${date.name} DESC NULLS LAST`, 2000);
+  // Everyone else's on this opportunity stay; counted only so the page can say so.
+  const others = await sf(req, 'GET', `/services/data/${API}/query?q=${encodeURIComponent(`SELECT COUNT() FROM ${ds.object} ` +
+    `WHERE ${ds.oppField} = '${oppId}' AND (${by.name} != '${sfId(req.session.sf.user.id)}' OR ${by.name} = null)`)}`)
+    .then((r) => r.totalSize, () => null);
+  return { ds, opp, by, hours, date, records, others };
+}
+
+api.get('/opportunities/:id/move-time', wrap(async (req, res) => {
+  const { ds, opp, by, hours, date, records, others } = await myTimeOn(req, sfId(req.params.id));
+  const targets = opp.AccountId ? await query(req, 'SELECT Id, Name, StageName, CloseDate FROM Opportunity ' +
+    `WHERE AccountId = '${sfId(opp.AccountId)}' AND IsClosed = false AND Id != '${opp.Id}' ORDER BY CloseDate ASC`) : [];
+  res.json({
+    label: ds.label, labelPlural: ds.labelPlural, canMove: ds.canUpdate && ds.oppUpdateable,
+    from: { Id: opp.Id, Name: opp.Name, IsClosed: opp.IsClosed, accountName: opp.Account?.Name || '' },
+    mineLabel: by.label, hoursUnit: hours.unit, others,
+    records: records.map((r) => ({ Id: r.Id, Name: r.Name, date: String(r[date.name] || '').slice(0, 10), hours: r[hours.name] ?? null })),
+    targets,
+  });
+}));
+
+// Move my Deal Supports from one opportunity to another open one on the same account. `ids` are the
+// ones the page showed when asking; only those still mine and still on fromOppId move.
+api.post('/deal-supports/move', wrap(async (req, res) => {
+  const fromId = sfId(req.body?.fromOppId), toId = sfId(req.body?.toOppId);
+  if (fromId === toId) throw new HttpError(400, 'Pick a different opportunity to move to.');
+  const { ds, opp, records } = await myTimeOn(req, fromId);
+  if (!ds.canUpdate || !ds.oppUpdateable) throw new HttpError(403, `Your Salesforce user can't change the opportunity on ${ds.labelPlural}.`);
+  const [to] = await query(req, `SELECT Id, Name, AccountId, IsClosed FROM Opportunity WHERE Id = '${toId}'`);
+  if (!to) throw new HttpError(404, 'Opportunity to move to not found');
+  if (to.IsClosed) throw new HttpError(400, `"${to.Name}" is closed. Pick an open opportunity.`);
+  if (!opp.AccountId || to.AccountId !== opp.AccountId) throw new HttpError(400, `"${to.Name}" is on a different account.`);
+  const asked = Array.isArray(req.body?.ids) ? new Set(req.body.ids.map(sfId)) : null;
+  const moving = records.filter((r) => !asked || asked.has(r.Id));
+  const moved = [], failed = [];
+  for (const r of moving) {
+    try {
+      await sf(req, 'PATCH', `/services/data/${API}/sobjects/${ds.object}/${sfId(r.Id)}`, { body: { [ds.oppField]: to.Id } });
+      moved.push({ Id: r.Id, Name: r.Name });
+    } catch (err) {
+      if (err.status === 401) throw err;
+      failed.push({ Id: r.Id, Name: r.Name, error: err.message });
+    }
+  }
+  res.json({ to: { Id: to.Id, Name: to.Name }, moved, failed });
+}));
+
 // ---------- Pipeline dashboard ----------
 
 // Every open opportunity in the Lead SE view (or all you can see with leadse=0), for the dashboard.

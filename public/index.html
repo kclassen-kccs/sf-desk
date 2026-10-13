@@ -1013,9 +1013,17 @@ function renderDealSupports(o, records) {
     formBox.replaceChildren(dealSupportForm(o, () => { add.hidden = false; formBox.replaceChildren(); }));
   } }, `New ${dsMeta.label}`) : null;
 
+  // Move My Time: on a closed opportunity, move my Deal Supports to an open one on the same account.
+  const moveBox = el('div');
+  const move = o.IsClosed && dsMeta.canUpdate && dsMeta.oppUpdateable ? el('button', { onclick: () => {
+    move.hidden = true;
+    moveMyTime(o, moveBox, () => { move.hidden = false; moveBox.replaceChildren(); });
+  } }, 'Move My Time') : null;
+
   sec.replaceChildren(
     el('h3', {}, `${dsMeta.labelPlural} (${records.length})`, el('span', { class: 'spacer' }),
-      el('button', { onclick: () => loadDealSupports(o) }, 'Reload'), add),
+      el('button', { onclick: () => loadDealSupports(o) }, 'Reload'), move, add),
+    moveBox,
     formBox,
     oppDsEdit.editing?.box || '',
     el('div', { class: 'tablewrap' }, el('table', {},
@@ -1023,6 +1031,49 @@ function renderDealSupports(o, records) {
       tbody,
     )),
   );
+}
+
+// Pick an open opportunity on the same account, confirm, then move every Deal Support of mine on `o` to it.
+async function moveMyTime(o, box, close) {
+  box.replaceChildren(el('section', {}, el('h3', {}, 'Move My Time'), el('div', { class: 'empty' }, 'Loading…')));
+  let d;
+  try { d = await api(`/opportunities/${o.Id}/move-time`); } catch (e) { toast(e.message, 'err'); return close(); }
+  const toHours = (v) => v == null || v === '' ? 0 : d.hoursUnit === 'text' ? parseDuration(v) : d.hoursUnit === 'minutes' ? Number(v) / 60 : Number(v) || 0;
+  const total = d.records.reduce((s, r) => s + toHours(r.hours), 0);
+  const hrs = total.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  const plural = d.records.length === 1 ? d.label : d.labelPlural;
+  const cancel = el('button', { onclick: close }, 'Cancel');
+  const say = (...kids) => box.replaceChildren(el('section', {}, el('h3', {}, 'Move My Time'), ...kids, el('div', { class: 'form-actions' }, cancel)));
+  if (!d.records.length) return say(el('div', { class: 'empty' }, `You have no ${d.labelPlural.toLowerCase()} on this opportunity (${d.mineLabel} = you).`));
+  if (!d.targets.length) return say(el('div', { class: 'empty' }, `${d.from.accountName || 'This account'} has no open opportunities to move your time to.`));
+  const pick = el('select', { 'aria-label': 'Open opportunity' }, el('option', { value: '' }, 'Pick an open opportunity…'),
+    d.targets.map((t) => el('option', { value: t.Id }, [t.Name, t.StageName, t.CloseDate && `closes ${t.CloseDate}`].filter(Boolean).join(' · '))));
+  const go = el('button', { class: 'primary', disabled: true }, 'Move');
+  pick.addEventListener('change', () => { go.disabled = !pick.value; });
+  go.addEventListener('click', async () => {
+    const to = d.targets.find((t) => t.Id === pick.value);
+    if (!to) return;
+    const stay = d.others ? `\n\nOnly yours move. ${d.others === 1 ? `1 ${d.label} belonging to someone else stays` : `${d.others} ${d.labelPlural} belonging to other people stay`} on "${d.from.Name}".`
+      : '\n\nOnly yours move.';
+    if (!confirm(`Move ${d.records.length} ${plural} (${hrs} hours) of yours\nfrom "${d.from.Name}"\nto "${to.Name}"?${stay}`)) return;
+    go.disabled = pick.disabled = cancel.disabled = true;
+    try {
+      const r = await api('/deal-supports/move', { method: 'POST', body: { fromOppId: o.Id, toOppId: to.Id, ids: d.records.map((x) => x.Id) } });
+      if (r.failed.length) {
+        toast(`Moved ${r.moved.length}; ${r.failed.length} failed: ` + r.failed.map((f) => `${f.Name}: ${f.error}`).join('; '), 'err');
+      } else toast(`Moved ${r.moved.length} ${r.moved.length === 1 ? d.label : d.labelPlural} to "${to.Name}"`, 'ok');
+      close();
+      loadDealSupports(o);
+    } catch (e) { toast(e.message, 'err'); go.disabled = pick.disabled = cancel.disabled = false; }
+  });
+  box.replaceChildren(el('section', {},
+    el('h3', {}, 'Move My Time'),
+    el('div', { class: 'sub' }, `${d.records.length} ${plural} of yours on this opportunity, ${hrs} hours in all. ` +
+      (d.others ? `${d.others} belonging to other people ${d.others === 1 ? 'stays' : 'stay'} here. ` : '') +
+      `Pick an open opportunity on ${d.from.accountName || 'this account'} to move them to.`),
+    el('label', { style: 'display:block;margin-top:8px' }, pick),
+    el('div', { class: 'form-actions' }, cancel, go),
+  ));
 }
 
 // Multi-select picklists picked one value at a time here, as a dropdown like Role.
