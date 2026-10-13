@@ -693,13 +693,12 @@ function renderAccountDealSupports(data, fyStart) {
   const bySe = acctDsGroup && !!data.whoLabel;
   const showOpp = bySe && opps.size > 1 && list.some((r) => r.oppName && !String(r.Name || '').toLowerCase().includes(r.oppName.toLowerCase()));
   // The record number only (e.g. "DR-012345" -> "012345") keeps the first column narrow; the full name is its tooltip.
-  const num = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
   const canEdit = !!dsMeta?.canUpdate;
   const ncols = 3 + showActivity + showOpp + !!data.whoLabel + showRole + canEdit;
   const edit = (r) => editDealSupport(r.Id, acctDsEdit, () => renderAccountDealSupports(data, fyStart), () => loadAccountDealSupports(data.accountId));
   const row = (r) => el('tr', { class: 'nolink' + (acctDsEdit.editing?.id === r.Id ? ' sel' : '') },
     canEdit ? editPencil(r.Name, () => edit(r)) : null,
-    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, num(r.Name) || r.Id)),
+    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, dsNum(r.Name) || r.Id)),
     el('td', {}, r.date),
     showActivity ? el('td', { class: 'wrap' }, r.activity) : null,
     showOpp ? el('td', { class: 'wrap' }, r.oppName) : null,
@@ -994,7 +993,7 @@ function renderDealSupports(o, records) {
     tbody.append(
       el('tr', { class: 'ds-row' + (oppDsEdit.editing?.id === r.Id ? ' sel' : ''), onclick: () => { more.hidden = !more.hidden; } },
         canEdit ? editPencil(r.Name, () => edit(r)) : null,
-        cols.map((f) => el('td', {}, dsText(f, r[f.name]) || '—')),
+        cols.map((f) => f.name === 'Name' ? dsNameCell(r.Name) : el('td', {}, dsText(f, r[f.name]) || '—')),
         el('td', {}, r.CreatedBy?.Name || ''),
         el('td', {}, shortDate(r.CreatedDate)),
       ),
@@ -1721,7 +1720,7 @@ function renderTimeList(all, today) {
     el('td', { class: 'wrap' }, e.oppName),
     el('td', { class: 'wrap' }, e.accountName),
     showRole ? el('td', {}, e.role) : null,
-    el('td', { class: 'wrap' }, e.name || ''),
+    dsNameCell(e.name),
     el('td', { class: 'n' }, fmtH(e.hours)),
   )));
   if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, 'No activities here.')));
@@ -1950,12 +1949,11 @@ function renderWeekDealSupports() {
   const { week = [], weekHours, activityLabel } = cal.data;
   const unit = weekHours?.unit;
   const toHours = (v) => v == null || v === '' ? 0 : unit === 'text' ? parseDuration(v) : unit === 'minutes' ? Number(v) / 60 : Number(v) || 0;
-  const num = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
   const evTitle = (id) => cal.data.events.find((e) => e.id === id)?.title || 'event';
   const canEdit = dsMeta.canUpdate;
   const tbody = el('tbody', {}, week.map((r) => el('tr', { class: 'nolink' + (r.events.includes(cal.sel) ? ' sel' : '') + (cal.editing?.id === r.Id ? ' sel' : '') },
     canEdit ? editPencil(r.Name, () => editWeekDealSupport(r)) : null,
-    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, num(r.Name) || r.Id)),
+    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, dsNum(r.Name) || r.Id)),
     el('td', {}, r.date),
     activityLabel ? el('td', { class: 'wrap' }, r.activity) : null,
     el('td', { class: 'wrap' }, [r.accountName, r.oppName].filter(Boolean).join(' · ')),
@@ -2013,6 +2011,10 @@ async function editDealSupport(id, host, rerender, reload) {
   rerender();
   box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
 }
+
+// Lists show a Deal Support by the number in its name (e.g. "DR-012345" -> "012345"); the full name is the tooltip.
+const dsNum = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
+const dsNameCell = (name, props = {}) => el('td', { ...props, title: name || null }, dsNum(name) || '');
 
 // The pencil that opens a Deal Support's edit form (shown when your user can edit them).
 const editPencil = (name, onclick) => el('td', { class: 'edit-cell' }, el('button', { class: 'icon-btn', title: `Edit ${name || dsMeta.label}`,
@@ -2085,7 +2087,7 @@ function renderEventPanel() {
         e.who ? [el('dt', {}, 'With'), el('dd', {}, e.who)] : null,
         e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
         e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
-          sfLink(r.Id, r.Name || r.Id), r.oppName ? ` · ${r.oppName}` : '',
+          el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
           r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null)))] : null,
       ),
       e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
