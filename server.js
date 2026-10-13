@@ -9,6 +9,7 @@ import 'dotenv/config';
 import express from 'express';
 import session from 'express-session';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 import { execFile } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +17,7 @@ import { openDb } from './db.js';
 import { isMac, macCalendar } from './macCalendar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
 
 const PORT = Number(process.env.PORT || 3000);
 const LOGIN_URL = (process.env.SF_LOGIN_URL || 'https://login.salesforce.com').replace(/\/$/, '');
@@ -380,7 +382,7 @@ api.use((req, res, next) => {
 
 api.get('/me', (req, res) => {
   const t = req.session.sf;
-  res.json(t ? { connected: true, user: t.user, instanceUrl: t.instance_url } : { connected: false });
+  res.json(t ? { connected: true, user: t.user, instanceUrl: t.instance_url, version: VERSION } : { connected: false, version: VERSION });
 });
 
 api.post('/logout', wrap(async (req, res) => {
