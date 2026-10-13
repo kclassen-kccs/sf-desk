@@ -2026,7 +2026,7 @@ function dsSummary(id) {
     const hours = h == null || h === '' ? null : d.hours.unit === 'minutes' ? Number(h) / 60 : d.hours.unit === 'text' ? parseDuration(h) : Number(h);
     box.className = '';
     box.replaceChildren(
-      d.description ? el('div', { class: 'desc', style: 'margin-top:6px' }, d.description) : null,
+      meetingNotes(d.description) ? el('div', { class: 'desc', style: 'margin-top:6px' }, meetingNotes(d.description)) : null,
       hours != null ? el('div', { style: 'margin-top:6px' }, el('b', {}, `Total Hours = ${hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}`)) : null);
   }, () => box.replaceChildren());
   return box;
@@ -2215,7 +2215,8 @@ function renderEventPanel() {
           r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null,
           dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: () => editFromEvent(r) }, 'Edit') : null)))] : null,
       ),
-      e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
+      // Meeting invitations (Teams, Zoom...) are never shown, only what was written about the meeting.
+      meetingNotes(e.description) ? el('div', { class: 'desc' }, meetingNotes(e.description)) : el('div', { class: 'sub' }, 'No notes on this event.'),
       el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, e.sfEvent === false ? null : sfLink(e.id, 'Open event in Salesforce ↗')),
     ),
     formBox,
