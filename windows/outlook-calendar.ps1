@@ -185,7 +185,7 @@ $facts = New-Object System.Collections.ArrayList
 try { [void]$facts.Add("Outlook $($outlook.Version), profile '$($ns.CurrentProfileName)'") } catch {}
 try {
   $new = Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Outlook\Preferences' -Name UseNewOutlook -ErrorAction Stop
-  if ($new.UseNewOutlook -eq 1) { [void]$facts.Add('the new Outlook is switched on, so classic Outlook may not be syncing your mailbox') }
+  if ($new.UseNewOutlook -eq 1) { [void]$facts.Add('the new Outlook is switched on, so classic Outlook may not be syncing your mailbox: pick "Sign in to read your Microsoft 365 calendar" in the calendar list instead') }
 } catch {}
 $picked = @(Calendar-Folders | Where-Object { $ids -contains $_.id })
 if (-not $picked.Count) { [void]$facts.Add('that calendar is no longer in Outlook') }

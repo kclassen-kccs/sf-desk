@@ -283,7 +283,13 @@ calendar, so turn off the **New Outlook** toggle if it's on.
    (no admin rights) and adds SF Desk to the Start menu and the Desktop.
 2. SF Desk starts. The first time it offers to download the Salesforce CLI (unless one is installed) and opens
    your browser to sign in to `sailpoint.my.salesforce.com`.
-3. Click **Connect**, open **Time Entry** and pick your mailbox's **Calendar** at the top. If Outlook asks
+3. Click **Connect**, open **Time Entry** and pick a calendar at the top. With the **new Outlook**, choose
+   **Sign in to read your Microsoft 365 calendar**: SF Desk shows a code and opens microsoft.com/devicelogin,
+   where you enter it and sign in with your work account. It reads your calendar through Microsoft Graph with
+   Microsoft's own "Microsoft Graph Command Line Tools" sign-in (Calendars.Read), keeps the sign-in in
+   `%LOCALAPPDATA%\SF Desk\data\graph-token.json`, and the same list has **Sign out of Microsoft 365**. If your
+   organization requires an administrator to approve that sign-in, SF Desk says so. With classic Outlook, pick
+   your mailbox's **Calendar**. If Outlook asks
    whether to allow a program to access its data, choose **Allow** (this happens when Windows doesn't report
    an up-to-date antivirus).
 

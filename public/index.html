@@ -1871,22 +1871,25 @@ function showCalendar() {
 }
 
 // Calendars to show: your Salesforce events, or any calendar on this computer: the Mac's Internet Accounts
-// when SF Desk runs on a Mac, or classic Outlook's when it runs on Windows. The choice is remembered on this machine; the first time, the Exchange account's
-// main calendar is picked if there is one.
+// when SF Desk runs on a Mac, or classic Outlook's when it runs on Windows; on Windows also your Microsoft 365
+// calendars through Microsoft Graph (for the new Outlook), after a one-time sign-in. The choice is remembered
+// on this machine; the first time, the Microsoft 365 or Exchange main calendar is picked if there is one.
 async function loadSources() {
   // Asked again after a refusal, so allowing access in System Settings and clicking Reload picks it up.
-  const wasRefused = !!cal.sources?.error;
+  const wasRefused = !!cal.sources?.error || !!cal.sources?.graph?.error;
   if (!cal.sources || wasRefused) {
     try { cal.sources = await api('/calendar/sources'); } catch { cal.sources = { local: false, calendars: [] }; }
   }
-  const { calendars, error } = cal.sources;
+  const { error, graph } = cal.sources;
+  const calendars = [...(graph?.calendars || []), ...cal.sources.calendars];
   let saved = null;
   try { saved = localStorage.getItem(CAL_SOURCE); } catch {}
   const exchange = calendars.filter((c) => c.type === 'exchange');
   const pick = (saved === 'salesforce' || calendars.some((c) => c.id === saved)) ? saved
-    : (exchange.find((c) => /^calendar$/i.test(c.title)) || exchange[0])?.id || 'salesforce';
-  if (!cal.source || (wasRefused && !error)) cal.source = pick;
-  cal.sourceNote = error || '';
+    : (graph?.calendars || []).find((c) => c.isDefault)?.id ||
+      (exchange.find((c) => /^calendar$/i.test(c.title)) || exchange[0])?.id || 'salesforce';
+  if (!cal.source || !calendars.some((c) => c.id === cal.source) && cal.source !== 'salesforce' || (wasRefused && !error)) cal.source = pick;
+  cal.sourceNote = [error, graph?.error].filter(Boolean).join(' ');
   const select = document.getElementById('calSource');
   if (!select) return;
   const groups = new Map();
@@ -1894,16 +1897,64 @@ async function loadSources() {
     if (!groups.has(c.account)) groups.set(c.account, []);
     groups.get(c.account).push(c);
   }
+  const kind = (c) => c.source === 'graph' ? '' : cal.sources.platform === 'win32' ? ' (Outlook classic)' : c.type === 'exchange' ? ' (Exchange)' : '';
   select.replaceChildren(el('option', { value: 'salesforce' }, 'Salesforce events'),
-    ...[...groups].map(([account, list]) => el('optgroup', { label: `${account}${list[0].type === 'exchange' ? ' (Exchange)' : ''}` },
-      list.map((c) => el('option', { value: c.id }, c.title)))));
+    ...[...groups].map(([account, list]) => el('optgroup', { label: `${account}${kind(list[0])}` },
+      list.map((c) => el('option', { value: c.id }, c.title)))),
+    graph ? el('optgroup', { label: 'Microsoft 365' },
+      graph.signedIn ? el('option', { value: 'graph:signout' }, `Sign out of Microsoft 365${graph.account ? ` (${graph.account})` : ''}`)
+        : el('option', { value: 'graph:signin' }, 'Sign in to read your Microsoft 365 calendar…')) : null);
   select.value = cal.source;
   select.hidden = !(cal.sources.local ?? cal.sources.mac);
-  select.onchange = () => {
-    cal.source = select.value; cal.sel = null;
+  select.onchange = async () => {
+    const value = select.value;
+    if (value === 'graph:signin' || value === 'graph:signout') {
+      select.value = cal.source;
+      if (value === 'graph:signin') return graphSignIn();
+      if (!confirm('Sign out of Microsoft 365? SF Desk forgets the sign-in and shows another calendar.')) return;
+      await api('/graph/signout', { method: 'POST' }).catch(() => {});
+      if (cal.source.startsWith('graph:')) cal.source = null;
+      cal.sources = null;
+      return loadSources().then(loadCalendar);
+    }
+    cal.source = value; cal.sel = null;
     try { localStorage.setItem(CAL_SOURCE, cal.source); } catch {}
     loadCalendar();
   };
+}
+
+// Microsoft 365 sign-in with a device code: show the code and Microsoft's page, then wait for it to finish.
+async function graphSignIn() {
+  const sub = document.getElementById('calSub');
+  let info;
+  try { info = await api('/graph/signin', { method: 'POST' }); } catch (e) { toast(e.message, 'err'); return; }
+  const ticket = cal.graphTicket = {};
+  const status = el('span', {}, ' Waiting for you to finish signing in…');
+  sub.replaceChildren(el('div', { class: 'graph-signin', style: 'padding:10px 12px;border:1px solid var(--line, #ccc);border-radius:8px;margin:6px 0;line-height:1.6' },
+    'To read your Microsoft 365 calendar, open ', el('a', { href: info.verificationUri, target: '_blank', rel: 'noopener' }, info.verificationUri),
+    ' and enter the code ', el('b', { style: 'font-size:1.15em;letter-spacing:.08em;user-select:all' }, info.userCode), ' ',
+    el('button', { onclick: () => navigator.clipboard?.writeText(info.userCode).then(() => toast('Code copied')) }, 'Copy code'), ' ',
+    el('button', { onclick: () => { cal.graphTicket = null; loadCalendar(); } }, 'Cancel'),
+    el('br'), 'Sign in with your work account and accept reading your calendar.', status));
+  window.open(info.verificationUri, '_blank', 'noopener');
+  while (cal.graphTicket === ticket) {
+    await new Promise((r) => setTimeout(r, 3000));
+    if (cal.graphTicket !== ticket) return;
+    const st = await api('/graph/status').catch(() => ({}));
+    if (st.signedIn) {
+      cal.graphTicket = null;
+      toast(`Signed in to Microsoft 365${st.account ? ` as ${st.account}` : ''}`);
+      try { localStorage.removeItem(CAL_SOURCE); } catch {}
+      cal.sources = null; cal.source = null;
+      return loadSources().then(loadCalendar);
+    }
+    if (!st.pending && st.error) {
+      cal.graphTicket = null;
+      status.textContent = '';
+      sub.replaceChildren(el('span', { style: 'color:var(--err, #b00020)' }, `Microsoft 365 sign-in didn't work: ${st.error}`));
+      return;
+    }
+  }
 }
 
 function moveWeek(days) { cal.week = addDays(cal.week, days); cal.sel = null; loadCalendar(); }

@@ -17,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { isMac, macCalendar } from './macCalendar.js';
 import { isWindows, windowsCalendar } from './windowsCalendar.js';
+import { graphCalendar } from './graphCalendar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
@@ -74,7 +75,10 @@ const b64url = (buf) => buf.toString('base64url');
 const store = openDb(DB_FILE);
 // This computer's own calendar for Time Entry: the Mac's Internet Accounts, or classic Outlook on Windows.
 const localCal = isMac ? macCalendar(__dirname, path.dirname(DB_FILE)) : isWindows ? windowsCalendar(__dirname) : null;
-const LOCAL_CAL_NAME = isWindows ? 'Outlook calendar' : 'Mac calendar';
+const LOCAL_CAL_NAME = isWindows ? 'Outlook (classic)' : 'Mac calendar';
+// Microsoft 365 calendars through Microsoft Graph, for the new Outlook (Windows; SF_DESK_GRAPH=1 elsewhere).
+const graphCal = isWindows || process.env.SF_DESK_GRAPH ? graphCalendar(path.dirname(DB_FILE)) : null;
+const readerFor = (source) => (source.startsWith('graph:') ? graphCal : localCal);
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
@@ -1291,7 +1295,7 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
 // other than my own help find the account.
 async function localEvents(req, calendarId, { from, to }) {
   const myDomain = String(req.session.sf.user.username || '').split('@')[1]?.toLowerCase();
-  const events = await localCal.events(from, to, [calendarId]);
+  const events = await readerFor(calendarId).events(from, to, [calendarId]);
   const list = events.map((e) => {
     const others = (e.attendees || []).filter((a) => !a.me && a.email && !a.email.toLowerCase().endsWith('@' + myDomain));
     return {
@@ -1330,15 +1334,29 @@ async function borrowSalesforceLinks(req, events, range) {
 // This computer's calendars, for the source picker. Empty when there's no calendar reader for this OS;
 // an error message when access was refused, so the page can say so and stay on Salesforce events.
 // "mac" is kept for pages from before Windows support.
+// "graph" is the Microsoft 365 sign-in state and its calendars, when that source is offered.
 api.get('/calendar/sources', wrap(async (req, res) => {
-  const info = { local: !!localCal, mac: isMac, platform: process.platform, name: LOCAL_CAL_NAME };
-  if (!localCal) return res.json({ ...info, calendars: [] });
-  try {
-    res.json({ ...info, calendars: await localCal.calendars() });
-  } catch (err) {
-    res.json({ ...info, calendars: [], error: err.message });
+  const info = { local: !!localCal || !!graphCal, mac: isMac, platform: process.platform, name: LOCAL_CAL_NAME, calendars: [] };
+  if (graphCal) {
+    const st = graphCal.status();
+    info.graph = { ...st, calendars: [] };
+    if (st.signedIn) {
+      try { info.graph.calendars = await graphCal.calendars(); } catch (err) { info.graph.error = err.message; }
+    }
   }
+  if (localCal) {
+    try { info.calendars = await localCal.calendars(); } catch (err) { info.error = err.message; }
+  }
+  res.json(info);
 }));
+
+// Microsoft 365 sign-in (device code): start it, check on it, or forget the account.
+api.post('/graph/signin', wrap(async (req, res) => {
+  if (!graphCal) throw new HttpError(404, 'Microsoft 365 calendars aren\'t offered here.');
+  res.json(await graphCal.startSignIn());
+}));
+api.get('/graph/status', (req, res) => res.json(graphCal ? graphCal.status() : { signedIn: false }));
+api.post('/graph/signout', (req, res) => { graphCal?.signOut(); res.json({ ok: true }); });
 
 // Calendar events for a range, each marked as covered by a Deal Support or not. source is
 // "salesforce" (default) or a calendar Id from this computer (Mac or Outlook). from/to: the range's start and end as UTC instants;
@@ -1350,7 +1368,7 @@ api.get('/calendar', wrap(async (req, res) => {
     tz: Math.max(-840, Math.min(840, Number(req.query.tz) || 0)),
   };
   const source = String(req.query.source || 'salesforce').slice(0, 300);
-  if (source !== 'salesforce' && !localCal) throw new HttpError(400, 'Calendars from this computer are only available when SF Desk runs on a Mac or on Windows with Outlook.');
+  if (source !== 'salesforce' && !readerFor(source)) throw new HttpError(400, 'Calendars from this computer are only available when SF Desk runs on a Mac or on Windows.');
   const kind = `calendar:${source}:${range.d0}:${range.d1}`;
   res.json(await withCacheFallback(req, res, async () => {
     const ds = await dealSupportMeta(req);
@@ -1407,10 +1425,11 @@ function coveringSupports(e, marks, linkedById, mine) {
   return supports;
 }
 
-// Event Ids: Salesforce Ids, or "mac_" (Mac calendar), "win_" (Outlook on Windows) or "ol_" (Outlook add-in) plus a hash.
+// Event Ids: Salesforce Ids, or "mac_" (Mac calendar), "win_" (Outlook on Windows), "gr_" (Microsoft 365)
+// or "ol_" (Outlook add-in) plus a hash.
 function eventId(value) {
   const id = String(value || '');
-  if (/^(mac|win|ol)_[0-9a-f]{24}$/.test(id)) return id;
+  if (/^(mac|win|gr|ol)_[0-9a-f]{24}$/.test(id)) return id;
   return sfId(id);
 }
 
@@ -1454,7 +1473,7 @@ api.post('/calendar/events/:id/deal-support', wrap(async (req, res) => {
   const evId = eventId(req.params.id);
   const oppId = sfId(req.body?.opportunityId);
   const me = sfId(req.session.sf.user.id);
-  if (!/^(mac|ol)_/.test(evId)) {
+  if (!/^(mac|win|gr|ol)_/.test(evId)) {
     const [ev] = await query(req, `SELECT Id FROM Event WHERE Id = '${evId}' AND OwnerId = '${me}'`);
     if (!ev) throw new HttpError(404, 'That event is not on your calendar.');
   }

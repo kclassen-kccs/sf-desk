@@ -96,7 +96,9 @@ icon by the clock to reopen it, edit settings, restart the server, see the log o
 - **Calendar:** Time Entry reads classic Outlook's calendars through Outlook's COM API
   (`windows/outlook-calendar.ps1`, run by `windowsCalendar.js` with Windows PowerShell), with the same details
   as on a Mac: title, times, location, body and attendee emails for matching the account. The new Outlook has
-  no COM API, so with it Time Entry shows Salesforce events only.
+  no COM API, so for it Time Entry can read your **Microsoft 365** calendar through Microsoft Graph instead
+  (`graphCalendar.js`): a one-time sign-in with a code at microsoft.com/devicelogin, using Microsoft's own
+  Graph Command Line Tools client, so no app registration (your tenant may require admin approval).
 - **Settings and data:** `%LOCALAPPDATA%\SF Desk` (`.env`, `data\`, `logs\server.log`, `sf-cli\`); the app is in
   `%LOCALAPPDATA%\Programs\SF Desk`.
 - **Not yet:** the Outlook add-in's certificate script is Mac-only.
