@@ -2095,8 +2095,8 @@ function eventPrefill(e) {
     } else v[p.hoursField.name] = String(hours);
   }
   const desc = meetingNotes(e.description);
-  // What was written about the meeting fills both the description of the request and the meeting overview.
-  for (const f of [p.descField, p.overviewField]) if (f && desc) v[f.name] = desc.slice(0, f.length || 32000);
+  // (The server copies the description into Meeting Overview.)
+  if (p.descField && desc) v[p.descField.name] = desc.slice(0, p.descField.length || 32000);
   if (p.userField?.onForm) v[p.userField.name] = me.user.id;
   return v;
 }

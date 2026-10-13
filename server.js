@@ -595,8 +595,15 @@ async function dealSupportMeta(req) {
     ? [...shown.map((x) => ({ f: byName.get(x.name.toLowerCase()), required: x.required, onForm: x.onForm })),
       ...d.fields.filter((f) => f.nameField).map((f) => ({ f }))]
     : d.fields.filter((f) => f.createable || f.nameField).map((f) => ({ f }));
+  // Meeting Overview always holds the same text as Description of Request: the server copies it on
+  // create and save, so it stays off the form.
+  const textarea = (re, name) => d.fields.find((f) => f.type === 'textarea' && (f.name === name || re.test(f.label)));
+  const descOfRequest = textarea(/^description of (the )?request$/i, 'Description_of_Request__c');
+  const overview = descOfRequest && textarea(/^meeting overview$/i, 'Meeting_Overview__c');
+  const mirror = overview?.createable && overview !== descOfRequest
+    ? { from: descOfRequest.name, to: overview.name, length: overview.length || 32768, updateable: !!overview.updateable } : null;
   const fields = picked
-    .filter(({ f }, i, all) => f && f.name !== opp.name && DS_TYPES.has(f.type) &&
+    .filter(({ f }, i, all) => f && f.name !== opp.name && f.name !== mirror?.to && DS_TYPES.has(f.type) &&
       all.findIndex((x) => x.f === f) === i)
     .map(({ f, required, onForm = true }) => ({
       name: f.name,
@@ -646,6 +653,7 @@ async function dealSupportMeta(req) {
     canDelete: !!d.deletable,
     oppUpdateable: !!opp.updateable,
     oppRel: opp.relationshipName || null,
+    mirror,
     fields,
   };
   req.session.dealSupport = meta;
@@ -718,6 +726,7 @@ async function createDealSupport(req, meta, oppId, fields, extra = {}) {
     if (v !== '' && v !== null && v !== undefined) body[k] = v;
   }
   for (const [k, v] of Object.entries(extra)) if (body[k] === undefined) body[k] = v;
+  if (meta.mirror && body[meta.mirror.from] != null) body[meta.mirror.to] = String(body[meta.mirror.from]).slice(0, meta.mirror.length);
   const missing = [...byName.values()].filter((f) => f.required && body[f.name] === undefined);
   if (missing.length) throw new HttpError(400, 'Required: ' + missing.map((f) => f.label).join(', '));
   const created = await sf(req, 'POST', `/services/data/${API}/sobjects/${meta.object}`, { body });
@@ -762,6 +771,9 @@ api.patch('/deal-supports/:id', wrap(async (req, res) => {
     if (!f) throw new HttpError(400, `Field not editable in this app: ${k}`);
     if ((v === '' || v == null) && f.required) throw new HttpError(400, `Required: ${f.label}`);
     body[k] = v === '' || v === undefined ? null : v;
+  }
+  if (meta.mirror?.updateable && meta.mirror.from in body) {
+    body[meta.mirror.to] = body[meta.mirror.from] == null ? null : String(body[meta.mirror.from]).slice(0, meta.mirror.length);
   }
   if (Object.keys(body).length) await sf(req, 'PATCH', `/services/data/${API}/sobjects/${meta.object}/${id}`, { body });
   res.json({ ok: true });
@@ -979,8 +991,7 @@ async function calendarMeta(req) {
   const descField = best(textareas, (f) =>
     (/description of (the )?request|request description/i.test(f.label) ? 20
       : /description|details?|notes?|summary|agenda|comments?|activity/i.test(text(f)) ? 10 : 1) + Math.min(f.length || 0, 131072) / 131072);
-  // Meeting Overview gets the meeting's notes too (as does the description).
-  const overviewField = best(textareas.filter((f) => f !== descField), (f) => /meeting overview|overview/i.test(text(f)) ? 10 : 0);
+
   // The person: the "mine" field from My Time (Assigned SE), if it is a creatable user lookup.
   const userName = tm?.userFields?.find((f) => f.name !== 'OwnerId' && f.name !== 'CreatedById')?.name;
   const userDesc = userName && desc.get(userName);
@@ -996,7 +1007,6 @@ async function calendarMeta(req) {
     hoursField: hoursField && { name: hoursField.name, type: hoursField.type, picklist: hoursField.picklist,
       unit: ['double', 'int'].includes(hoursField.type) ? timeUnit(desc.get(hoursField.name) || hoursField) : 'text' },
     descField: descField && { name: descField.name, length: descField.length },
-    overviewField: overviewField && { name: overviewField.name, length: overviewField.length },
     userField: userField && { name: userField, label: userDesc.label.replace(/\s+ID$/, ''), onForm: form.some((f) => f.name === userField) },
     // Date and person fields used to find my existing Deal Supports for an event.
     matchDate: (dateField || tm?.dateFields[0])?.name || null,
