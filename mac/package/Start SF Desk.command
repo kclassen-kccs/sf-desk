@@ -10,7 +10,7 @@ NODE="$DEST/runtime/node/bin/node"
 [ -x "$NODE" ] || NODE="$(command -v node)"
 [ -n "$NODE" ] || { echo "Node.js not found. Run the installer again."; read -r -p "Press Return to close." _; exit 1; }
 
-PORT="$(sed -n 's/^PORT=//p' .env 2>/dev/null | tail -1)"
+PORT="$(sed -n 's/^PORT=\([0-9]*\).*/\1/p' .env 2>/dev/null | grep . | tail -1)"
 URL="http://localhost:${PORT:-3000}"
 
 if curl -fs -o /dev/null "$URL"; then
