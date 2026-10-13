@@ -1,0 +1,33 @@
+SF Desk for Mac
+===============
+
+Before you start
+- Add your SailPoint Exchange account in System Settings > Internet Accounts (Add Account >
+  Microsoft Exchange, sign in with your SailPoint email, turn on Calendars), and check that this
+  week's meetings show in Calendar.app. SF Desk's Time Entry tab reads them from there.
+- You need a Salesforce login to sailpoint.my.salesforce.com (your usual SSO login).
+
+Install
+1. Double-click "Install SF Desk.command".
+   If macOS says it can't verify the developer: click Done, open System Settings > Privacy &
+   Security, scroll down and click "Open Anyway" next to "Install SF Desk.command", then confirm.
+   (Or right-click the file > Open > Open.)
+2. A Terminal window walks you through the rest: it installs SF Desk into your home folder
+   (~/SF-Desk), the Salesforce CLI if you don't have it, and signs you in to Salesforce in your
+   browser.
+3. When macOS asks whether Terminal may access your calendars, choose Allow Full Access.
+
+SF Desk opens in your browser at http://localhost:3000. Click Connect.
+
+Every day
+Double-click "Start SF Desk" on your Desktop. Keep its Terminal window open while you use SF Desk;
+close the window to stop it.
+
+Updating
+Unzip the new download and run "Install SF Desk.command" again. Your settings, login and local data
+are kept.
+
+Uninstalling
+Delete the SF-Desk folder in your home folder and "Start SF Desk" on your Desktop.
+
+Problems? See INSTALL.md in ~/SF-Desk, "Troubleshooting".
