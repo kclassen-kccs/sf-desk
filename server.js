@@ -531,6 +531,16 @@ api.post('/opportunities', wrap(async (req, res) => {
 // ---------- Deal Support ----------
 
 // Find the Deal Support object, its lookup to Opportunity, and the fields the form can show.
+// The object's plural label. Some orgs set it to the singular ("Deal Support"); add the "s" ourselves then.
+function pluralLabel(d) {
+  const one = String(d.label || '').trim(), many = String(d.labelPlural || '').trim();
+  if (many && many.toLowerCase() !== one.toLowerCase()) return many;
+  return /(s|x|ch|sh)$/i.test(one) ? one + 'es' : /[^aeiou]y$/i.test(one) ? one.slice(0, -1) + 'ies' : one + 's';
+}
+
+// What an event's WhatId points to: What.Type when Salesforce gives it, else the Id's key prefix.
+const whatType = (e) => e.What?.Type || ({ '006': 'Opportunity', '001': 'Account' })[String(e.WhatId || '').slice(0, 3)] || '';
+
 async function dealSupportMeta(req) {
   if (req.session.dealSupport) return req.session.dealSupport;
   const { sobjects } = await sf(req, 'GET', `/services/data/${API}/sobjects`);
@@ -601,7 +611,7 @@ async function dealSupportMeta(req) {
   const meta = {
     object: d.name,
     label: d.label,
-    labelPlural: d.labelPlural,
+    labelPlural: pluralLabel(d),
     oppField: opp.name,
     roleDefault: role ? { field: role.name, value: leadSe || null, options: role.picklist } : null,
     canCreate: d.createable && opp.createable,
@@ -859,7 +869,7 @@ async function timeMeta(req) {
   const meta = {
     object: d.name,
     label: d.label,
-    labelPlural: d.labelPlural,
+    labelPlural: pluralLabel(d),
     oppField: ds.oppField,
     oppRel: opp?.relationshipName || null,
     roleField: role?.name || null,
@@ -1065,7 +1075,7 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
     if (!groups.has(key)) groups.set(key, []);
     groups.get(key).push(e);
   }
-  const isOpp = (e) => e.What?.Type === 'Opportunity';
+  const isOpp = (e) => whatType(e) === 'Opportunity';
   return [...groups.values()].map((copies) => {
     const e = copies.find(isOpp) || copies[0];
     return {
@@ -1073,9 +1083,9 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
       subject: e.Subject || '(no subject)', title: cleanSubject(e.Subject) || '(no subject)', start: e.StartDateTime, end: e.EndDateTime,
       allDay: !!e.IsAllDayEvent, date: eventDate(e, tz), minutes: e.DurationInMinutes ?? null, location: e.Location || '',
       description: e.Description || '', who: e.Who?.Name || '', showAs: e.ShowAs || '',
-      what: e.WhatId ? { id: e.WhatId, name: e.What?.Name || '', type: e.What?.Type || '' } : null,
+      what: e.WhatId ? { id: e.WhatId, name: e.What?.Name || '', type: whatType(e) } : null,
       oppId: isOpp(e) ? e.WhatId : null,
-      accountIds: [...new Set(copies.flatMap((c) => [c.AccountId, c.What?.Type === 'Account' && c.WhatId]).filter(Boolean))],
+      accountIds: [...new Set(copies.flatMap((c) => [c.AccountId, whatType(c) === 'Account' && c.WhatId]).filter(Boolean))],
       domains: [],
     };
   });

@@ -2111,7 +2111,9 @@ function renderEventPanel() {
 
 // The "create from event" form: pick an opportunity, then the Deal Support fields, prefilled from the event.
 function createFromEvent(e, close) {
-  let picked = e.what?.type === 'Opportunity' ? { Id: e.what.id, Name: e.what.name } : null;
+  // The event's opportunity (its own, or borrowed from the Salesforce copy of a Mac event) is preselected.
+  const oppId = e.oppId || (e.what?.type === 'Opportunity' || String(e.what?.id || '').startsWith('006') ? e.what.id : null);
+  let picked = oppId ? { Id: oppId, Name: e.what?.id === oppId ? e.what.name || oppId : oppId } : null;
   const picker = oppCombobox({
     picked,
     // Opportunities on the event's account, or on accounts named in its title, are listed first.
