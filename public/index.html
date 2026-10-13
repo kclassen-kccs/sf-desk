@@ -2061,9 +2061,6 @@ function selectEvent(id) {
   if (cal.sel && CAL_WIDE.matches) cal.editing = null;
   evEdit.editing = null;
   renderCalendar();
-  // A green event opens its Deal Support for editing.
-  const e = cal.sel && cal.data?.events.find((x) => x.id === cal.sel);
-  if (e?.supports.length && dsMeta.canUpdate) editFromEvent(e.supports[0]);
   // Below 1000px the event panel sits above the calendar: bring it into view.
   if (cal.sel && window.matchMedia('(max-width: 1000px)').matches) document.getElementById('calPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
@@ -2151,8 +2148,8 @@ function renderEventPanel() {
   } }, e.skipped ? 'Needs a Deal Support after all' : 'No Deal Support needed');
   // The Deal Support being edited, if it is one of this event's.
   const editing = e.supports.some((r) => r.Id === evEdit.editing?.id) ? evEdit.editing : null;
-  // Once an event has its Deal Support, the panel shows just that, not the event: the edit form, or
-  // (while it loads, after saving, or with several) the event's Deal Supports with Edit links.
+  // Once an event has its Deal Support, the panel shows just that, not the event: a summary with an
+  // Edit link that opens the form.
   if (st === 'covered') {
     const list = el('section', {},
       el('h3', {}, e.supports.length > 1 ? `${dsMeta.labelPlural} for this event` : dsMeta.label, el('span', { class: 'spacer' }),
@@ -2392,7 +2389,7 @@ function renderOutlookPane(e, reload) {
     formBox,
   );
   // One Deal Support per meeting: a meeting that has one opens it for editing or removing.
-  // Once it has one, the pane shows just the Deal Support, not the meeting.
+  // Once it has one, the pane shows just the Deal Support, not the meeting: a summary, with Edit for the form.
   if (st === 'covered') {
     const host = { editing: null }, r = e.supports[0];
     const edit = () => editDealSupport(r.Id, host, show, reload);
@@ -2400,8 +2397,7 @@ function renderOutlookPane(e, reload) {
       el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
       dsMeta.canUpdate ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: edit }, 'Edit') : null);
     function show() { document.getElementById('app').replaceChildren(host.editing?.box || summary); }
-    show();
-    return dsMeta.canUpdate ? edit() : undefined;
+    return show();
   }
   if (!dsMeta.canCreate) return formBox.replaceChildren(el('div', { class: 'empty' }, `Your Salesforce user can't create ${dsMeta.labelPlural}.`));
   // A meeting with nothing yet opens straight into the form.
