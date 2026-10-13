@@ -1025,11 +1025,15 @@ function renderDealSupports(o, records) {
   );
 }
 
+// Multi-select picklists picked one value at a time here, as a dropdown like Role.
+const singlePick = (f) => f.type === 'multipicklist' && (f.name === 'Platform_Request__c' || /^platform request$/i.test(f.label));
+
 function dsInput(f) {
   let n;
   if (f.type === 'picklist' || f.type === 'multipicklist') {
-    n = el('select', { multiple: f.type === 'multipicklist' },
-      f.type === 'picklist' ? el('option', { value: '' }, '—') : null,
+    const multiple = f.type === 'multipicklist' && !singlePick(f);
+    n = el('select', { multiple },
+      !multiple ? el('option', { value: '' }, '—') : null,
       (f.picklist || []).map((v) => el('option', { value: v }, v)));
   } else if (f.type === 'boolean') {
     n = el('input', { type: 'checkbox' });
@@ -1067,13 +1071,14 @@ function dealSupportForm(o, close, opts = {}) {
   const inputs = new Map(fields.map((f) => [f, dsInput(f)]));
   for (const [f, n] of inputs) {
     if (opts.edit) {
-      if (f.type === 'boolean') n.checked = false; else if (f.type !== 'multipicklist') n.value = '';
+      if (f.type === 'boolean') n.checked = false; else if (!n.multiple) n.value = '';
       if (f.updateable === false) n.disabled = true;
     }
     const v = opts.values?.[f.name];
     if (v == null || v === '') continue;
     if (f.type === 'boolean') n.checked = !!v;
-    else if (f.type === 'multipicklist') for (const x of n.options) x.selected = String(v).split(';').includes(x.value);
+    else if (f.type === 'multipicklist' && n.multiple) for (const x of n.options) x.selected = String(v).split(';').includes(x.value);
+    else if (f.type === 'multipicklist') n.value = String(v).split(';')[0];
     else if (f.type === 'datetime') n.value = `${localDay(new Date(v))}T${hhmm24(new Date(v))}`;
     else n.value = v;
   }
@@ -1092,6 +1097,11 @@ function dealSupportForm(o, close, opts = {}) {
     }
   }
   const initial = new Map([...inputs].map(([f, n]) => [f, JSON.stringify(dsValue(f, n))]));
+  // opts.changes: values put in after loading, so they are saved as edits (e.g. a cleaned-up description).
+  for (const [name, v] of Object.entries(opts.changes || {})) {
+    const f = fields.find((x) => x.name === name), n = f && inputs.get(f);
+    if (n && !n.disabled) n.value = v;
+  }
   // A lookup on a saved record shows its record's name, with the Id it holds underneath (until it's changed).
   const refName = (f) => {
     const name = opts.edit && f.relationshipName && opts.values?.[f.relationshipName]?.Name;
@@ -1106,10 +1116,11 @@ function dealSupportForm(o, close, opts = {}) {
   };
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
     el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f), refName(f));
-  // Shown up front: required fields, then the time fields (customer-facing, internal, travel) with a live total.
+  // Shown up front: required fields and Description of Request, then the time fields (customer-facing,
+  // internal, travel) with a live total.
   const time = fields.filter((f) => f.timeEntry);
-  const required = fields.filter((f) => f.required && !f.timeEntry);
-  const optional = fields.filter((f) => !f.required && !f.timeEntry);
+  const required = fields.filter((f) => (f.required || f.upFront) && !f.timeEntry);
+  const optional = fields.filter((f) => !f.required && !f.upFront && !f.timeEntry);
   const total = el('output', { style: 'display:block;padding:6px 0;font-weight:600' });
   const showTotal = () => {
     const h = time.reduce((s, f) => s + (Number(inputs.get(f).value) || 0), 0);
@@ -2009,6 +2020,23 @@ const editWeekDealSupport = (r) => {
 
 // Edit a Deal Support in the create form, prefilled from the record. `host` is the page's state, whose
 // `editing` holds the open form; rerender() redraws the list it sits above, reload() refreshes after saving.
+// A Deal Support's description and "Total Hours = X", for the summary shown before its form.
+// Fetched once per record; a save or removal clears it.
+const dsDetails = new Map();
+function dsSummary(id) {
+  const box = el('div', { class: 'sub', style: 'margin:4px 0 0' }, 'Loading…');
+  if (!dsDetails.has(id)) dsDetails.set(id, api(`/deal-supports/${id}`).catch((err) => { dsDetails.delete(id); throw err; }));
+  dsDetails.get(id).then((d) => {
+    const h = d.hours?.value;
+    const hours = h == null || h === '' ? null : d.hours.unit === 'minutes' ? Number(h) / 60 : d.hours.unit === 'text' ? parseDuration(h) : Number(h);
+    box.className = '';
+    box.replaceChildren(
+      meetingNotes(d.description) ? el('div', { class: 'desc', style: 'margin-top:6px' }, meetingNotes(d.description)) : null,
+      hours != null ? el('div', { style: 'margin-top:6px' }, el('b', {}, `Total Hours = ${hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}`)) : null);
+  }, () => box.replaceChildren());
+  return box;
+}
+
 async function editDealSupport(id, host, rerender, reload) {
   if (host.editing?.id === id) return host.editing.box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   const close = () => { host.editing = null; rerender(); };
@@ -2017,31 +2045,37 @@ async function editDealSupport(id, host, rerender, reload) {
     dsMeta ||= await api('/deal-supports/meta');
     data = await api(`/deal-supports/${id}`);
   } catch (err) { return toast(err.message, 'err'); }
-  let picked = data.opportunity;
-  const picker = dsMeta.oppUpdateable ? oppCombobox({ picked, onPick: (o) => { picked = o; } }) : null;
+  // The opportunity can't be changed here: to move a Deal Support, remove it and create a new one.
+  const opp = data.opportunity;
+  // A description holding a meeting invitation (Teams, Zoom...) is cleaned up in the form, and saved
+  // as such only on Save. With nothing else in it, it becomes "<Requested Activity> - <Platform Request>".
+  const changes = {}, descName = dsMeta.fields.find((f) => f.upFront)?.name || dsMeta.mirror?.from, raw = descName ? String(data.record[descName] ?? '') : '';
+  const notes = meetingNotes(raw);
+  if (raw.trim() && notes !== raw.trim()) {
+    changes[descName] = notes || descSources(descName).map((f) => dsText(f, data.record[f.name])).filter(Boolean).join(' - ');
+  }
   const box = dealSupportForm(null, close, {
     edit: true,
     title: `Edit ${dsMeta.label} ${data.record.Name || ''}`.trim(),
     values: data.record,
+    changes,
     submit: async (fields) => {
-      if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
-      const moved = picked.Id !== data.opportunity?.Id;
-      await api(`/deal-supports/${id}`, { method: 'PATCH', body: { fields, opportunityId: moved ? picked.Id : undefined } });
+      await api(`/deal-supports/${id}`, { method: 'PATCH', body: { fields } });
+      dsDetails.delete(id);
       toast(`Saved ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
       host.editing = null;
       await reload();
     },
     remove: dsMeta.canDelete ? async () => {
       await api(`/deal-supports/${id}`, { method: 'DELETE' });
+      dsDetails.delete(id);
       toast(`Removed ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
       host.editing = null;
       await reload();
     } : null,
   });
-  box.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
-    picker ? [el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), picker.input)),
-      picker.list, picker.status]
-      : el('div', {}, 'Opportunity: ', el('b', {}, picked?.Name || '—'))));
+  box.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' }, 'Opportunity: ', el('b', {}, opp?.Name || '—'),
+    opp?.Account?.Name ? ` (${opp.Account.Name})` : ''));
   box.classList.add('ds-edit');
   host.editing = { id, box };
   rerender();
@@ -2065,9 +2099,6 @@ function selectEvent(id) {
   if (cal.sel && CAL_WIDE.matches) cal.editing = null;
   evEdit.editing = null;
   renderCalendar();
-  // A green event opens its Deal Support for editing.
-  const e = cal.sel && cal.data?.events.find((x) => x.id === cal.sel);
-  if (e?.supports.length && dsMeta.canUpdate) editFromEvent(e.supports[0]);
   // Below 1000px the event panel sits above the calendar: bring it into view.
   if (cal.sel && window.matchMedia('(max-width: 1000px)').matches) document.getElementById('calPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
@@ -2099,7 +2130,9 @@ function eventPrefill(e) {
     } else v[p.hoursField.name] = String(hours);
   }
   const desc = meetingNotes(e.description);
-  if (p.descField && desc) v[p.descField.name] = desc.slice(0, p.descField.length || 32000);
+  // The details start with the meeting's subject, then what was written about it.
+  // (The server copies the description into Meeting Overview.)
+  if (p.descField) v[p.descField.name] = [meetingSubject(e), desc].filter(Boolean).join('\n').slice(0, p.descField.length || 32000);
   if (p.userField?.onForm) v[p.userField.name] = me.user.id;
   return v;
 }
@@ -2154,10 +2187,26 @@ function renderEventPanel() {
   } }, e.skipped ? 'Needs a Deal Support after all' : 'No Deal Support needed');
   // The Deal Support being edited, if it is one of this event's.
   const editing = e.supports.some((r) => r.Id === evEdit.editing?.id) ? evEdit.editing : null;
+  // Once an event has its Deal Support, the panel shows just that, not the event: a summary with an
+  // Edit link that opens the form.
+  if (st === 'covered') {
+    // With one Deal Support, Edit sits on the title line; with several, beside each.
+    const one = e.supports.length === 1;
+    const editBtn = (r, props = {}) => dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { ...props, onclick: () => editFromEvent(r) }, 'Edit') : null;
+    const list = el('section', {},
+      el('h3', {}, one ? dsMeta.label : `${dsMeta.labelPlural} for this event`, one ? editBtn(e.supports[0], { style: 'margin-left:10px' }) : null,
+        el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), title: 'Close this event' }, 'Close')),
+      e.supports.map((r) => el('div', {},
+        el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
+        one ? null : editBtn(r, { class: 'linkish', style: 'display:inline;margin-left:8px' }),
+        editing?.id !== r.Id ? dsSummary(r.Id) : null)));
+    return panel.replaceChildren(...(editing && e.supports.length === 1 ? [editing.box] : [list, editing?.box].filter(Boolean)));
+  }
   const formBox = el('div', {}, editing?.box);
   const create = el('button', { class: 'primary', onclick: () => { evEdit.editing = null; create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
-    st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
-  if (!dsMeta.canCreate) create.hidden = true;
+    `Create ${dsMeta.label}`);
+  // One Deal Support per event: one that has it offers only editing or removing it.
+  if (!dsMeta.canCreate || st === 'covered') create.hidden = true;
 
   panel.replaceChildren(
     el('section', {},
@@ -2174,7 +2223,8 @@ function renderEventPanel() {
           r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null,
           dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: () => editFromEvent(r) }, 'Edit') : null)))] : null,
       ),
-      e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
+      // Meeting invitations (Teams, Zoom...) are never shown, only what was written about the meeting.
+      meetingNotes(e.description) ? el('div', { class: 'desc' }, meetingNotes(e.description)) : el('div', { class: 'sub' }, 'No notes on this event.'),
       el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, e.sfEvent === false ? null : sfLink(e.id, 'Open event in Salesforce ↗')),
     ),
     formBox,
@@ -2184,15 +2234,22 @@ function renderEventPanel() {
 // The "create from event" form: pick an opportunity, then the Deal Support fields, prefilled from the event.
 // With nothing written about the meeting but the invitation, the details default to
 // "<Requested Activity> - <Platform Request>" from the form, kept up to date as those are picked.
+// The fields the default details are made from: the requested activity and the platform request.
+function descSources(descName) {
+  const find = (...tests) => tests.map((t) => dsMeta.fields.find((f) => typeof t === 'string' ? f.name === t : t.test(f.label))).find(Boolean);
+  return [find('Requested_SaaS_Activity__c', /requested.*activity/i),
+    find('Platform_Request__c', /^platform request$/i, 'IdentityNow_Platform_Modules__c', /platform/i)]
+    .filter((f) => f && f.name !== descName);
+}
 function descDefault(e) {
   const p = cal.data.prefill;
   if (!p.descField || meetingNotes(e.description)) return null;
-  const find = (...tests) => tests.map((t) => dsMeta.fields.find((f) => typeof t === 'string' ? f.name === t : t.test(f.label))).find(Boolean);
-  const from = [find('Requested_SaaS_Activity__c', /requested.*activity/i),
-    find('Platform_Request__c', /^platform request$/i, 'IdentityNow_Platform_Modules__c', /platform/i)]
-    .filter((f) => f && f.name !== p.descField.name).map((f) => f.name);
-  return from.length ? { field: p.descField.name, from, value: (vals) => vals.filter(Boolean).join(' - ') } : null;
+  const from = descSources(p.descField.name).map((f) => f.name);
+  const subject = meetingSubject(e);
+  return from.length ? { field: p.descField.name, from, value: (vals) => [subject, vals.filter(Boolean).join(' - ')].filter(Boolean).join('\n') } : null;
 }
+// An event's subject without an Outreach "[Backstory | ...]" prefix.
+const meetingSubject = (e) => String(e.title || e.subject || '').replace(/^\s*\[backstory\b[^\]]*\]\s*/i, '').trim();
 
 // onCreated(rec, opp) runs after the save; by default the Time Entry calendar reloads.
 function createFromEvent(e, close, onCreated = () => loadCalendar()) {
@@ -2365,7 +2422,7 @@ function renderOutlookPane(e, reload) {
       el('a', { href: `${me.instanceUrl}/${rec.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗')));
     setTimeout(reload, 1500);
   }));
-  const again = el('button', { class: 'primary', onclick: open }, st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
+  const again = el('button', { class: 'primary', onclick: open }, `Create ${dsMeta.label}`);
   document.getElementById('app').replaceChildren(
     el('section', {},
       el('h3', {}, e.title || e.subject),
@@ -2382,9 +2439,21 @@ function renderOutlookPane(e, reload) {
     ),
     formBox,
   );
+  // One Deal Support per meeting: a meeting that has one opens it for editing or removing.
+  // Once it has one, the pane shows just the Deal Support, not the meeting: a summary, with Edit for the form.
+  if (st === 'covered') {
+    const host = { editing: null }, r = e.supports[0];
+    const edit = () => editDealSupport(r.Id, host, show, reload);
+    const summary = el('section', {},
+      el('h3', {}, dsMeta.label, dsMeta.canUpdate ? el('button', { style: 'margin-left:10px', onclick: edit }, 'Edit') : null),
+      el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
+      dsSummary(r.Id));
+    function show() { document.getElementById('app').replaceChildren(host.editing?.box || summary); }
+    return show();
+  }
   if (!dsMeta.canCreate) return formBox.replaceChildren(el('div', { class: 'empty' }, `Your Salesforce user can't create ${dsMeta.labelPlural}.`));
   // A meeting with nothing yet opens straight into the form.
-  if (st === 'covered') formBox.replaceChildren(again); else open();
+  open();
 }
 
 (async function init() {

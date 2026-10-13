@@ -595,8 +595,15 @@ async function dealSupportMeta(req) {
     ? [...shown.map((x) => ({ f: byName.get(x.name.toLowerCase()), required: x.required, onForm: x.onForm })),
       ...d.fields.filter((f) => f.nameField).map((f) => ({ f }))]
     : d.fields.filter((f) => f.createable || f.nameField).map((f) => ({ f }));
+  // Meeting Overview always holds the same text as Description of Request: the server copies it on
+  // create and save, so it stays off the form.
+  const textarea = (re, name) => d.fields.find((f) => f.type === 'textarea' && (f.name === name || re.test(f.label)));
+  const descOfRequest = textarea(/^description of (the )?request$/i, 'Description_of_Request__c');
+  const overview = descOfRequest && textarea(/^meeting overview$/i, 'Meeting_Overview__c');
+  const mirror = overview?.createable && overview !== descOfRequest
+    ? { from: descOfRequest.name, to: overview.name, length: overview.length || 32768, updateable: !!overview.updateable } : null;
   const fields = picked
-    .filter(({ f }, i, all) => f && f.name !== opp.name && DS_TYPES.has(f.type) &&
+    .filter(({ f }, i, all) => f && f.name !== opp.name && f.name !== mirror?.to && DS_TYPES.has(f.type) &&
       all.findIndex((x) => x.f === f) === i)
     .map(({ f, required, onForm = true }) => ({
       name: f.name,
@@ -631,6 +638,18 @@ async function dealSupportMeta(req) {
     entry.timeEntry = true;
   }
 
+  // Description of Request is always on the form, up front, even when the layout leaves it off.
+  if (descOfRequest?.createable) {
+    let entry = fields.find((x) => x.name === descOfRequest.name);
+    if (!entry) {
+      entry = { name: descOfRequest.name, label: descOfRequest.label, type: 'textarea', createable: true, updateable: !!descOfRequest.updateable,
+        required: false, length: descOfRequest.length || null, referenceTo: null, picklist: null, defaultValue: null };
+      fields.push(entry);
+    }
+    entry.createable = true;
+    entry.upFront = true;
+  }
+
   // New Deal Supports default Role to "Lead SE" (matched ignoring case) when the picklist has it.
   const role = fields.find((f) => f.picklist && (f.name === 'Role__c' || /^role$/i.test(f.label)));
   const leadSe = role?.picklist.find((v) => v.trim().toLowerCase() === 'lead se');
@@ -646,6 +665,7 @@ async function dealSupportMeta(req) {
     canDelete: !!d.deletable,
     oppUpdateable: !!opp.updateable,
     oppRel: opp.relationshipName || null,
+    mirror,
     fields,
   };
   req.session.dealSupport = meta;
@@ -718,6 +738,7 @@ async function createDealSupport(req, meta, oppId, fields, extra = {}) {
     if (v !== '' && v !== null && v !== undefined) body[k] = v;
   }
   for (const [k, v] of Object.entries(extra)) if (body[k] === undefined) body[k] = v;
+  if (meta.mirror && body[meta.mirror.from] != null) body[meta.mirror.to] = String(body[meta.mirror.from]).slice(0, meta.mirror.length);
   const missing = [...byName.values()].filter((f) => f.required && body[f.name] === undefined);
   if (missing.length) throw new HttpError(400, 'Required: ' + missing.map((f) => f.label).join(', '));
   const created = await sf(req, 'POST', `/services/data/${API}/sobjects/${meta.object}`, { body });
@@ -735,7 +756,10 @@ api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
 api.get('/deal-supports/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const meta = await dealSupportMeta(req);
-  const fields = [...dsReadFields(meta), meta.oppField, ...(meta.oppRel ? [`${meta.oppRel}.Name`, `${meta.oppRel}.Account.Name`] : [])];
+  // Total hours too (a formula, not on the form), for the summary shown before the form.
+  const hoursF = (await timeMeta(req).catch(() => null))?.hoursFields[0];
+  const fields = [...dsReadFields(meta), meta.oppField, ...(meta.oppRel ? [`${meta.oppRel}.Name`, `${meta.oppRel}.Account.Name`] : []),
+    ...(hoursF ? [hoursF.name] : [])];
   // Lookup fields are shown with the related record's name; carry on without them if one can't be read.
   const names = meta.fields.filter((f) => f.relationshipName).map((f) => `${f.relationshipName}.Name`);
   const run = (f) => query(req, `SELECT ${[...new Set(f)].join(', ')} FROM ${meta.object} WHERE Id = '${id}'`);
@@ -746,10 +770,13 @@ api.get('/deal-supports/:id', wrap(async (req, res) => {
   if (!rec) throw new HttpError(404, `${meta.label} not found.`);
   const opp = meta.oppRel && rec[meta.oppRel];
   res.json({ record: rec, opportunity: rec[meta.oppField]
-    ? { Id: rec[meta.oppField], Name: opp?.Name || rec[meta.oppField], Account: { Name: opp?.Account?.Name || '' } } : null });
+    ? { Id: rec[meta.oppField], Name: opp?.Name || rec[meta.oppField], Account: { Name: opp?.Account?.Name || '' } } : null,
+    description: meta.mirror ? rec[meta.mirror.from] ?? null : null,
+    hours: hoursF ? { value: rec[hoursF.name] ?? null, unit: hoursF.unit } : null });
 }));
 
-// Save changes to a Deal Support from the edit form: the form's fields (null clears one) and, optionally, its opportunity.
+// Save changes to a Deal Support from the edit form: the form's fields (null clears one). Its opportunity stays:
+// to move one, remove it and create a new one.
 api.patch('/deal-supports/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const meta = await dealSupportMeta(req);
@@ -762,9 +789,8 @@ api.patch('/deal-supports/:id', wrap(async (req, res) => {
     if ((v === '' || v == null) && f.required) throw new HttpError(400, `Required: ${f.label}`);
     body[k] = v === '' || v === undefined ? null : v;
   }
-  if (req.body?.opportunityId) {
-    if (!meta.oppUpdateable) throw new HttpError(403, "Your Salesforce user can't move this record to another opportunity.");
-    body[meta.oppField] = sfId(req.body.opportunityId);
+  if (meta.mirror?.updateable && meta.mirror.from in body) {
+    body[meta.mirror.to] = body[meta.mirror.from] == null ? null : String(body[meta.mirror.from]).slice(0, meta.mirror.length);
   }
   if (Object.keys(body).length) await sf(req, 'PATCH', `/services/data/${API}/sobjects/${meta.object}/${id}`, { body });
   res.json({ ok: true });
@@ -978,8 +1004,11 @@ async function calendarMeta(req) {
     f.name === 'Meeting_Duration__c' ? 10
       : /meeting|customer facing/i.test(text(f)) && /duration|time|hour|hrs/i.test(text(f)) ? 8
       : /duration/i.test(text(f)) ? 6 : 0);
-  const descField = best(form.filter((f) => f.type === 'textarea'), (f) =>
-    (/description|details?|notes?|summary|agenda|comments?|activity/i.test(text(f)) ? 10 : 1) + Math.min(f.length || 0, 131072) / 131072);
+  const textareas = form.filter((f) => f.type === 'textarea');
+  const descField = best(textareas, (f) =>
+    (/description of (the )?request|request description/i.test(f.label) ? 20
+      : /description|details?|notes?|summary|agenda|comments?|activity/i.test(text(f)) ? 10 : 1) + Math.min(f.length || 0, 131072) / 131072);
+
   // The person: the "mine" field from My Time (Assigned SE), if it is a creatable user lookup.
   const userName = tm?.userFields?.find((f) => f.name !== 'OwnerId' && f.name !== 'CreatedById')?.name;
   const userDesc = userName && desc.get(userName);
