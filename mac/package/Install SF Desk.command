@@ -1,7 +1,7 @@
 #!/bin/bash
 # Installs (or updates) SF Desk for the current user in ~/SF-Desk.
 # Double-click this file in Finder, or run it from Terminal. Safe to run again: your .env,
-# Salesforce login and local data (data/) are kept.
+# Salesforce login, local data (data/) and Outlook add-in certificate (certs/) are kept.
 
 set -euo pipefail
 
@@ -45,7 +45,7 @@ if [ -e "$DEST" ] && [ ! -f "$MARKER" ]; then
 fi
 mkdir -p "$DEST"
 find "$DEST" -mindepth 1 -maxdepth 1 \
-  ! -name data ! -name .env ! -name sf-cli ! -name .sfdesk-install -exec rm -rf {} +
+  ! -name data ! -name .env ! -name sf-cli ! -name certs ! -name .sfdesk-install -exec rm -rf {} +
 cp -R "$HERE/app/." "$DEST/"
 if [ -n "$NODE_SRC" ]; then
   mkdir -p "$DEST/runtime"
