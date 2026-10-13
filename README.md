@@ -8,8 +8,12 @@ your Salesforce user is already allowed to, and it only writes when you click **
 
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
+- Lists accounts A–Z by name (or most recently modified first); filters the list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)
+- Shows only open opportunities on an account by default; tick **Show closed** to see all of them
 - Edits account fields and opportunity fields inline; changed fields are highlighted before saving
 - Creates new opportunities on an account
+- **Open** on an opportunity focuses on it: edit its fields, see its Deal Support records (click one for all
+  its fields), and create new ones with a form built from your org's Deal Support fields
 - Hide accounts and opportunities you don't want to see: tick them and click **Hide**. Tick **Show hidden**
   to see them again and **Unhide** them. Hiding is stored only in the local database, never in Salesforce
 - Picklists (Type, Industry, Stage) come from your org; fields you can't edit are greyed out
@@ -76,6 +80,16 @@ against your Salesforce user; a text or picklist field is matched against your f
 Edit `ACCOUNT_FIELDS` / `OPP_FIELDS` near the top of `server.js` (the server only allows writes
 to those fields), and `ACCOUNT_UI` / `OPP_UI` near the top of `public/index.html` to show them.
 Custom fields work too, e.g. `Region__c`.
+
+## Deal Support
+
+SF Desk finds the Deal Support object by its label ("Deal Support") and uses its lookup to Opportunity.
+The new-record form shows the fields on its page layout (for your default record type): required ones first,
+the rest under **More fields**. To pick the fields yourself, set `SF_DEAL_SUPPORT_FIELDS` in `.env` to a
+comma-separated list of API names.
+If it can't find the object, set `SF_DEAL_SUPPORT_OBJECT` in `.env` to its API name (e.g. `Deal_Support__c`);
+if the object has more than one lookup to Opportunity, set `SF_DEAL_SUPPORT_OPP_FIELD` to the right one.
+Deal Supports are read live from Salesforce and aren't kept in the local copy.
 
 ## Security notes
 

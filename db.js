@@ -137,21 +137,24 @@ export function openDb(file) {
     // `leadSe`, when given, keeps only accounts where the user is Lead SE: on the account itself
     // or on any of its saved opportunities. Each side is { field, value } or null; field names
     // come from the org's describe, and are compared like SOQL does (case-insensitively).
-    listAccounts(orgId, { q = '', leadSe = null, limit = 200 } = {}) {
+    // `ownerId`, when given, keeps only accounts owned by that user (the sales rep filter).
+    // Sorted A–Z by name, or most recently modified first with `recent`.
+    listAccounts(orgId, { q = '', ownerId = '', recent = false, leadSe = null, limit = 200 } = {}) {
       const acct = leadSe?.account, opp = leadSe?.opportunity;
       const rows = db.prepare(`
         SELECT data, synced_at FROM accounts a
         WHERE org_id = @orgId
           AND (@q = '' OR instr(lower(name), lower(@q)) > 0)
+          AND (@ownerId = '' OR json_extract(a.data, '$.OwnerId') = @ownerId)
           AND (NOT @filter
             OR (@acctPath IS NOT NULL AND lower(json_extract(a.data, @acctPath)) = lower(@acctValue))
             OR (@oppPath IS NOT NULL AND EXISTS (
               SELECT 1 FROM opportunities o
               WHERE o.org_id = a.org_id AND o.account_id = a.id
                 AND lower(json_extract(o.data, @oppPath)) = lower(@oppValue))))
-        ORDER BY last_modified DESC LIMIT @limit
+        ORDER BY ${recent ? 'last_modified DESC' : 'lower(name) ASC'} LIMIT @limit
       `).all({
-        orgId, q, limit,
+        orgId, q, ownerId, limit,
         filter: leadSe ? 1 : 0,
         acctPath: acct ? '$.' + acct.field : null, acctValue: acct?.value ?? null,
         oppPath: opp ? '$.' + opp.field : null, oppValue: opp?.value ?? null,

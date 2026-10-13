@@ -32,8 +32,19 @@ const SF_TARGET_ORG = process.env.SF_TARGET_ORG || '';
 const ACCOUNT_FIELDS = ['Name', 'Type', 'Industry', 'Phone', 'Website', 'AnnualRevenue',
   'NumberOfEmployees', 'BillingCity', 'BillingState', 'Description'];
 const OPP_FIELDS = ['Name', 'StageName', 'Amount', 'CloseDate', 'Probability', 'NextStep', 'Description'];
-const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'Owner.Name', 'LastModifiedDate'];
+const ACCOUNT_READ = ['Id', ...ACCOUNT_FIELDS, 'OwnerId', 'Owner.Name', 'LastModifiedDate'];
 const OPP_READ = ['Id', 'AccountId', ...OPP_FIELDS, 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
+
+// The "Deal Support" object attached to opportunities. Found by its label unless these name it:
+// SF_DEAL_SUPPORT_OBJECT is its API name (e.g. Deal_Support__c), SF_DEAL_SUPPORT_OPP_FIELD its
+// lookup to Opportunity (only needed if it has more than one).
+const DEAL_SUPPORT_OBJECT = process.env.SF_DEAL_SUPPORT_OBJECT || '';
+const DEAL_SUPPORT_OPP_FIELD = process.env.SF_DEAL_SUPPORT_OPP_FIELD || '';
+// Which Deal Support fields to show, comma-separated API names. Default: the fields on its page layout.
+const DEAL_SUPPORT_FIELDS = (process.env.SF_DEAL_SUPPORT_FIELDS || '').split(',').map((f) => f.trim()).filter(Boolean);
+// Field types the Deal Support form knows how to show.
+const DS_TYPES = new Set(['string', 'textarea', 'email', 'phone', 'url', 'picklist', 'multipicklist', 'boolean',
+  'date', 'datetime', 'double', 'currency', 'percent', 'int', 'reference']);
 
 // The "Lead SE" field used for the "only where I'm Lead SE" filter. Set SF_LEAD_SE_FIELD to its API
 // name (e.g. Lead_SE__c) if auto-detection by its label "Lead SE" doesn't find it.
@@ -228,7 +239,8 @@ async function sf(req, method, urlPath, { body, headers = {} } = {}, retried = f
 
 function stripAttrs(rec) {
   const { attributes, ...rest } = rec;
-  if (rest.Owner) rest.Owner = { Name: rest.Owner.Name };
+  // Related records (Owner, CreatedBy) come back with their own attributes; keep just the fields.
+  for (const [k, v] of Object.entries(rest)) if (v && typeof v === 'object' && v.attributes) rest[k] = stripAttrs(v);
   return rest;
 }
 
@@ -414,14 +426,19 @@ api.get('/accounts', wrap(async (req, res) => {
   const where = [];
   const q = String(req.query.q || '').trim().slice(0, 80);
   if (q) where.push(`Name LIKE '%${soqlLike(q)}%'`);
+  // Sales rep filter: the account owner.
+  const owner = req.query.owner ? sfId(req.query.owner) : '';
+  if (owner) where.push(`OwnerId = '${owner}'`);
+  // A–Z by name unless sort=recent asks for most recently modified first.
+  const recent = req.query.sort === 'recent';
   // Read the Lead SE fields too, so the saved copy can apply the same filter offline.
   const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
-  const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'Owner.Name', 'LastModifiedDate'],
+  const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate'],
     (await knownLeadSeFields(req)).Account);
   const soql = (extra = []) => {
     const w = [...where, ...extra];
     return `SELECT ${fields.join(', ')} ` +
-      `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY LastModifiedDate DESC LIMIT 200`;
+      `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY ${recent ? 'LastModifiedDate DESC' : 'Name ASC'} LIMIT 200`;
   };
 
   res.json(await withCacheFallback(req, res, async () => {
@@ -439,7 +456,9 @@ api.get('/accounts', wrap(async (req, res) => {
       const byId = new Map();
       for (const rec of (await Promise.all(queries)).flat()) byId.set(rec.Id, rec);
       accounts = [...byId.values()]
-        .sort((a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate)))
+        .sort(recent
+          ? (a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate))
+          : (a, b) => String(a.Name).localeCompare(String(b.Name)))
         .slice(0, 200);
     }
     store.saveAccounts(orgOf(req), accounts);
@@ -448,6 +467,8 @@ api.get('/accounts', wrap(async (req, res) => {
     const side = (f) => f && { field: f.name, value: leadSeValue(req, f) };
     const saved = store.listAccounts(orgOf(req), {
       q,
+      ownerId: owner,
+      recent,
       leadSe: lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) },
     });
     return { data: saved.records, syncedAt: saved.syncedAt };
@@ -499,6 +520,133 @@ api.post('/opportunities', wrap(async (req, res) => {
   res.status(201).json(rec);
 }));
 
+// ---------- Deal Support ----------
+
+// Find the Deal Support object, its lookup to Opportunity, and the fields the form can show.
+async function dealSupportMeta(req) {
+  if (req.session.dealSupport) return req.session.dealSupport;
+  const { sobjects } = await sf(req, 'GET', `/services/data/${API}/sobjects`);
+  const obj = DEAL_SUPPORT_OBJECT
+    ? sobjects.find((o) => o.name.toLowerCase() === DEAL_SUPPORT_OBJECT.toLowerCase())
+    : sobjects.filter((o) => /^deal\s*supports?$/i.test(o.label.trim()) || /^deal\s*supports$/i.test(o.labelPlural.trim()))
+      .sort((a, b) => b.custom - a.custom)[0];
+  if (!obj) {
+    throw new HttpError(404, 'No "Deal Support" object found in your org, or your user can\'t see it. ' +
+      'Set SF_DEAL_SUPPORT_OBJECT in .env to its API name (e.g. Deal_Support__c) and restart.');
+  }
+  const d = await sf(req, 'GET', `/services/data/${API}/sobjects/${obj.name}/describe`);
+  const lookups = d.fields.filter((f) => f.type === 'reference' && f.referenceTo.includes('Opportunity'));
+  const opp = DEAL_SUPPORT_OPP_FIELD
+    ? lookups.find((f) => f.name.toLowerCase() === DEAL_SUPPORT_OPP_FIELD.toLowerCase())
+    : lookups.sort((a, b) => b.createable - a.createable)[0];
+  if (!opp) {
+    throw new HttpError(404, `${d.label} has no lookup to Opportunity. ` +
+      'Set SF_DEAL_SUPPORT_OPP_FIELD in .env to the field that links it to an opportunity and restart.');
+  }
+  const shown = await dealSupportLayout(req, d.name);
+  const byName = new Map(d.fields.map((f) => [f.name.toLowerCase(), f]));
+  // Fields in layout (or configured) order, then the record name if the layout left it out.
+  const picked = shown
+    ? [...shown.map((x) => ({ f: byName.get(x.name.toLowerCase()), required: x.required, onForm: x.onForm })),
+      ...d.fields.filter((f) => f.nameField).map((f) => ({ f }))]
+    : d.fields.filter((f) => f.createable || f.nameField).map((f) => ({ f }));
+  const fields = picked
+    .filter(({ f }, i, all) => f && f.name !== opp.name && DS_TYPES.has(f.type) &&
+      all.findIndex((x) => x.f === f) === i)
+    .map(({ f, required, onForm = true }) => ({
+      name: f.name,
+      label: f.label,
+      type: f.type,
+      createable: f.createable && onForm,
+      required: f.createable && onForm && f.type !== 'boolean' && (!!required || (!f.nillable && !f.defaultedOnCreate)),
+      length: f.length || null,
+      referenceTo: f.referenceTo?.length ? f.referenceTo : null,
+      picklist: f.picklistValues?.length ? f.picklistValues.filter((v) => v.active).map((v) => v.value) : null,
+      defaultValue: f.defaultValue ?? null,
+    }));
+  const meta = {
+    object: d.name,
+    label: d.label,
+    labelPlural: d.labelPlural,
+    oppField: opp.name,
+    canCreate: d.createable && opp.createable,
+    fields,
+  };
+  req.session.dealSupport = meta;
+  return meta;
+}
+
+// The fields to show for Deal Support, as [{ name, required, onForm }]: SF_DEAL_SUPPORT_FIELDS if set,
+// else the fields on the page layout for the user's default record type. Null means "all fields".
+async function dealSupportLayout(req, object) {
+  if (DEAL_SUPPORT_FIELDS.length) return DEAL_SUPPORT_FIELDS.map((name) => ({ name, required: false }));
+  const get = async (suffix = '') => {
+    try {
+      return await sf(req, 'GET', `/services/data/${API}/sobjects/${object}/describe/layouts${suffix}`);
+    } catch (err) {
+      if (err.status === 401 || err.status >= 502) throw err;
+      return null;
+    }
+  };
+  const desc = await get();
+  const mapping = desc?.recordTypeMappings?.find((m) => m.defaultRecordTypeMapping && m.available);
+  let layout = (mapping && desc.layouts?.find((l) => l.id === mapping.layoutId)) || desc?.layouts?.[0];
+  // Objects with record types list no layouts here; fetch the default record type's layout by its Id.
+  if (!layout && mapping?.recordTypeId) layout = await get('/' + sfId(mapping.recordTypeId));
+  if (!layout) return null;
+  const out = [];
+  for (const section of layout.editLayoutSections || []) {
+    for (const row of section.layoutRows || []) {
+      for (const item of row.layoutItems || []) {
+        for (const c of item.layoutComponents || []) {
+          if (c.type === 'Field') out.push({ name: c.value, required: item.required, onForm: item.editableForNew });
+        }
+      }
+    }
+  }
+  return out.length ? out : null;
+}
+
+const dsReadFields = (meta) =>
+  ['Id', 'CreatedDate', 'CreatedBy.Name', 'Owner.Name', ...meta.fields.map((f) => f.name)]
+    .filter((f, i, all) => all.indexOf(f) === i);
+
+async function listDealSupports(req, meta, oppId, extraWhere = '') {
+  // Not every custom object has an owner (master-detail children don't); retry without it.
+  const run = (fields) => query(req, `SELECT ${fields.join(', ')} FROM ${meta.object} ` +
+    `WHERE ${meta.oppField} = '${oppId}'${extraWhere} ORDER BY CreatedDate DESC`, 500);
+  try {
+    return await run(dsReadFields(meta));
+  } catch (err) {
+    if (err.status !== 400) throw err;
+    return run(dsReadFields(meta).filter((f) => f !== 'Owner.Name'));
+  }
+}
+
+api.get('/deal-supports/meta', wrap(async (req, res) => res.json(await dealSupportMeta(req))));
+
+api.get('/opportunities/:id/deal-supports', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  res.json(await listDealSupports(req, meta, id));
+}));
+
+api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  if (!meta.canCreate) throw new HttpError(403, `Your Salesforce user can't create ${meta.labelPlural}.`);
+  const byName = new Map(meta.fields.filter((f) => f.createable).map((f) => [f.name, f]));
+  const body = { [meta.oppField]: id };
+  for (const [k, v] of Object.entries(req.body?.fields || {})) {
+    if (!byName.has(k)) throw new HttpError(400, `Field not settable in this app: ${k}`);
+    if (v !== '' && v !== null && v !== undefined) body[k] = v;
+  }
+  const missing = [...byName.values()].filter((f) => f.required && body[f.name] === undefined);
+  if (missing.length) throw new HttpError(400, 'Required: ' + missing.map((f) => f.label).join(', '));
+  const created = await sf(req, 'POST', `/services/data/${API}/sobjects/${meta.object}`, { body });
+  const [rec] = await listDealSupports(req, meta, id, ` AND Id = '${sfId(created.id)}'`);
+  res.status(201).json(rec);
+}));
 // Hidden records: local to this machine, never written to Salesforce. The page filters its
 // lists with these ids and can show them again with "Show hidden".
 api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
