@@ -573,6 +573,25 @@ async function dealSupportMeta(req) {
       picklist: f.picklistValues?.length ? f.picklistValues.filter((v) => v.active).map((v) => v.value) : null,
       defaultValue: f.defaultValue ?? null,
     }));
+  // Time spent is entered up front: customer-facing (meeting) time, internal (prep) time and travel time,
+  // added from the object's fields when the layout leaves them off, in that order, out of "More fields".
+  const timeEntry = [
+    (f) => f.name === 'Meeting_Duration__c' || /customer facing time|meeting duration/i.test(f.label),
+    (f) => f.name === 'Prep_Time__c' || /internal time|prep(aration)? time/i.test(f.label),
+    (f) => f.name === 'Travel_Time__c' || /travel time/i.test(f.label),
+  ].map((test) => d.fields.find((f) => test(f) && f.createable && ['double', 'int', 'currency', 'percent'].includes(f.type)))
+    .filter(Boolean);
+  for (const f of timeEntry) {
+    let entry = fields.find((x) => x.name === f.name);
+    if (!entry) {
+      entry = { name: f.name, label: f.label, type: f.type, createable: true, required: false, length: null,
+        referenceTo: null, picklist: null, defaultValue: null };
+      fields.push(entry);
+    }
+    entry.createable = true;
+    entry.timeEntry = true;
+  }
+
   // New Deal Supports default Role to "Lead SE" (matched ignoring case) when the picklist has it.
   const role = fields.find((f) => f.picklist && (f.name === 'Role__c' || /^role$/i.test(f.label)));
   const leadSe = role?.picklist.find((v) => v.trim().toLowerCase() === 'lead se');

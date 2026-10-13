@@ -927,12 +927,23 @@ function dealSupportForm(o, close, opts = {}) {
   }
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
     el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f));
+  // Shown up front: required fields, then the time fields (customer-facing, internal, travel) with a live total.
+  const time = fields.filter((f) => f.timeEntry && !f.required);
   const required = fields.filter((f) => f.required);
-  const optional = fields.filter((f) => !f.required);
+  const optional = fields.filter((f) => !f.required && !f.timeEntry);
+  const total = el('output', { style: 'display:block;padding:6px 0;font-weight:600' });
+  const showTotal = () => {
+    const h = time.reduce((s, f) => s + (Number(inputs.get(f).value) || 0), 0);
+    total.textContent = h.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+  for (const f of time) inputs.get(f).addEventListener('input', showTotal);
+  showTotal();
   const create = el('button', { class: 'primary' }, `Create ${dsMeta.label}`);
   const box = el('section', {},
     el('h3', {}, opts.title || `New ${dsMeta.label} for ${o.Name}`),
     el('div', { class: 'grid' }, required.map(cell)),
+    time.length ? el('div', { class: 'grid', style: 'margin-top:10px' }, time.map(cell),
+      time.length > 1 ? el('label', {}, el('span', {}, 'Total time'), total) : null) : null,
     optional.length ? el('details', { class: 'optional' },
       el('summary', {}, `More fields (${optional.length})`), el('div', { class: 'grid' }, optional.map(cell))) : null,
     el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
