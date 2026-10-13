@@ -659,11 +659,14 @@ function renderDetail() {
 let acctDsRange = '90', acctDsGroup = false;
 async function loadAccountDealSupports(accountId) {
   const sec = document.getElementById('acctDs');
-  sec.replaceChildren(el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, 'Loading…'));
+  if (acctDsEdit.accountId !== accountId) Object.assign(acctDsEdit, { accountId, editing: null });
+  if (!acctDsEdit.editing) sec.replaceChildren(el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, 'Loading…'));
   const today = todayStr(), fyStart = `${fiscal(today).fy - 1}-02-01`;
   const since = [addDays(today, -90), fyStart].sort()[0];
   try {
-    const data = await api(`/accounts/${accountId}/deal-supports?since=${since}`);
+    const [data] = await Promise.all([api(`/accounts/${accountId}/deal-supports?since=${since}`),
+      dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {})]);
+    data.accountId = accountId;
     if (document.getElementById('acctDs') === sec && current?.account.Id === accountId) renderAccountDealSupports(data, fyStart);
   } catch (e) {
     sec.replaceChildren(el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, e.message));
@@ -691,8 +694,11 @@ function renderAccountDealSupports(data, fyStart) {
   const showOpp = bySe && opps.size > 1 && list.some((r) => r.oppName && !String(r.Name || '').toLowerCase().includes(r.oppName.toLowerCase()));
   // The record number only (e.g. "DR-012345" -> "012345") keeps the first column narrow; the full name is its tooltip.
   const num = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
-  const ncols = 3 + showActivity + showOpp + !!data.whoLabel + showRole;
-  const row = (r) => el('tr', { class: 'nolink' },
+  const canEdit = !!dsMeta?.canUpdate;
+  const ncols = 3 + showActivity + showOpp + !!data.whoLabel + showRole + canEdit;
+  const edit = (r) => editDealSupport(r.Id, acctDsEdit, () => renderAccountDealSupports(data, fyStart), () => loadAccountDealSupports(data.accountId));
+  const row = (r) => el('tr', { class: 'nolink' + (acctDsEdit.editing?.id === r.Id ? ' sel' : '') },
+    canEdit ? editPencil(r.Name, () => edit(r)) : null,
     el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, num(r.Name) || r.Id)),
     el('td', {}, r.date),
     showActivity ? el('td', { class: 'wrap' }, r.activity) : null,
@@ -727,8 +733,9 @@ function renderAccountDealSupports(data, fyStart) {
     el('div', { class: 'tiles', style: 'grid-template-columns:repeat(2, minmax(0, 220px));margin-bottom:12px' },
       el('div', { class: 'tile' }, el('div', { class: 'k' }, data.labelPlural), el('div', { class: 'v' }, list.length.toLocaleString())),
       el('div', { class: 'tile' }, el('div', { class: 'k' }, data.hoursLabel), el('div', { class: 'v' }, fmtH(total)))),
+    acctDsEdit.editing?.box || '',
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
-      el('thead', {}, el('tr', {}, el('th', {}, '#'), el('th', {}, data.dateLabel),
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, '#'), el('th', {}, data.dateLabel),
         showActivity ? el('th', {}, data.activityLabel) : null, showOpp ? el('th', {}, 'Opportunity') : null,
         data.whoLabel ? el('th', {}, data.whoLabel) : null, showRole ? el('th', {}, 'Role') : null, el('th', { class: 'n' }, 'Hours'))),
       tbody,
@@ -936,8 +943,12 @@ function renderFocusOpp(o) {
   sec.replaceChildren(el('h3', {}, 'Opportunity', el('span', { class: 'spacer' }), revert, save), form);
 }
 
+// The open edit form on the opportunity's Deal Supports list, and on the account's Deal Supports panel.
+const oppDsEdit = { editing: null }, acctDsEdit = { editing: null };
+
 async function loadDealSupports(o) {
   const sec = document.getElementById('dealSupports');
+  if (oppDsEdit.oppId !== o.Id) Object.assign(oppDsEdit, { oppId: o.Id, editing: null });
   try {
     dsMeta ||= await api('/deal-supports/meta');
     const records = await api(`/opportunities/${o.Id}/deal-supports`);
@@ -970,7 +981,9 @@ function dsColumns() {
 function renderDealSupports(o, records) {
   const sec = document.getElementById('dealSupports');
   const cols = dsColumns();
-  const ncols = cols.length + 2;
+  const canEdit = dsMeta.canUpdate;
+  const ncols = cols.length + 2 + (canEdit ? 1 : 0);
+  const edit = (r) => editDealSupport(r.Id, oppDsEdit, () => renderDealSupports(o, records), () => loadDealSupports(o));
   const tbody = el('tbody');
   for (const r of records) {
     const more = el('tr', { class: 'ds-more', hidden: true }, el('td', { colspan: ncols },
@@ -979,7 +992,8 @@ function renderDealSupports(o, records) {
       el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
     ));
     tbody.append(
-      el('tr', { class: 'ds-row', onclick: () => { more.hidden = !more.hidden; } },
+      el('tr', { class: 'ds-row' + (oppDsEdit.editing?.id === r.Id ? ' sel' : ''), onclick: () => { more.hidden = !more.hidden; } },
+        canEdit ? editPencil(r.Name, () => edit(r)) : null,
         cols.map((f) => el('td', {}, dsText(f, r[f.name]) || '—')),
         el('td', {}, r.CreatedBy?.Name || ''),
         el('td', {}, shortDate(r.CreatedDate)),
@@ -999,8 +1013,9 @@ function renderDealSupports(o, records) {
     el('h3', {}, `${dsMeta.labelPlural} (${records.length})`, el('span', { class: 'spacer' }),
       el('button', { onclick: () => loadDealSupports(o) }, 'Reload'), add),
     formBox,
+    oppDsEdit.editing?.box || '',
     el('div', { class: 'tablewrap' }, el('table', {},
-      el('thead', {}, el('tr', {}, cols.map((f) => el('th', {}, f.label)), el('th', {}, 'Created by'), el('th', {}, 'Created'))),
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, cols.map((f) => el('th', {}, f.label)), el('th', {}, 'Created by'), el('th', {}, 'Created'))),
       tbody,
     )),
   );
