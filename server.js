@@ -682,6 +682,134 @@ api.get('/pipeline', wrap(async (req, res) => {
   }));
 }));
 
+// ---------- My Time ----------
+
+// Time is logged as Deal Supports. The fields holding the activity date, the time spent and the
+// person who did it are picked from the object's fields (SF_TIME_DATE_FIELD, SF_TIME_HOURS_FIELD and
+// SF_TIME_USER_FIELD pin them); the page can switch to any of the other candidates it is sent.
+const TIME_DATE_FIELD = process.env.SF_TIME_DATE_FIELD || '';
+const TIME_HOURS_FIELD = process.env.SF_TIME_HOURS_FIELD || '';
+const TIME_USER_FIELD = process.env.SF_TIME_USER_FIELD || '';
+// Without those settings these fields are the defaults when the object has them (Kerry's org);
+// otherwise the best candidate by record count is picked.
+const TIME_USER_DEFAULT = TIME_USER_FIELD || 'Regional_SE_IDN__c';
+const TIME_HOURS_DEFAULT = TIME_HOURS_FIELD || 'Total_Time_Hours__c';
+const TIME_DATE_DEFAULT = TIME_DATE_FIELD || 'Date_of_Sales_Activity__c';
+
+// Highest score first; fields scoring 0 aren't offered.
+const pickFields = (fields, score, pinned, max = 8) => {
+  const ranked = fields.map((f) => ({ f, s: pinned && f.name.toLowerCase() === pinned.toLowerCase() ? 100 : score(f) }))
+    .filter((x) => x.s > 0).sort((a, b) => b.s - a.s).map((x) => x.f);
+  return ranked.slice(0, max);
+};
+
+// Reorder candidates by how many of my records fill them (most first, score breaking ties), dropping
+// the empty ones unless all are empty. A pinned field stays first. Counts that fail leave the order as is.
+function byCount(fields, counts, pinned) {
+  if (!counts) return fields;
+  const withCount = fields.map((f, i) => ({ f, i, n: counts[i] ?? -1 }));
+  const isPinned = (f) => pinned && f.name.toLowerCase() === pinned.toLowerCase();
+  const filled = withCount.filter((x) => x.n !== 0 || isPinned(x.f));
+  return (filled.length ? filled : withCount)
+    .sort((a, b) => isPinned(b.f) - isPinned(a.f) || b.n - a.n || a.i - b.i)
+    .map((x) => ({ ...x.f, count: x.n >= 0 ? x.n : null }));
+}
+
+// What a time field is measured in: numbers are hours unless the field says minutes; text is parsed.
+function timeUnit(f) {
+  if (!['double', 'int'].includes(f.type)) return 'text';
+  const words = `${f.label} ${f.name}`;
+  if (/minute|\bmins?\b/i.test(words)) return 'minutes';
+  if (!/hour|hrs/i.test(words) && /minute/i.test(f.inlineHelpText || '') && !/hour/i.test(f.inlineHelpText || '')) return 'minutes';
+  return 'hours';
+}
+
+async function timeMeta(req) {
+  if (req.session.timeMeta) return req.session.timeMeta;
+  const ds = await dealSupportMeta(req);
+  const d = await sf(req, 'GET', `/services/data/${API}/sobjects/${ds.object}/describe`);
+  const opp = d.fields.find((f) => f.name === ds.oppField);
+  const text = (f) => `${f.label} ${f.name}`;
+
+  const dates = pickFields(d.fields.filter((f) => f.type === 'date' || f.type === 'datetime'), (f) =>
+    f.name === 'Date_of_Sales_Activity__c' ? 10
+      : /activity/i.test(text(f)) && /date/i.test(text(f)) ? 8
+      : f.custom && f.type === 'date' ? 5
+      : f.name === 'CreatedDate' ? 2 : 0, TIME_DATE_DEFAULT);
+  // Hours: numeric or text fields named like time spent; never rates, costs or amounts.
+  const hourCands = pickFields(d.fields.filter((f) => ['double', 'int', 'picklist', 'string'].includes(f.type) &&
+    !/\brate\b|usd|\bcost|price|amount|revenue|percent|\$/i.test(text(f))), (f) => {
+    const t = text(f), num = ['double', 'int'].includes(f.type) ? 0.5 : 0;
+    if (/total/i.test(t) && /hour|hrs|time/i.test(t)) return 9 + num;
+    if (f.name === 'Meeting_Duration__c') return 8 + num;
+    if (/hour|hrs/i.test(t)) return 6 + num;
+    if (/duration|time spent|minutes|customer facing time|prep time|travel time|effort/i.test(t)) return 4 + num;
+    return 0;
+  }, TIME_HOURS_DEFAULT, 20);
+  // Mine: every user lookup, ranked by how many records have me in it.
+  const userCands = pickFields(d.fields.filter((f) => f.type === 'reference' && f.referenceTo?.includes('User') && f.name !== 'LastModifiedById'), (f) =>
+    f.custom && /assigned\s*se\b/i.test(f.label) ? 10
+      : f.custom && /\bSE\b|sales engineer|engineer|consultant|resource|assigned|performed|specialist/i.test(f.label) ? 9
+      : f.name === 'OwnerId' ? 7
+      : f.custom ? 5
+      : f.name === 'CreatedById' ? 3 : 0, TIME_USER_DEFAULT, 40);
+  if (!hourCands.length) {
+    throw new HttpError(404, `No hours or duration field found on ${d.label}. ` +
+      'Set SF_TIME_HOURS_FIELD in .env to the field that holds the time spent and restart.');
+  }
+  if (!userCands.length) throw new HttpError(404, `No user lookup found on ${d.label} to tell which records are yours.`);
+  const me = sfId(req.session.sf.user.id);
+  const total = (soql) => sf(req, 'GET', `/services/data/${API}/query?q=${encodeURIComponent(soql)}`);
+  const userCounts = await Promise.all(userCands.map((f) =>
+    total(`SELECT COUNT() FROM ${d.name} WHERE ${f.name} = '${me}'`).then((r) => r.totalSize, () => -1)));
+  const users = byCount(userCands, userCounts, TIME_USER_DEFAULT).slice(0, 8);
+  // How many of my records (by the top user field) have each hours field filled.
+  const hourCounts = await total(`SELECT ${hourCands.map((f, i) => `COUNT(${f.name}) c${i}`).join(', ')} ` +
+    `FROM ${d.name} WHERE ${users[0].name} = '${me}'`)
+    .then((r) => hourCands.map((f, i) => r.records[0]?.['c' + i] ?? -1), () => null);
+  const hours = byCount(hourCands, hourCounts, TIME_HOURS_DEFAULT).slice(0, 8);
+  const role = d.fields.find((f) => f.name === 'Role__c') || d.fields.find((f) => /^role$/i.test(f.label));
+  // "Owner ID" reads better as "Owner".
+  const info = (f) => ({ name: f.name, label: f.type === 'reference' ? f.label.replace(/\s+ID$/, '') : f.label, type: f.type, count: f.count ?? null });
+
+  const meta = {
+    object: d.name,
+    label: d.label,
+    labelPlural: d.labelPlural,
+    oppField: ds.oppField,
+    oppRel: opp?.relationshipName || null,
+    roleField: role?.name || null,
+    dateFields: dates.length ? dates.map(info) : [{ name: 'CreatedDate', label: 'Created Date', type: 'datetime' }],
+    hoursFields: hours.map((f) => ({ ...info(f), unit: timeUnit(f) })),
+    userFields: users.map(info),
+  };
+  req.session.timeMeta = meta;
+  return meta;
+}
+
+// Every Deal Support where the chosen user field is me, across all opportunities, newest first.
+// The page does the totals by week, period and opportunity.
+api.get('/my-time', wrap(async (req, res) => {
+  const userId = sfId(req.session.sf.user.id);
+  // Saved per user field, so the last copy can be shown when Salesforce can't be reached.
+  const kind = 'myTime:' + String(req.query.by || 'default').slice(0, 80);
+  res.json(await withCacheFallback(req, res, async () => {
+    const tm = await timeMeta(req);
+    const by = tm.userFields.find((f) => f.name === req.query.by) || tm.userFields[0];
+    const fields = ['Id', 'Name', ...tm.dateFields.map((f) => f.name), ...tm.hoursFields.map((f) => f.name), tm.oppField,
+      ...(tm.oppRel ? [`${tm.oppRel}.Name`, `${tm.oppRel}.AccountId`, `${tm.oppRel}.Account.Name`, `${tm.oppRel}.StageName`] : []),
+      ...(tm.roleField ? [tm.roleField] : [])].filter((f, i, all) => all.indexOf(f) === i);
+    const records = await query(req, `SELECT ${fields.join(', ')} FROM ${tm.object} ` +
+      `WHERE ${by.name} = '${userId}' ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`, 10000);
+    const out = { ...tm, by: by.name, records };
+    store.saveSetting(orgOf(req), kind, out);
+    return out;
+  }, () => {
+    const saved = store.getSetting(orgOf(req), kind);
+    return saved && { data: saved };
+  }));
+}));
+
 // Hidden records: local to this machine, never written to Salesforce. The page filters its
 // lists with these ids and can show them again with "Show hidden".
 api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
