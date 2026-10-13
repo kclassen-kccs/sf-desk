@@ -2010,6 +2010,23 @@ const editWeekDealSupport = (r) => {
 
 // Edit a Deal Support in the create form, prefilled from the record. `host` is the page's state, whose
 // `editing` holds the open form; rerender() redraws the list it sits above, reload() refreshes after saving.
+// A Deal Support's description and "Total Hours = X", for the summary shown before its form.
+// Fetched once per record; a save or removal clears it.
+const dsDetails = new Map();
+function dsSummary(id) {
+  const box = el('div', { class: 'sub', style: 'margin:4px 0 0' }, 'Loading…');
+  if (!dsDetails.has(id)) dsDetails.set(id, api(`/deal-supports/${id}`).catch((err) => { dsDetails.delete(id); throw err; }));
+  dsDetails.get(id).then((d) => {
+    const h = d.hours?.value;
+    const hours = h == null || h === '' ? null : d.hours.unit === 'minutes' ? Number(h) / 60 : d.hours.unit === 'text' ? parseDuration(h) : Number(h);
+    box.className = '';
+    box.replaceChildren(
+      d.description ? el('div', { class: 'desc', style: 'margin-top:6px' }, d.description) : null,
+      hours != null ? el('div', { style: 'margin-top:6px' }, el('b', {}, `Total Hours = ${hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}`)) : null);
+  }, () => box.replaceChildren());
+  return box;
+}
+
 async function editDealSupport(id, host, rerender, reload) {
   if (host.editing?.id === id) return host.editing.box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   const close = () => { host.editing = null; rerender(); };
@@ -2026,12 +2043,14 @@ async function editDealSupport(id, host, rerender, reload) {
     values: data.record,
     submit: async (fields) => {
       await api(`/deal-supports/${id}`, { method: 'PATCH', body: { fields } });
+      dsDetails.delete(id);
       toast(`Saved ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
       host.editing = null;
       await reload();
     },
     remove: dsMeta.canDelete ? async () => {
       await api(`/deal-supports/${id}`, { method: 'DELETE' });
+      dsDetails.delete(id);
       toast(`Removed ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
       host.editing = null;
       await reload();
@@ -2157,7 +2176,8 @@ function renderEventPanel() {
         el('button', { onclick: () => selectEvent(e.id), title: 'Close this event' }, 'Close')),
       e.supports.map((r) => el('div', {},
         el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-        dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: () => editFromEvent(r) }, 'Edit') : null)));
+        dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: () => editFromEvent(r) }, 'Edit') : null,
+        editing?.id !== r.Id ? dsSummary(r.Id) : null)));
     return panel.replaceChildren(...(editing && e.supports.length === 1 ? [editing.box] : [list, editing?.box].filter(Boolean)));
   }
   const formBox = el('div', {}, editing?.box);
@@ -2396,7 +2416,8 @@ function renderOutlookPane(e, reload) {
     const edit = () => editDealSupport(r.Id, host, show, reload);
     const summary = el('section', {}, el('h3', {}, dsMeta.label),
       el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-      dsMeta.canUpdate ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: edit }, 'Edit') : null);
+      dsMeta.canUpdate ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: edit }, 'Edit') : null,
+      dsSummary(r.Id));
     function show() { document.getElementById('app').replaceChildren(host.editing?.box || summary); }
     return show();
   }

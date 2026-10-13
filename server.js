@@ -756,7 +756,10 @@ api.post('/opportunities/:id/deal-supports', wrap(async (req, res) => {
 api.get('/deal-supports/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const meta = await dealSupportMeta(req);
-  const fields = [...dsReadFields(meta), meta.oppField, ...(meta.oppRel ? [`${meta.oppRel}.Name`, `${meta.oppRel}.Account.Name`] : [])];
+  // Total hours too (a formula, not on the form), for the summary shown before the form.
+  const hoursF = (await timeMeta(req).catch(() => null))?.hoursFields[0];
+  const fields = [...dsReadFields(meta), meta.oppField, ...(meta.oppRel ? [`${meta.oppRel}.Name`, `${meta.oppRel}.Account.Name`] : []),
+    ...(hoursF ? [hoursF.name] : [])];
   // Lookup fields are shown with the related record's name; carry on without them if one can't be read.
   const names = meta.fields.filter((f) => f.relationshipName).map((f) => `${f.relationshipName}.Name`);
   const run = (f) => query(req, `SELECT ${[...new Set(f)].join(', ')} FROM ${meta.object} WHERE Id = '${id}'`);
@@ -767,7 +770,9 @@ api.get('/deal-supports/:id', wrap(async (req, res) => {
   if (!rec) throw new HttpError(404, `${meta.label} not found.`);
   const opp = meta.oppRel && rec[meta.oppRel];
   res.json({ record: rec, opportunity: rec[meta.oppField]
-    ? { Id: rec[meta.oppField], Name: opp?.Name || rec[meta.oppField], Account: { Name: opp?.Account?.Name || '' } } : null });
+    ? { Id: rec[meta.oppField], Name: opp?.Name || rec[meta.oppField], Account: { Name: opp?.Account?.Name || '' } } : null,
+    description: meta.mirror ? rec[meta.mirror.from] ?? null : null,
+    hours: hoursF ? { value: rec[hoursF.name] ?? null, unit: hoursF.unit } : null });
 }));
 
 // Save changes to a Deal Support from the edit form: the form's fields (null clears one). Its opportunity stays:
