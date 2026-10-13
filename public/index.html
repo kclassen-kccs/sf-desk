@@ -2411,6 +2411,23 @@ async function showOutlookPane() {
   await load();
 }
 
+// Meetings with a Deal Support get an Outlook category of that name, so they stand out by color in the calendar
+// without being opened. Categories need Mailbox 1.8; the category itself is added to Outlook's list the first time.
+async function tagMeeting(name) {
+  const item = Office.context.mailbox.item;
+  if (!Office.context.requirements.isSetSupported('Mailbox', '1.8') || !item?.categories) return 'unsupported';
+  const call = (fn, arg) => new Promise((resolve) => fn(arg, (r) => resolve(r)));
+  const has = await call((a, cb) => item.categories.getAsync(cb));
+  if (has.status === 'succeeded' && (has.value || []).some((c) => c.displayName === name)) return 'tagged';
+  const master = Office.context.mailbox.masterCategories;
+  const list = await call((a, cb) => master.getAsync(cb));
+  if (list.status === 'succeeded' && !(list.value || []).some((c) => c.displayName === name)) {
+    await call((a, cb) => master.addAsync(a, cb), [{ displayName: name, color: Office.MailboxEnums.CategoryColor.Preset4 }]);
+  }
+  const r = await call((a, cb) => item.categories.addAsync(a, cb), [name]);
+  return r.status === 'succeeded' ? 'tagged' : 'failed';
+}
+
 function renderOutlookPane(e, reload) {
   const when = e.allDay ? `${localDate(e.date).toLocaleDateString()} (all day)`
     : `${evTime(e.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`;
@@ -2444,10 +2461,15 @@ function renderOutlookPane(e, reload) {
   if (st === 'covered') {
     const host = { editing: null }, r = e.supports[0];
     const edit = () => editDealSupport(r.Id, host, show, reload);
+    const note = el('div', { class: 'sub', style: 'margin:8px 0 0' });
     const summary = el('section', {},
       el('h3', {}, dsMeta.label, dsMeta.canUpdate ? el('button', { style: 'margin-left:10px', onclick: edit }, 'Edit') : null),
       el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-      dsSummary(r.Id));
+      dsSummary(r.Id), note);
+    tagMeeting(dsMeta.label).then((t) => {
+      note.textContent = t === 'tagged' ? `Marked with the "${dsMeta.label}" category in your calendar.`
+        : t === 'failed' ? `Couldn't add the "${dsMeta.label}" category to this meeting in Outlook.` : '';
+    }).catch(() => {});
     function show() { document.getElementById('app').replaceChildren(host.editing?.box || summary); }
     return show();
   }
