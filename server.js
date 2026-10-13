@@ -749,7 +749,8 @@ api.get('/deal-supports/:id', wrap(async (req, res) => {
     ? { Id: rec[meta.oppField], Name: opp?.Name || rec[meta.oppField], Account: { Name: opp?.Account?.Name || '' } } : null });
 }));
 
-// Save changes to a Deal Support from the edit form: the form's fields (null clears one) and, optionally, its opportunity.
+// Save changes to a Deal Support from the edit form: the form's fields (null clears one). Its opportunity stays:
+// to move one, remove it and create a new one.
 api.patch('/deal-supports/:id', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const meta = await dealSupportMeta(req);
@@ -761,10 +762,6 @@ api.patch('/deal-supports/:id', wrap(async (req, res) => {
     if (!f) throw new HttpError(400, `Field not editable in this app: ${k}`);
     if ((v === '' || v == null) && f.required) throw new HttpError(400, `Required: ${f.label}`);
     body[k] = v === '' || v === undefined ? null : v;
-  }
-  if (req.body?.opportunityId) {
-    if (!meta.oppUpdateable) throw new HttpError(403, "Your Salesforce user can't move this record to another opportunity.");
-    body[meta.oppField] = sfId(req.body.opportunityId);
   }
   if (Object.keys(body).length) await sf(req, 'PATCH', `/services/data/${API}/sobjects/${meta.object}/${id}`, { body });
   res.json({ ok: true });
@@ -978,8 +975,12 @@ async function calendarMeta(req) {
     f.name === 'Meeting_Duration__c' ? 10
       : /meeting|customer facing/i.test(text(f)) && /duration|time|hour|hrs/i.test(text(f)) ? 8
       : /duration/i.test(text(f)) ? 6 : 0);
-  const descField = best(form.filter((f) => f.type === 'textarea'), (f) =>
-    (/description|details?|notes?|summary|agenda|comments?|activity/i.test(text(f)) ? 10 : 1) + Math.min(f.length || 0, 131072) / 131072);
+  const textareas = form.filter((f) => f.type === 'textarea');
+  const descField = best(textareas, (f) =>
+    (/description of (the )?request|request description/i.test(f.label) ? 20
+      : /description|details?|notes?|summary|agenda|comments?|activity/i.test(text(f)) ? 10 : 1) + Math.min(f.length || 0, 131072) / 131072);
+  // Meeting Overview gets the meeting's notes too (as does the description).
+  const overviewField = best(textareas.filter((f) => f !== descField), (f) => /meeting overview|overview/i.test(text(f)) ? 10 : 0);
   // The person: the "mine" field from My Time (Assigned SE), if it is a creatable user lookup.
   const userName = tm?.userFields?.find((f) => f.name !== 'OwnerId' && f.name !== 'CreatedById')?.name;
   const userDesc = userName && desc.get(userName);
@@ -995,6 +996,7 @@ async function calendarMeta(req) {
     hoursField: hoursField && { name: hoursField.name, type: hoursField.type, picklist: hoursField.picklist,
       unit: ['double', 'int'].includes(hoursField.type) ? timeUnit(desc.get(hoursField.name) || hoursField) : 'text' },
     descField: descField && { name: descField.name, length: descField.length },
+    overviewField: overviewField && { name: overviewField.name, length: overviewField.length },
     userField: userField && { name: userField, label: userDesc.label.replace(/\s+ID$/, ''), onForm: form.some((f) => f.name === userField) },
     // Date and person fields used to find my existing Deal Supports for an event.
     matchDate: (dateField || tm?.dateFields[0])?.name || null,
