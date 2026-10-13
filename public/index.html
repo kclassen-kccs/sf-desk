@@ -1092,6 +1092,11 @@ function dealSupportForm(o, close, opts = {}) {
     }
   }
   const initial = new Map([...inputs].map(([f, n]) => [f, JSON.stringify(dsValue(f, n))]));
+  // opts.changes: values put in after loading, so they are saved as edits (e.g. a cleaned-up description).
+  for (const [name, v] of Object.entries(opts.changes || {})) {
+    const f = fields.find((x) => x.name === name), n = f && inputs.get(f);
+    if (n && !n.disabled) n.value = v;
+  }
   // A lookup on a saved record shows its record's name, with the Id it holds underneath (until it's changed).
   const refName = (f) => {
     const name = opts.edit && f.relationshipName && opts.values?.[f.relationshipName]?.Name;
@@ -2037,10 +2042,18 @@ async function editDealSupport(id, host, rerender, reload) {
   } catch (err) { return toast(err.message, 'err'); }
   // The opportunity can't be changed here: to move a Deal Support, remove it and create a new one.
   const opp = data.opportunity;
+  // A description holding a meeting invitation (Teams, Zoom...) is cleaned up in the form, and saved
+  // as such only on Save. With nothing else in it, it becomes "<Requested Activity> - <Platform Request>".
+  const changes = {}, descName = dsMeta.fields.find((f) => f.upFront)?.name || dsMeta.mirror?.from, raw = descName ? String(data.record[descName] ?? '') : '';
+  const notes = meetingNotes(raw);
+  if (raw.trim() && notes !== raw.trim()) {
+    changes[descName] = notes || descSources(descName).map((f) => dsText(f, data.record[f.name])).filter(Boolean).join(' - ');
+  }
   const box = dealSupportForm(null, close, {
     edit: true,
     title: `Edit ${dsMeta.label} ${data.record.Name || ''}`.trim(),
     values: data.record,
+    changes,
     submit: async (fields) => {
       await api(`/deal-supports/${id}`, { method: 'PATCH', body: { fields } });
       dsDetails.delete(id);
@@ -2211,13 +2224,17 @@ function renderEventPanel() {
 // The "create from event" form: pick an opportunity, then the Deal Support fields, prefilled from the event.
 // With nothing written about the meeting but the invitation, the details default to
 // "<Requested Activity> - <Platform Request>" from the form, kept up to date as those are picked.
+// The fields the default details are made from: the requested activity and the platform request.
+function descSources(descName) {
+  const find = (...tests) => tests.map((t) => dsMeta.fields.find((f) => typeof t === 'string' ? f.name === t : t.test(f.label))).find(Boolean);
+  return [find('Requested_SaaS_Activity__c', /requested.*activity/i),
+    find('Platform_Request__c', /^platform request$/i, 'IdentityNow_Platform_Modules__c', /platform/i)]
+    .filter((f) => f && f.name !== descName);
+}
 function descDefault(e) {
   const p = cal.data.prefill;
   if (!p.descField || meetingNotes(e.description)) return null;
-  const find = (...tests) => tests.map((t) => dsMeta.fields.find((f) => typeof t === 'string' ? f.name === t : t.test(f.label))).find(Boolean);
-  const from = [find('Requested_SaaS_Activity__c', /requested.*activity/i),
-    find('Platform_Request__c', /^platform request$/i, 'IdentityNow_Platform_Modules__c', /platform/i)]
-    .filter((f) => f && f.name !== p.descField.name).map((f) => f.name);
+  const from = descSources(p.descField.name).map((f) => f.name);
   return from.length ? { field: p.descField.name, from, value: (vals) => vals.filter(Boolean).join(' - ') } : null;
 }
 
