@@ -5,6 +5,11 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>SF Desk</title>
 <style>
+  .ol-pane { padding: 12px; --covered: #c9f2d6; --open: #fdd3cf; --skip: #eef0f3; }
+  .ol-pane section { padding: 12px; margin-bottom: 12px; }
+  .ol-pane dl { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 13px; }
+  .ol-pane dt { color: var(--muted); } .ol-pane dd { margin: 0; overflow-wrap: anywhere; }
+  .ol-pane .grid { grid-template-columns: minmax(0, 1fr); }
   :root {
     --bg: #f5f6f8; --panel: #ffffff; --ink: #1b1f24; --muted: #667085; --line: #e3e6eb;
     --accent: #0b5cad; --accent-soft: #e8f1fb; --ok: #067647; --err: #b42318; --dirty: #fff6dd;
@@ -469,7 +474,7 @@ function showConnect(message) {
   app.replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
     el('h2', {}, 'Connect to Salesforce'),
     el('p', {}, message || 'Sign in with your Salesforce account. The app only sees what your user can see, and only saves when you click Save.'),
-    el('a', { class: 'btn primary', href: '/login' }, 'Connect'),
+    el('a', { class: 'btn primary', href: IN_OUTLOOK ? '/login?next=/outlook/pane' : '/login' }, 'Connect'),
   )));
 }
 
@@ -2160,7 +2165,8 @@ function descDefault(e) {
   return from.length ? { field: p.descField.name, from, value: (vals) => vals.filter(Boolean).join(' - ') } : null;
 }
 
-function createFromEvent(e, close) {
+// onCreated(rec, opp) runs after the save; by default the Time Entry calendar reloads.
+function createFromEvent(e, close, onCreated = () => loadCalendar()) {
   // The event's opportunity (its own, or borrowed from the Salesforce copy of a Mac event) is preselected.
   const oppId = e.oppId || (e.what?.type === 'Opportunity' || String(e.what?.id || '').startsWith('006') ? e.what.id : null);
   let picked = oppId ? { Id: oppId, Name: e.what?.id === oppId ? e.what.name || oppId : oppId } : null;
@@ -2181,7 +2187,7 @@ function createFromEvent(e, close) {
       if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
       const rec = await api(`/calendar/events/${e.id}/deal-support`, { method: 'POST', body: { opportunityId: picked.Id, fields } });
       toast(`Created ${dsMeta.label}${rec?.Name ? ` "${rec.Name}"` : ''} on ${picked.Name}`, 'ok');
-      await loadCalendar();
+      await onCreated(rec, picked);
     },
   });
   // The opportunity picker goes at the top of the form.
@@ -2267,7 +2273,109 @@ document.getElementById('logout').addEventListener('click', async () => {
   showConnect('Disconnected.');
 });
 
+// ---------- Outlook add-in ----------
+// In Outlook's task pane (/outlook/pane) the page shows just the meeting that is open in Outlook and the
+// Time Entry tab's "create from event" form for it, prefilled the same way.
+const IN_OUTLOOK = location.pathname === '/outlook/pane';
+
+// Office.js item properties are plain values when reading a meeting and { getAsync } when editing one.
+function officeGet(prop, ...args) {
+  if (prop == null || typeof prop.getAsync !== 'function') return Promise.resolve(prop);
+  return new Promise((resolve) => prop.getAsync(...args, (r) => resolve(r.status === 'succeeded' ? r.value : null)));
+}
+
+// The open meeting, in the shape POST /api/outlook/event takes.
+async function outlookMeeting() {
+  const item = Office.context.mailbox.item;
+  if (!item || item.itemType !== 'appointment') return null;
+  const [subject, start, end, location, body, required, optional, organizer] = await Promise.all([
+    officeGet(item.subject), officeGet(item.start), officeGet(item.end), officeGet(item.location),
+    officeGet(item.body, Office.CoercionType.Text), officeGet(item.requiredAttendees), officeGet(item.optionalAttendees),
+    officeGet(item.organizer)]);
+  const s = new Date(start), e = new Date(end);
+  // Office.js doesn't say whether a meeting is all-day when reading it: midnight to midnight is.
+  const allDay = s.getHours() === 0 && s.getMinutes() === 0 && e.getHours() === 0 && e.getMinutes() === 0 && e - s >= 86400_000;
+  const people = [...(required || []), ...(optional || []), organizer].filter(Boolean)
+    .map((a) => ({ name: a.displayName || '', email: a.emailAddress || '' }));
+  return { itemId: item.itemId || '', subject: subject || '', start: s.toISOString(), end: e.toISOString(), allDay,
+    date: localDay(s), tz: s.getTimezoneOffset(), location: location || '', body: body || '', attendees: people };
+}
+
+async function showOutlookPane() {
+  document.getElementById('hdr').hidden = true;
+  const app = document.getElementById('app');
+  app.className = 'ol-pane';
+  app.replaceChildren(el('div', { class: 'sub' }, 'Reading the meeting…'));
+  if (typeof Office === 'undefined') return app.replaceChildren(el('div', { class: 'empty' }, 'Open this page from the SF Desk add-in in Outlook.'));
+  await Office.onReady();
+  const load = async () => {
+    try {
+      const m = await outlookMeeting();
+      if (!m) return app.replaceChildren(el('div', { class: 'empty' }, 'Open a meeting in your Outlook calendar, then click Create Deal Support.'));
+      dsMeta ||= await api('/deal-supports/meta');
+      const r = await api('/outlook/event', { method: 'POST', body: m });
+      cal.data = { prefill: r.prefill, events: [r.event] };
+      renderOutlookPane(r.event, load);
+    } catch (err) {
+      if (err.status !== 401) app.replaceChildren(el('div', { class: 'empty' }, err.message));
+    }
+  };
+  // The pane can stay open while another meeting is selected.
+  Office.context.mailbox.addHandlerAsync?.(Office.EventType.ItemChanged, load);
+  await load();
+}
+
+function renderOutlookPane(e, reload) {
+  const when = e.allDay ? `${localDate(e.date).toLocaleDateString()} (all day)`
+    : `${evTime(e.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`;
+  const st = e.supports.length ? 'covered' : 'open';
+  const formBox = el('div');
+  const open = () => formBox.replaceChildren(createFromEvent(e, () => formBox.replaceChildren(again), async (rec, opp) => {
+    formBox.replaceChildren(el('section', {}, el('h3', {}, `Created ${dsMeta.label} ${rec?.Name || ''}`.trim()),
+      el('p', { style: 'margin:0 0 10px' }, `On ${opp.Name}.`),
+      el('a', { href: `${me.instanceUrl}/${rec.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗')));
+    setTimeout(reload, 1500);
+  }));
+  const again = el('button', { class: 'primary', onclick: open }, st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
+  document.getElementById('app').replaceChildren(
+    el('section', {},
+      el('h3', {}, e.title || e.subject),
+      el('div', { style: 'margin:-6px 0 10px' }, el('span', { class: 'status-pill ' + st }, STATUS_TEXT[st])),
+      el('dl', {},
+        el('dt', {}, 'When'), el('dd', {}, when),
+        e.who ? [el('dt', {}, 'With'), el('dd', {}, e.who)] : null,
+        e.what ? [el('dt', {}, 'Related to'), el('dd', {}, el('a', { href: `${me.instanceUrl}/${e.what.id}`, target: '_blank', rel: 'noopener' }, e.what.name || e.what.id),
+          e.what.type ? ` (${e.what.type})` : '')] : null,
+        e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
+          el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account, or with the same name' }, 'matched') : null)))] : null,
+      ),
+    ),
+    formBox,
+  );
+  if (!dsMeta.canCreate) return formBox.replaceChildren(el('div', { class: 'empty' }, `Your Salesforce user can't create ${dsMeta.labelPlural}.`));
+  // A meeting with nothing yet opens straight into the form.
+  if (st === 'covered') formBox.replaceChildren(again); else open();
+}
+
 (async function init() {
+  if (IN_OUTLOOK) {
+    try {
+      me = await api('/me');
+      // With the Salesforce CLI login, connecting needs no clicks: do it once on opening.
+      const tried = (v) => { try { return v === undefined ? sessionStorage.getItem('sfdeskTried') : v ? sessionStorage.setItem('sfdeskTried', '1') : sessionStorage.removeItem('sfdeskTried'); } catch { return '1'; } };
+      if (!me.connected && me.cli && !tried()) {
+        tried(true);
+        return location.assign('/login?next=/outlook/pane');
+      }
+      if (!me.connected) return showConnect();
+      tried(false);
+      await showOutlookPane();
+    } catch (e) {
+      if (e.status !== 401) toast(e.message, 'err');
+    }
+    return;
+  }
   try {
     me = await api('/me');
     if (!me.connected) return showConnect();
