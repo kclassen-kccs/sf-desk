@@ -102,11 +102,14 @@ app.get('/outlook/manifest.xml', (req, res) => {
 
 // ---------- Salesforce CLI login ----------
 
+// The sf CLI reads SF_API_VERSION too, and rejects our "v62.0" form, so it doesn't get ours.
+const { SF_API_VERSION: _apiVersion, ...CLI_ENV } = process.env;
+
 // Run an sf CLI command with --json and return its parsed output (errors become HttpErrors).
 function runCli(args) {
   const target = SF_TARGET_ORG ? ['--target-org', SF_TARGET_ORG] : [];
   return new Promise((resolve, reject) => {
-    execFile(SF_CLI, [...args, '--json', ...target], { timeout: 60_000, maxBuffer: 1024 * 1024 }, (err, stdout) => {
+    execFile(SF_CLI, [...args, '--json', ...target], { timeout: 60_000, maxBuffer: 1024 * 1024, env: CLI_ENV }, (err, stdout) => {
       if (err?.code === 'ENOENT') {
         return reject(new HttpError(400, 'Salesforce CLI (sf) not found. Install it, or set SF_CLI_PATH in .env. See README.md.'));
       }

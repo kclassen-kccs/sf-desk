@@ -49,13 +49,14 @@ again. macOS ties the permission to each unsigned build.
 
 ### Building the app
 
-The app has to be compiled on a Mac with the Xcode Command Line Tools (`xcode-select --install`), but its
-contents come from the same download as the Terminal installer below, which can be built anywhere npm and
-nodejs.org are reachable. So:
+The app has to be compiled on a Mac with the Xcode Command Line Tools (`xcode-select --install`). Its
+`node_modules` and Node.js come from the same download as the Terminal installer below, which can be
+built anywhere npm and nodejs.org are reachable. So:
 
-1. Anywhere (e.g. in the cloud): `scripts/build-mac-package.sh` writes `dist/SF-Desk-mac.zip`.
-2. On a Mac, in a checkout of the same commit: `scripts/build-mac-app.sh --from path/to/SF-Desk-mac.zip`.
-   It compiles the app and the calendar reader for Apple Silicon and Intel, puts the server, its
+1. Anywhere (e.g. in the cloud): `scripts/build-mac-package.sh` writes `dist/SF-Desk-mac.zip`. Only
+   redo this when `package-lock.json` changes.
+2. On a Mac: `scripts/build-mac-app.sh --from path/to/SF-Desk-mac.zip`. It takes SF Desk itself from the
+   checkout's current commit, compiles the app and the calendar reader for Apple Silicon and Intel, puts the server, its
    `node_modules` and Node.js inside, signs it ad hoc, and writes `dist/SF Desk.app` and
    `dist/SF-Desk-app.zip`, the file to hand out.
 
