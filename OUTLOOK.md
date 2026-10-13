@@ -10,9 +10,11 @@ meeting with the same form as the **Time Entry** tab, prefilled from that meetin
 - you as the Assigned SE, and Role set to Lead SE
 
 The panel also shows the Deal Supports that already cover the meeting (made from it, or yours on the same day
-for the same opportunity, account or name). Everything runs through SF Desk on your Mac, so SF Desk must be
-running for the button to work. It only reads the meeting you click it on, and nothing is saved until you
-click **Create Deal Support**.
+for the same opportunity, account or name). A meeting with a Deal Support gets a green **Deal Support** category
+in Outlook, so it stands out in your calendar without opening it (the category is added to your Outlook
+category list the first time). Everything runs through SF Desk on your Mac, so SF Desk must be running for the
+button to work. It only reads the meeting you click it on, and nothing is saved to Salesforce until you click
+**Create Deal Support**; in Outlook it only ever adds that category.
 
 The add-in signs in with your Salesforce CLI login (Option A in the README); with that, it connects by itself
 the first time you open it. It doesn't work with the OAuth app login (Option B).
@@ -49,6 +51,10 @@ The certificate lasts 825 days (the most macOS allows); `sh scripts/outlook-cert
 
 Add-ins are installed on your mailbox, so it shows up in Outlook for Mac after a minute or a restart of Outlook.
 
+**Updating:** when a new version of SF Desk changes the manifest (version 1.1 added the category, which needs
+permission to change your mailbox), download `sf-desk-outlook.xml` again and add it the same way; Outlook asks
+you to accept the new permission.
+
 **If there is no "Custom Addins" section, or adding the file fails:** your company's Microsoft 365 admin
 policy may block custom add-ins (the Exchange "My Custom Apps" user role). That can only be changed by IT,
 for example by deploying the manifest to you from the Microsoft 365 admin center. Until then, the Time Entry
@@ -58,7 +64,9 @@ tab in SF Desk does the same thing.
 
 Open a meeting in your Outlook calendar (double-click it, or select it to show it in the reading pane) and
 click **Create Deal Support** in its toolbar (it may be under **•••** or **Apps**). The panel shows the
-meeting, then the form. Check the opportunity and fields and click **Create Deal Support**.
+meeting, then the form. Check the opportunity and fields and click **Create Deal Support**. The meeting then
+gets the **Deal Support** category. Meetings that already had a Deal Support (for example, made in Time Entry)
+get it the next time you open the panel on them.
 
 If the panel says it can't connect, check that SF Desk is running and that you are signed in to the
 Salesforce CLI (`sf org display`); then click **Connect** in the panel.
