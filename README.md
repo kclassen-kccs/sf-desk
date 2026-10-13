@@ -18,7 +18,7 @@ your Salesforce user is already allowed to, and it only writes when you click **
 - **Export to Excel** on the Pipeline deal list and the My Time activity list downloads the rows shown (after
   filters, hidden records and any clicked bar, tile or opportunity) as an .xlsx with typed dates, amounts and
   hours, a total row and a link to each record
-- **My Calendar** shows your calendar a week at a time. On a Mac it reads the calendars from your Internet
+- **Time Entry** shows your calendar a week at a time. On a Mac it reads the calendars from your Internet
   Accounts (System Settings > Internet Accounts), starting with the Exchange account's calendar if there is
   one; pick another calendar, or **Salesforce events** (the Event records you own), from the list at the top.
   The first time, macOS asks to let the app you run SF Desk from (e.g. Terminal) access your calendars; if you

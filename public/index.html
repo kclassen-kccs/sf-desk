@@ -216,7 +216,7 @@
   <nav id="nav" hidden>
     <button id="navDash" onclick="showDashboard()">Dashboard</button>
     <button id="navTime" onclick="showTime()">My Time</button>
-    <button id="navCal" onclick="showCalendar()">My Calendar</button>
+    <button id="navCal" onclick="showCalendar()">Time Entry</button>
     <button id="navAccts" onclick="showMain()">Accounts</button>
   </nav>
   <span id="who"></span>
@@ -1621,7 +1621,7 @@ function showCalendar() {
   document.getElementById('app').replaceChildren(el('div', { class: 'cal', id: 'cal' },
     el('div', { class: 'cal-main' },
       el('div', { class: 'dash-head' },
-        el('h2', {}, 'My Calendar'),
+        el('h2', {}, 'Time Entry'),
         el('span', { class: 'fynav' },
           el('button', { onclick: () => moveWeek(-7), title: 'Previous week', 'aria-label': 'Previous week' }, '‹'),
           el('span', { id: 'calWeek' }),
