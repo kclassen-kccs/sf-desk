@@ -5,7 +5,7 @@ time as Deal Supports. It runs on your own computer, as **SF Desk.app** on a Mac
 you open in the browser. It uses the Salesforce REST API with your own login, so it only sees and changes
 what your Salesforce user is already allowed to, and it only writes when you click **Save** or **Add**.
 
-**Setting it up on a SailPoint Mac?** Use the **SF Desk app**: unzip it, drag it to Applications and open it.
+**Setting it up on a SailPoint Mac?** Use the **SF Desk app**: open `SF-Desk.dmg`, drag SF Desk to Applications and open it.
 Everything it needs is inside, and it walks you through the Salesforce sign-in
 ([INSTALL.md](INSTALL.md#the-sf-desk-app-recommended)). INSTALL.md also covers running SF Desk from a Git
 checkout (Node, the Salesforce CLI login, getting dependencies past the npm block), the Exchange calendar,

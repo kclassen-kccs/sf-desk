@@ -1,7 +1,7 @@
 SF Desk for Mac
 ===============
 
-Easier: ask Kerry Classen for SF-Desk-app.zip instead. It's the SF Desk app, with everything inside: drag it
+Easier: ask Kerry Classen for SF-Desk.dmg instead. It's the SF Desk app, with everything inside: drag it
 to Applications and open it, no Terminal needed. This download is the Terminal installer.
 
 Before you start

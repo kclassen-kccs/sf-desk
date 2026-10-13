@@ -11,7 +11,8 @@
 #   anywhere npm and nodejs.org are reachable; it only needs rebuilding when package-lock.json changes.
 # Without --from it uses this checkout's node_modules, with --node (default: the node on PATH). That has
 #   to be a standalone build like nodejs.org's: Homebrew's needs libraries that aren't in the app.
-# --out DIR puts "SF Desk.app" and SF-Desk-app.zip (the app to hand out) in DIR (default: dist/).
+# --out DIR puts "SF Desk.app", SF-Desk-app.zip and SF-Desk.dmg (the disk image to hand out, with the docs)
+#   in DIR (default: dist/).
 
 set -euo pipefail
 
@@ -127,4 +128,19 @@ if [ "$(uname -m)" = "arm64" ]; then
     "$C/Resources/app/node_modules/better-sqlite3" || die "The bundled Node.js couldn't load better-sqlite3."
 fi
 ditto -c -k --sequesterRsrc --keepParent "$APP" "$OUT/SF-Desk-app.zip"
-echo "Built $APP and $OUT/SF-Desk-app.zip ($(du -h "$OUT/SF-Desk-app.zip" | cut -f1)): $BUILD_INFO"
+
+# 6. The disk image to hand out: the app, a shortcut to Applications to drag it onto, and the docs as pages.
+DMG="$TMP/dmg"
+mkdir -p "$DMG"
+ditto "$APP" "$DMG/SF Desk.app"
+ln -s /Applications "$DMG/Applications"
+printf '{"INSTALL.md":"Read Me First.html","README.md":"About SF Desk.html","OUTLOOK.md":"Outlook Add-in.html"}' > "$TMP/links.json"
+"$NODE" "$ROOT/scripts/md-to-html.mjs" "$PAYLOAD/INSTALL.md" "$DMG/Read Me First.html" "Installing SF Desk" "$TMP/links.json"
+"$NODE" "$ROOT/scripts/md-to-html.mjs" "$PAYLOAD/README.md" "$DMG/About SF Desk.html" "About SF Desk" "$TMP/links.json"
+"$NODE" "$ROOT/scripts/md-to-html.mjs" "$PAYLOAD/OUTLOOK.md" "$DMG/Outlook Add-in.html" "SF Desk in Outlook" "$TMP/links.json"
+cp "$C/Resources/AppIcon.icns" "$DMG/.VolumeIcon.icns"
+SetFile -a C "$DMG" 2>/dev/null || true # use that icon for the mounted disk, where SetFile is installed
+rm -f "$OUT/SF-Desk.dmg"
+hdiutil create -quiet -volname "SF Desk" -srcfolder "$DMG" -fs HFS+ -format UDZO -ov "$OUT/SF-Desk.dmg"
+
+echo "Built $APP, $OUT/SF-Desk-app.zip and $OUT/SF-Desk.dmg ($(du -h "$OUT/SF-Desk.dmg" | cut -f1)): $BUILD_INFO"
