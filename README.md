@@ -41,6 +41,8 @@ troubleshooting.
   Outreach, on the account and on the opportunity) are shown once. The open opportunity list is kept in the
   local database and refreshed from Salesforce every 4 hours. Under the calendar is the list of your Deal
   Supports dated that week; the pencil on a row opens it in the same form to edit (only changed fields are saved)
+- **Outlook add-in** (optional): a **Create Deal Support** button on Outlook meetings opens the same prefilled
+  form beside the meeting. See [OUTLOOK.md](OUTLOOK.md) to set it up
 - Works from phone width up to wide desktops: on phones the tabs fold into a ☰ menu, Accounts shows the list
   or the account (with a back button), Time Entry lists the week day by day, and list tables become cards; on wide
   screens (1100px and up) Time Entry keeps a panel beside the calendar for entering time: the selected event and its
@@ -160,3 +162,5 @@ to the field's API name.
   Delete that file to clear the local copy; it is rebuilt as you browse. Edits always go straight to
   Salesforce; nothing is queued locally.
 - **Disconnect** revokes the token with Salesforce.
+- For the Outlook add-in, SF Desk also listens on `https://localhost:3443` (still `localhost` only) once
+  `certs/` holds the certificate from `scripts/outlook-cert.sh`. Its keys stay in `certs/`, which git ignores.
