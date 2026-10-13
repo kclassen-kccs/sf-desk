@@ -6,7 +6,8 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "outlook-cert": "sh scripts/outlook-cert.sh"
   },
   "engines": {
     "node": ">=22"
