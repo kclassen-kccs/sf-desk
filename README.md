@@ -12,6 +12,8 @@ your Salesforce user is already allowed to, and it only writes when you click **
 - Creates new opportunities on an account
 - **Open** on an opportunity focuses on it: edit its fields, see its Deal Support records (click one for all
   its fields), and create new ones with a form built from your org's Deal Support fields
+- Hide accounts and opportunities you don't want to see: tick them and click **Hide**. Tick **Show hidden**
+  to see them again and **Unhide** them. Hiding is stored only in the local database, never in Salesforce
 - Picklists (Type, Industry, Stage) come from your org; fields you can't edit are greyed out
 - If someone else changed a record after you loaded it, the save is refused rather than overwriting their work
 - Keeps a local SQLite copy of every account and opportunity you load, so if Salesforce can't be reached
