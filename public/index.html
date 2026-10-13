@@ -2125,8 +2125,9 @@ function eventPrefill(e) {
     } else v[p.hoursField.name] = String(hours);
   }
   const desc = meetingNotes(e.description);
+  // The details start with the meeting's subject, then what was written about it.
   // (The server copies the description into Meeting Overview.)
-  if (p.descField && desc) v[p.descField.name] = desc.slice(0, p.descField.length || 32000);
+  if (p.descField) v[p.descField.name] = [meetingSubject(e), desc].filter(Boolean).join('\n').slice(0, p.descField.length || 32000);
   if (p.userField?.onForm) v[p.userField.name] = me.user.id;
   return v;
 }
@@ -2235,8 +2236,11 @@ function descDefault(e) {
   const p = cal.data.prefill;
   if (!p.descField || meetingNotes(e.description)) return null;
   const from = descSources(p.descField.name).map((f) => f.name);
-  return from.length ? { field: p.descField.name, from, value: (vals) => vals.filter(Boolean).join(' - ') } : null;
+  const subject = meetingSubject(e);
+  return from.length ? { field: p.descField.name, from, value: (vals) => [subject, vals.filter(Boolean).join(' - ')].filter(Boolean).join('\n') } : null;
 }
+// An event's subject without an Outreach "[Backstory | ...]" prefix.
+const meetingSubject = (e) => String(e.title || e.subject || '').replace(/^\s*\[backstory\b[^\]]*\]\s*/i, '').trim();
 
 // onCreated(rec, opp) runs after the save; by default the Time Entry calendar reloads.
 function createFromEvent(e, close, onCreated = () => loadCalendar()) {
