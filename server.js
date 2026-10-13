@@ -18,6 +18,7 @@ import { openDb } from './db.js';
 import { isMac, macCalendar } from './macCalendar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
 
 const PORT = Number(process.env.PORT || 3000);
 // The Outlook add-in needs HTTPS. When the certificate made by scripts/outlook-cert.sh is there, SF Desk also
@@ -406,7 +407,7 @@ api.use((req, res, next) => {
 
 api.get('/me', (req, res) => {
   const t = req.session.sf;
-  res.json(t ? { connected: true, user: t.user, instanceUrl: t.instance_url } : { connected: false, cli: USE_CLI });
+  res.json(t ? { connected: true, user: t.user, instanceUrl: t.instance_url, version: VERSION } : { connected: false, cli: USE_CLI, version: VERSION });
 });
 
 api.post('/logout', wrap(async (req, res) => {
@@ -642,6 +643,7 @@ async function dealSupportMeta(req) {
     roleDefault: role ? { field: role.name, value: leadSe || null, options: role.picklist } : null,
     canCreate: d.createable && opp.createable,
     canUpdate: !!d.updateable,
+    canDelete: !!d.deletable,
     oppUpdateable: !!opp.updateable,
     oppRel: opp.relationshipName || null,
     fields,
@@ -765,6 +767,16 @@ api.patch('/deal-supports/:id', wrap(async (req, res) => {
     body[meta.oppField] = sfId(req.body.opportunityId);
   }
   if (Object.keys(body).length) await sf(req, 'PATCH', `/services/data/${API}/sobjects/${meta.object}/${id}`, { body });
+  res.json({ ok: true });
+}));
+
+// Delete a Deal Support in Salesforce, and forget any calendar event it was created from.
+api.delete('/deal-supports/:id', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const meta = await dealSupportMeta(req);
+  if (!meta.canDelete) throw new HttpError(403, `Your Salesforce user can't delete ${meta.labelPlural}.`);
+  await sf(req, 'DELETE', `/services/data/${API}/sobjects/${meta.object}/${id}`);
+  store.unlinkDealSupport(orgOf(req), id);
   res.json({ ok: true });
 }));
 

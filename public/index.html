@@ -10,7 +10,7 @@
   .ol-pane dl { display: grid; grid-template-columns: 70px minmax(0, 1fr); gap: 4px 10px; margin: 0; font-size: 13px; }
   .ol-pane dt { color: var(--muted); } .ol-pane dd { margin: 0; overflow-wrap: anywhere; }
   .ol-pane .grid { grid-template-columns: minmax(0, 1fr); }
-  :root {
+  :root { --chrome: 74px; /* header (50px) + footer (24px) */
     --bg: #f5f6f8; --panel: #ffffff; --ink: #1b1f24; --muted: #667085; --line: #e3e6eb;
     --accent: #0b5cad; --accent-soft: #e8f1fb; --ok: #067647; --err: #b42318; --dirty: #fff6dd;
   }
@@ -24,11 +24,13 @@
   button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
   button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:disabled { opacity: .45; cursor: default; }
+  button.danger { color: #b42318; border-color: #f0b4ae; }
+  button.danger:hover:not(:disabled) { background: #b42318; border-color: #b42318; color: #fff; }
   input, select, textarea { font: inherit; width: 100%; padding: 6px 8px; border: 1px solid var(--line); border-radius: 6px; background: #fff; color: var(--ink); }
   input:disabled, select:disabled, textarea:disabled { background: var(--bg); color: var(--muted); }
   .dirty { background: var(--dirty); border-color: #e6b94a; }
 
-  main { display: grid; grid-template-columns: clamp(280px, 20vw, 380px) minmax(0, 1fr); height: calc(100vh - 50px); height: calc(100dvh - 50px); }
+  main { display: grid; grid-template-columns: clamp(280px, 20vw, 380px) minmax(0, 1fr); height: calc(100vh - var(--chrome)); height: calc(100dvh - var(--chrome)); }
   #list { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
   #list .controls { padding: 10px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
   #list .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
@@ -89,11 +91,13 @@
   details.optional summary { cursor: pointer; color: var(--accent); margin: 12px 0 8px; }
   .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
 
-  .center { display: grid; place-items: center; height: calc(100vh - 50px); }
+  .center { display: grid; place-items: center; height: calc(100vh - var(--chrome)); }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px; max-width: 420px; text-align: center; }
   .card p { color: var(--muted); }
 
-  #toast { position: fixed; right: 16px; bottom: 16px; max-width: min(420px, calc(100vw - 32px)); z-index: 30; padding: 10px 14px; border-radius: 8px; background: #1b1f24; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; }
+  body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; } #app { flex: 1 0 auto; min-width: 0; }
+  footer#ver { height: 24px; box-sizing: border-box; display: flex; align-items: center; justify-content: center; font-size: 11px; color: var(--muted); background: var(--panel); border-top: 1px solid var(--line); }
+  #toast { position: fixed; right: 16px; bottom: 32px; max-width: min(420px, calc(100vw - 32px)); z-index: 30; padding: 10px 14px; border-radius: 8px; background: #1b1f24; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; }
   #toast.ok { background: var(--ok); } #toast.err { background: var(--err); }
 
   /* ---------- dashboard ---------- */
@@ -103,7 +107,7 @@
   header nav .hdr-right button { border-color: var(--line); background: var(--panel); color: var(--ink); }
   header nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .dash { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #a3a29c; --grid: #eceef1;
-    max-width: 1720px; margin: 0 auto; padding: 18px clamp(12px, 2vw, 32px) 48px; height: calc(100vh - 50px); height: calc(100dvh - 50px); overflow: auto; }
+    max-width: 1720px; margin: 0 auto; padding: 18px clamp(12px, 2vw, 32px) 48px; height: calc(100vh - var(--chrome)); height: calc(100dvh - var(--chrome)); overflow: auto; }
   .dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 2px; }
   .dash-head h2 { margin: 0; font-size: 20px; }
   .dash-head label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
@@ -158,9 +162,9 @@
   .pastdue { color: var(--err); }
   /* ---------- my calendar ---------- */
   .cal { --covered: #c9f2d6; --covered-line: #12924a; --open: #fdd3cf; --open-line: #d92d20; --skip: #eef0f3; --skip-line: #98a2b3; --hour: 48px;
-    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px clamp(12px, 2vw, 32px) 40px; height: calc(100vh - 50px); height: calc(100dvh - 50px); overflow: auto; }
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px clamp(12px, 2vw, 32px) 40px; height: calc(100vh - var(--chrome)); height: calc(100dvh - var(--chrome)); overflow: auto; }
   .cal.with-panel { grid-template-columns: minmax(0, 1fr) clamp(380px, 28vw, 540px); }
-  .cal-panel { position: sticky; top: 0; align-self: start; max-height: calc(100vh - 50px - 36px); max-height: calc(100dvh - 50px - 36px); overflow: auto; }
+  .cal-panel { position: sticky; top: 0; align-self: start; max-height: calc(100vh - var(--chrome) - 36px); max-height: calc(100dvh - var(--chrome) - 36px); overflow: auto; }
   .cal.with-panel #calWeekDs .deals td { white-space: normal; } .cal.with-panel #calWeekDs .deals td.wrap { min-width: 0; }
   .cal.with-panel #calWeekDs .deals td:nth-child(3), .cal.with-panel #calWeekDs .deals td.n { white-space: nowrap; }
   .cal-empty { border-style: dashed; text-align: center; padding: 28px 20px; }
@@ -315,6 +319,7 @@
   </nav>
 </header>
 <div id="app"></div>
+<footer id="ver">SF Desk</footer>
 <div id="toast" role="status"></div>
 <div id="tip" role="tooltip"></div>
 
@@ -1113,6 +1118,13 @@ function dealSupportForm(o, close, opts = {}) {
   for (const f of time) inputs.get(f).addEventListener('input', showTotal);
   showTotal();
   const create = el('button', { class: 'primary' }, opts.edit ? 'Save changes' : `Create ${dsMeta.label}`);
+  // opts.remove deletes the record, after asking.
+  const remove = el('button', { class: 'danger', style: 'margin-right:auto' }, 'Remove');
+  remove.addEventListener('click', async () => {
+    if (!confirm(`Remove this ${dsMeta.label} from Salesforce? This can't be undone here.`)) return;
+    remove.disabled = create.disabled = true;
+    try { await opts.remove(); } catch (e) { toast(e.message, 'err'); remove.disabled = create.disabled = false; }
+  });
   const box = el('section', {},
     el('h3', {}, opts.title || `New ${dsMeta.label} for ${o.Name}`),
     el('div', { class: 'grid' }, required.map(cell)),
@@ -1120,7 +1132,7 @@ function dealSupportForm(o, close, opts = {}) {
       time.length > 1 ? el('label', {}, el('span', {}, 'Total time'), total) : null) : null,
     optional.length ? el('details', { class: 'optional' },
       el('summary', {}, `More fields (${optional.length})`), el('div', { class: 'grid' }, optional.map(cell))) : null,
-    el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
+    el('div', { class: 'form-actions' }, opts.remove ? remove : null, el('button', { onclick: close }, 'Cancel'), create),
   );
   create.addEventListener('click', async () => {
     const body = {}, now = new Map();
@@ -2019,6 +2031,12 @@ async function editDealSupport(id, host, rerender, reload) {
       host.editing = null;
       await reload();
     },
+    remove: dsMeta.canDelete ? async () => {
+      await api(`/deal-supports/${id}`, { method: 'DELETE' });
+      toast(`Removed ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
+      host.editing = null;
+      await reload();
+    } : null,
   });
   box.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
     picker ? [el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), picker.input)),
@@ -2038,10 +2056,18 @@ const dsNameCell = (name, props = {}) => el('td', { ...props, title: name || nul
 const editPencil = (name, onclick) => el('td', { class: 'edit-cell' }, el('button', { class: 'icon-btn', title: `Edit ${name || dsMeta.label}`,
   'aria-label': `Edit ${name || dsMeta.label}`, onclick: (ev) => { ev.stopPropagation(); onclick(); } }, '✎'));
 
+// The Deal Support being edited from the selected event, shown in the event's panel.
+const evEdit = { editing: null };
+const editFromEvent = (r) => editDealSupport(r.Id, evEdit, renderEventPanel, loadCalendar);
+
 function selectEvent(id) {
   cal.sel = cal.sel === id ? null : id;
   if (cal.sel && CAL_WIDE.matches) cal.editing = null;
+  evEdit.editing = null;
   renderCalendar();
+  // A green event opens its Deal Support for editing.
+  const e = cal.sel && cal.data?.events.find((x) => x.id === cal.sel);
+  if (e?.supports.length && dsMeta.canUpdate) editFromEvent(e.supports[0]);
   // Below 1000px the event panel sits above the calendar: bring it into view.
   if (cal.sel && window.matchMedia('(max-width: 1000px)').matches) document.getElementById('calPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
 }
@@ -2126,14 +2152,16 @@ function renderEventPanel() {
       renderCalendar();
     } catch (err) { toast(err.message, 'err'); }
   } }, e.skipped ? 'Needs a Deal Support after all' : 'No Deal Support needed');
-  const formBox = el('div');
-  const create = el('button', { class: 'primary', onclick: () => { create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
+  // The Deal Support being edited, if it is one of this event's.
+  const editing = e.supports.some((r) => r.Id === evEdit.editing?.id) ? evEdit.editing : null;
+  const formBox = el('div', {}, editing?.box);
+  const create = el('button', { class: 'primary', onclick: () => { evEdit.editing = null; create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
     st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
   if (!dsMeta.canCreate) create.hidden = true;
 
   panel.replaceChildren(
     el('section', {},
-      el('h3', {}, e.title || e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), 'aria-label': 'Close' }, '✕')),
+      el('h3', {}, e.title || e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), title: 'Close this event' }, 'Close')),
       el('div', { style: 'margin:-6px 0 10px' }, el('span', { class: 'status-pill ' + st }, STATUS_TEXT[st])),
       el('dl', {},
         el('dt', {}, 'When'), el('dd', {}, when),
@@ -2143,7 +2171,8 @@ function renderEventPanel() {
         e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
         e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
           el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null)))] : null,
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null,
+          dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: () => editFromEvent(r) }, 'Edit') : null)))] : null,
       ),
       e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
       el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, e.sfEvent === false ? null : sfLink(e.id, 'Open event in Salesforce ↗')),
@@ -2360,6 +2389,7 @@ function renderOutlookPane(e, reload) {
 
 (async function init() {
   if (IN_OUTLOOK) {
+    document.getElementById('ver').hidden = true;
     try {
       me = await api('/me');
       // With the Salesforce CLI login, connecting needs no clicks: do it once on opening.
@@ -2378,6 +2408,7 @@ function renderOutlookPane(e, reload) {
   }
   try {
     me = await api('/me');
+    if (me.version) document.getElementById('ver').textContent = `SF Desk v${me.version}`;
     if (!me.connected) return showConnect();
     document.getElementById('who').textContent = me.user?.username || me.user?.name || '';
     document.getElementById('logout').hidden = false;
