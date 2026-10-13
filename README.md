@@ -10,7 +10,7 @@ troubleshooting.
 
 ## What it does
 
-- Opens on a **Dashboard** of your open pipeline (the opportunities where you are Lead SE, minus anything you
+- Opens on the **Deals** tab, a dashboard of your open pipeline (the opportunities where you are Lead SE, minus anything you
   hid): total and weighted pipeline, totals by stage, and a forecast by close date per fiscal month, quarter or
   year, stacked by forecast category. Click a bar to list its deals, and a deal to open it. The fiscal year
   starts Feb 1 and is named for the calendar year it ends in (FY27 = Feb 2026 – Jan 2027)
