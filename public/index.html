@@ -2054,7 +2054,8 @@ function renderWeekDealSupports() {
     el('td', { class: 'n' }, fmtH(toHours(r.hours))))));
   if (!week.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, `None of your ${dsMeta.labelPlural.toLowerCase()} are dated this week.`)));
   sec.replaceChildren(
-    el('h3', {}, `Your ${dsMeta.labelPlural} this week (${week.length})`),
+    el('h3', {}, `Your ${dsMeta.labelPlural} this week (${week.length})`, el('span', { class: 'spacer' }),
+      el('button', { disabled: !week.length, onclick: () => exportWeekDealSupports(week, toHours, evTitle) }, 'Export to Excel')),
     (!CAL_WIDE.matches && cal.editing?.box) || el('div'),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
       el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, '#'), el('th', {}, 'Date'), activityLabel ? el('th', {}, activityLabel) : null,
@@ -2063,6 +2064,21 @@ function renderWeekDealSupports() {
       week.length ? el('tfoot', {}, el('tr', {}, el('td', { colspan: (activityLabel ? 5 : 4) + (canEdit ? 1 : 0) }, `Total (${week.length})`),
         el('td', { class: 'n' }, fmtH(week.reduce((s, r) => s + toHours(r.hours), 0))))) : null)),
   );
+}
+
+// The week's list as shown, with the hours as numbers, a total and a link to each Deal Support.
+function exportWeekDealSupports(week, toHours, evTitle) {
+  const { activityLabel } = cal.data;
+  const cols = [
+    { header: dsMeta.label, width: 16 }, { header: 'Date', type: 'date', width: 12 },
+    ...(activityLabel ? [{ header: activityLabel, width: 22 }] : []), { header: 'Account', width: 28 }, { header: 'Opportunity', width: 40 },
+    { header: 'Event', width: 40 }, { header: 'Hours', type: 'number', width: 9, sum: true }, { header: 'Salesforce link', width: 45 },
+  ];
+  const rows = week.map((r) => [r.Name || r.Id, r.date, ...(activityLabel ? [r.activity] : []), r.accountName, r.oppName,
+    r.events.map(evTitle).join('; '), toHours(r.hours), `${me.instanceUrl}/${r.Id}`]);
+  downloadXlsx(`${dsMeta.labelPlural} - Week of ${cal.week} - ${todayStr()}.xlsx`.replace(/[\\/:*?"<>|]/g, '-'),
+    dsMeta.labelPlural, cols, rows, { totals: true })
+    .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
 }
 
 // Edit one of the week's Deal Supports, above the list.
