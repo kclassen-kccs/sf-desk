@@ -107,6 +107,18 @@ func answers(_ url: URL) -> Bool {
   return box.value
 }
 
+// GET a URL's body, or nil unless it answers 200.
+func fetch(_ url: URL) -> Data? {
+  let done = DispatchSemaphore(value: 0)
+  let box = Box<Data?>(nil)
+  URLSession.shared.dataTask(with: URLRequest(url: url, cachePolicy: .reloadIgnoringLocalCacheData, timeoutInterval: 10)) { data, resp, _ in
+    if (resp as? HTTPURLResponse)?.statusCode == 200 { box.value = data }
+    done.signal()
+  }.resume()
+  _ = done.wait(timeout: .now() + 15)
+  return box.value
+}
+
 final class Box<T>: @unchecked Sendable {
   var value: T
   init(_ value: T) { self.value = value }
@@ -291,6 +303,12 @@ final class Server: @unchecked Sendable {
     throw Failure(message: "The SF Desk server didn't answer at \(url.absoluteString).\n\n\(tail(logFile))")
   }
 
+  var running: Bool {
+    lock.lock()
+    defer { lock.unlock() }
+    return process?.isRunning ?? false
+  }
+
   func stop() {
     lock.lock()
     let p = process, pipe = stdin
@@ -349,7 +367,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
     // The delegate lives as long as the app, so these hold it strongly.
     server = Server(ui: UI(
       status: { text in Task { @MainActor in self.showStatus(text) } },
-      ready: { url in Task { @MainActor in self.baseURL = url; self.web.load(URLRequest(url: url)) } },
+      ready: { url in
+        Task { @MainActor in
+          self.baseURL = url
+          self.web.load(URLRequest(url: url))
+          self.offerOutlookOnce()
+        }
+      },
       fail: { text in Task { @MainActor in self.showError(text) } },
       ask: { title, text, ok in
         let answer = Box(false), done = DispatchSemaphore(value: 0)
@@ -560,42 +584,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSWindowDelegate, WKNa
                             configuration: NSWorkspace.OpenConfiguration())
   }
 
-  // The Outlook add-in's HTTPS certificate (OUTLOOK.md step 1), made in the support folder and trusted.
+  // One-click Outlook add-in setup (OUTLOOK.md): make and trust the HTTPS certificate, restart the server so
+  // it listens on HTTPS, save the add-in's manifest to Downloads and open Outlook's add-in page. Adding the
+  // file there has to be done by hand: Microsoft doesn't let an app install add-ins by itself.
   @objc func setUpOutlook(_ sender: Any?) {
-    let certs = supportDir.appendingPathComponent("certs")
     let a = NSAlert()
     a.messageText = "Set up the Outlook add-in"
-    a.informativeText = fm.fileExists(atPath: certs.appendingPathComponent("localhost.pem").path)
-      ? "SF Desk already has its HTTPS certificate. Trust it again in your login keychain? macOS asks for your password."
-      : "SF Desk will make an HTTPS certificate for https://localhost and trust it in your login keychain (macOS asks for your password), then restart."
-    a.addButton(withTitle: "Continue")
+    a.informativeText = "SF Desk will trust its own certificate for https://localhost (macOS asks for your password), " +
+      "restart, and save the add-in file to your Downloads folder. Then you add that file in Outlook."
+    a.addButton(withTitle: "Set Up")
     a.addButton(withTitle: "Cancel")
     guard a.runModal() == .alertFirstButtonReturn else { return }
+
+    showStatus("Setting up the Outlook add-in...")
+    let server = server!
+    let certs = supportDir.appendingPathComponent("certs")
     let env = ProcessInfo.processInfo.environment.merging(["SF_DESK_CERTS": certs.path, "PATH": server.path]) { $1 }
     Thread.detachNewThread {
-      let r = run("/bin/sh", [appDir.appendingPathComponent("scripts/outlook-cert.sh").path, "--trust"], env: env, timeout: 300)
-      Task { @MainActor in self.outlookDone(r.status == 0, r.output) }
+      let cert = certs.appendingPathComponent("localhost.pem").path
+      let trusted = fm.fileExists(atPath: cert) &&
+        run("/usr/bin/security", ["verify-cert", "-c", cert, "-p", "ssl", "-s", "localhost"], timeout: 30).status == 0
+      if !trusted {
+        let r = run("/bin/sh", [appDir.appendingPathComponent("scripts/outlook-cert.sh").path, "--trust"], env: env, timeout: 300)
+        guard r.status == 0 else {
+          Task { @MainActor in self.reload(nil); self.outlookFailed("Couldn't set up the certificate.", r.output) }
+          return
+        }
+      }
+      // A server SF Desk started picks up a new certificate when restarted; one started elsewhere can't be.
+      let port = readEnv()["HTTPS_PORT"].flatMap { $0.isEmpty ? nil : $0 } ?? "3443"
+      let manifestURL = URL(string: "https://localhost:\(port)/outlook/manifest.xml")!
+      let owned = server.running
+      var manifest = trusted ? fetch(manifestURL) : nil
+      let restarted = owned && manifest == nil
+      if restarted {
+        server.stop()
+        server.start() // reloads the page when it's up
+        manifest = fetch(manifestURL)
+      }
+      guard let manifest else {
+        Task { @MainActor in
+          if !restarted { self.reload(nil) }
+          self.outlookFailed("SF Desk isn't answering on https://localhost:\(port) yet.", owned
+            ? "Check Help > Show Server Log for \"Outlook add-in HTTPS listener not started\"."
+            : "SF Desk is running from somewhere else (e.g. Terminal). Stop it, quit and reopen SF Desk, then try again.")
+        }
+        return
+      }
+      let dir = fm.urls(for: .downloadsDirectory, in: .userDomainMask).first ?? home
+      let file = dir.appendingPathComponent("sf-desk-outlook.xml")
+      do { try manifest.write(to: file) } catch {
+        let message = error.localizedDescription
+        Task { @MainActor in
+          if !restarted { self.reload(nil) }
+          self.outlookFailed("Couldn't save the add-in file.", message)
+        }
+        return
+      }
+      Task { @MainActor in
+        if !restarted { self.reload(nil) }
+        self.outlookReady(file)
+      }
     }
   }
 
-  func outlookDone(_ ok: Bool, _ output: String) {
+  func outlookReady(_ file: URL) {
+    NSWorkspace.shared.open(URL(string: "https://aka.ms/olksideload")!)
     let a = NSAlert()
-    guard ok else {
-      a.messageText = "Couldn't set up the certificate"
-      a.informativeText = output
-      a.runModal()
-      return
-    }
-    restartServer(nil)
-    let port = readEnv()["HTTPS_PORT"].flatMap { $0.isEmpty ? nil : $0 } ?? "3443"
-    a.messageText = "Certificate ready"
-    a.informativeText = "SF Desk now also listens on https://localhost:\(port). Next, add the add-in to Outlook: " +
-      "download its manifest, then follow step 2 of OUTLOOK.md (Help > Outlook Add-in Instructions)."
-    a.addButton(withTitle: "Download Manifest")
-    a.addButton(withTitle: "Close")
-    if a.runModal() == .alertFirstButtonReturn {
-      NSWorkspace.shared.open(URL(string: "https://localhost:\(port)/outlook/manifest.xml")!)
-    }
+    a.messageText = "Now add SF Desk in Outlook"
+    a.informativeText = "Your browser is opening Outlook's add-ins page; sign in if it asks. Then choose " +
+      "My add-ins > Custom Addins > Add a custom add-in > Add from File..., pick \(file.lastPathComponent) " +
+      "in your Downloads folder, and confirm. It shows up in Outlook for Mac after a minute or a restart of Outlook."
+    a.addButton(withTitle: "Show File in Finder")
+    a.addButton(withTitle: "Done")
+    if a.runModal() == .alertFirstButtonReturn { NSWorkspace.shared.activateFileViewerSelecting([file]) }
+  }
+
+  func outlookFailed(_ message: String, _ detail: String) {
+    let a = NSAlert()
+    a.messageText = message
+    a.informativeText = String(detail.suffix(1500))
+    a.runModal()
+  }
+
+  // Offered once, the first time SF Desk is up without the add-in's certificate.
+  func offerOutlookOnce() {
+    let marker = supportDir.appendingPathComponent(".outlook-offered")
+    guard !fm.fileExists(atPath: supportDir.appendingPathComponent("certs/localhost.pem").path),
+          !fm.fileExists(atPath: marker.path) else { return }
+    try? "".write(to: marker, atomically: true, encoding: .utf8)
+    let a = NSAlert()
+    a.messageText = "Use SF Desk from Outlook?"
+    a.informativeText = "The SF Desk add-in puts a Create Deal Support button on your Outlook meetings. " +
+      "You can also set it up later with SF Desk > Set Up Outlook Add-in."
+    a.addButton(withTitle: "Set Up Now")
+    a.addButton(withTitle: "Not Now")
+    if a.runModal() == .alertFirstButtonReturn { setUpOutlook(nil) }
   }
 
   @objc func outlookHelp(_ sender: Any?) {

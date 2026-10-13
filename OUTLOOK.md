@@ -24,9 +24,18 @@ the first time you open it. It doesn't work with the OAuth app login (Option B).
 Outlook only loads add-ins over HTTPS, so SF Desk also listens on `https://localhost:3443` once it has a
 certificate.
 
-**In the Mac app:** choose **SF Desk > Set Up Outlook Add-in...**. It makes the certificate in
-`~/Library/Application Support/SF Desk/certs`, asks for your Mac password to trust it, restarts the server
-and offers to download the manifest for step 2. Then go straight to step 2.
+**In the Mac app, setup is one click:** choose **SF Desk > Set Up Outlook Add-in...** (the app also offers
+it once, the first time it runs). It:
+
+1. makes the certificate in `~/Library/Application Support/SF Desk/certs` and trusts it (macOS asks for
+   your Mac password once), then restarts its server so it listens on HTTPS;
+2. saves the add-in's manifest to `~/Downloads/sf-desk-outlook.xml`;
+3. opens Outlook's add-in page (https://aka.ms/olksideload) in your browser and tells you what to click.
+
+All that's left is adding the file in Outlook, which Microsoft only lets you do yourself: **My add-ins** >
+**Custom Addins** > **Add a custom add-in** > **Add from File...**, pick `sf-desk-outlook.xml` from
+Downloads (**Show File in Finder** in the app's dialog shows it) and confirm. That's step 2 below, so skip
+straight to step 3 once it's added. Running it again is safe: it only redoes what's missing.
 
 **From a checkout or the Terminal install:** in the SF Desk folder, in Terminal:
 

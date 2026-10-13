@@ -36,9 +36,10 @@ your records, `certs/` for the Outlook add-in's certificate and `sf-cli/` if the
 To update, replace the app with the new one; all of that is kept. The server's log is in
 `~/Library/Logs/SF Desk` (**Help > Show Server Log**).
 
-**Outlook add-in:** choose **SF Desk > Set Up Outlook Add-in...**. It makes and trusts the HTTPS
-certificate (macOS asks for your password), restarts the server and offers to download the add-in's
-manifest. Then follow [OUTLOOK.md](OUTLOOK.md) from step 2.
+**Outlook add-in:** choose **SF Desk > Set Up Outlook Add-in...** (or say yes when the app offers it the
+first time). It trusts its HTTPS certificate (macOS asks for your password), saves the add-in file to
+Downloads and opens Outlook's add-in page; there, choose **My add-ins > Custom Addins > Add a custom
+add-in > Add from File...** and pick `sf-desk-outlook.xml`. See [OUTLOOK.md](OUTLOOK.md).
 
 **Uninstalling:** quit SF Desk, delete it from Applications, and delete
 `~/Library/Application Support/SF Desk` and `~/Library/Logs/SF Desk`.
