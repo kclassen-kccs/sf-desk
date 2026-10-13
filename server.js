@@ -1292,7 +1292,7 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
 async function localEvents(req, calendarId, { from, to }) {
   const myDomain = String(req.session.sf.user.username || '').split('@')[1]?.toLowerCase();
   const events = await localCal.events(from, to, [calendarId]);
-  return events.map((e) => {
+  const list = events.map((e) => {
     const others = (e.attendees || []).filter((a) => !a.me && a.email && !a.email.toLowerCase().endsWith('@' + myDomain));
     return {
       id: e.id, copies: [], sfEvent: false,
@@ -1303,6 +1303,8 @@ async function localEvents(req, calendarId, { from, to }) {
       domains: customerDomains(others.map((a) => a.email), myDomain),
     };
   }).sort((a, b) => String(a.start).localeCompare(String(b.start)));
+  list.note = events.note; // why there are none, when the reader says
+  return list;
 }
 
 // Meetings synced into Salesforce (e.g. by Outreach) carry the account and opportunity. For each Mac
@@ -1374,7 +1376,7 @@ api.get('/calendar', wrap(async (req, res) => {
     const week = mine.map((r) => ({ Id: r.Id, Name: r.Name, date: r.date, activity: r.activity, hours: r.hours,
       oppName: r.oppName, accountName: r.accountNames[0] || '', events: out.filter((e) => e.supports.some((x) => x.Id === r.Id)).map((e) => e.id) }))
       .sort((a, b) => a.date.localeCompare(b.date) || String(a.Name).localeCompare(String(b.Name)));
-    const data = { source, events: out, prefill: cm, week, weekHours: hoursF ? { label: hoursF.label, unit: hoursF.unit } : null,
+    const data = { source, events: out, note: events.note || null, prefill: cm, week, weekHours: hoursF ? { label: hoursF.label, unit: hoursF.unit } : null,
       activityLabel: activityField(ds)?.label || null, dealSupport: { object: ds.object, label: ds.label, labelPlural: ds.labelPlural } };
     store.saveSetting(orgOf(req), kind, data);
     return data;

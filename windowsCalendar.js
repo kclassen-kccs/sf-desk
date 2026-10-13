@@ -45,11 +45,14 @@ export function windowsCalendar(rootDir) {
 
   // Events between two instants in the given calendars, each with a stable id for its occurrence.
   async function events(fromIso, toIso, ids) {
-    const list = await helper(['events', fromIso, toIso, ids.join(',')]);
-    return list.filter((e) => !e.canceled).map((e) => ({
+    const data = await helper(['events', fromIso, toIso, ids.join(',')]);
+    // With no events, the helper says what Outlook shows instead (data.diag), for the page to show.
+    const list = (Array.isArray(data) ? data : data?.events || []).filter((e) => !e.canceled).map((e) => ({
       ...e,
       id: 'win_' + crypto.createHash('sha1').update(`${e.uid}|${e.start}`).digest('hex').slice(0, 24),
     }));
+    if (data?.diag) list.note = `Outlook: ${data.diag}`;
+    return list;
   }
 
   return { calendars, events };

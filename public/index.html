@@ -1944,7 +1944,7 @@ function renderCalendar() {
   document.getElementById('calSub').textContent = (cal.sourceNote && !fromMac ? `${cal.sourceNote} Showing Salesforce events. · ` : '') + (events.length
     ? `${plural(events.length, 'event')} this week · ${by.covered} with a ${dsMeta.label} · ${by.open} without` +
       (by.skipped ? ` · ${by.skipped} marked not needed` : '') + ' · Click an event to see it or create a ' + dsMeta.label
-    : fromMac ? 'No events in this calendar this week.' : 'No Salesforce events this week. If your Outlook or Google calendar reaches Salesforce through Einstein Activity Capture, ' +
+    : fromMac ? 'No events in this calendar this week.' + (cal.data.note ? ` ${cal.data.note}` : '') : 'No Salesforce events this week. If your Outlook or Google calendar reaches Salesforce through Einstein Activity Capture, ' +
       'those meetings may not be stored as Salesforce events, so they can\'t be shown here.');
 
   // Monday to Friday, plus the weekend days that have something on them.

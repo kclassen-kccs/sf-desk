@@ -89,6 +89,8 @@ try { $me = [string]$ns.CurrentUser.AddressEntry.GetExchangeUser().PrimarySmtpAd
 if (-not $me) { try { $me = Smtp $ns.CurrentUser } catch {} }
 
 $iso = 'yyyy-MM-dd''T''HH:mm:ss''Z'''
+$errors = New-Object System.Collections.ArrayList
+function Note-Error($err) { if ($errors.Count -lt 3) { [void]$errors.Add($err.Exception.Message.Trim()) } }
 $inRange = { param($i) $i.Class -eq 26 -and $i.StartUTC -lt $toUtc -and $i.EndUTC -gt $fromUtc } # olAppointment
 
 # The folder's appointments (one per occurrence of a repeating one) in the range.
@@ -111,7 +113,7 @@ function Find-Items($folder) {
         if (& $inRange $item) { [void]$found.Add($item) }
         $item = $hits.GetNext()
       }
-    } catch {}
+    } catch { Note-Error $_ }
     if ($found.Count) { return $found }
   }
 
@@ -133,7 +135,7 @@ function Find-Items($folder) {
       foreach ($x in $pattern.Exceptions) {
         try { if (-not $x.Deleted -and (& $inRange $x.AppointmentItem)) { [void]$found.Add($x.AppointmentItem) } } catch {}
       }
-    } catch {}
+    } catch { Note-Error $_ }
   }
   # A moved occurrence can be found both ways; keep one per start.
   $seen = @{}
@@ -175,4 +177,29 @@ foreach ($c in @(Calendar-Folders | Where-Object { $ids -contains $_.id })) {
     })
   }
 }
-Out-Json $out.ToArray()
+if ($out.Count) { Out-Json $out.ToArray(); exit 0 }
+
+# Nothing found: say what Outlook shows, so an empty week can be told apart from the wrong calendar,
+# an empty Outlook profile or the new Outlook. The server shows this under the calendar.
+$facts = New-Object System.Collections.ArrayList
+try { [void]$facts.Add("Outlook $($outlook.Version), profile '$($ns.CurrentProfileName)'") } catch {}
+try {
+  $new = Get-ItemProperty 'HKCU:\Software\Microsoft\Office\16.0\Outlook\Preferences' -Name UseNewOutlook -ErrorAction Stop
+  if ($new.UseNewOutlook -eq 1) { [void]$facts.Add('the new Outlook is switched on, so classic Outlook may not be syncing your mailbox') }
+} catch {}
+$picked = @(Calendar-Folders | Where-Object { $ids -contains $_.id })
+if (-not $picked.Count) { [void]$facts.Add('that calendar is no longer in Outlook') }
+foreach ($c in $picked) {
+  try {
+    $items = $c.folder.Items
+    $text = "$($c.title) in $($c.account) has $($items.Count) items"
+    if ($items.Count) {
+      $items.Sort('[Start]', $true)
+      $last = $items.GetFirst()
+      if ($last) { $text += ", the latest starting $($last.Start.ToString('yyyy-MM-dd', $inv))" }
+    }
+    [void]$facts.Add($text)
+  } catch { Note-Error $_ }
+}
+if ($errors.Count) { [void]$facts.Add('errors: ' + ($errors -join '; ')) }
+Out-Json @{ events = @(); diag = ($facts -join '; ').TrimEnd('.') + '.' }
