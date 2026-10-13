@@ -205,6 +205,13 @@ selected.
 If you dismissed the prompt or clicked Don't Allow: open **System Settings > Privacy & Security >
 Calendars**, turn on **Terminal**, then stop SF Desk with Ctrl+C, run `npm start` again and reload the page.
 
+## Optional: the Outlook add-in
+
+SF Desk can also put a **Create Deal Support** button on meetings in Outlook. It needs a one-time HTTPS
+certificate and adding the add-in to Outlook. In Terminal, in the SF Desk folder (`~/SF-Desk` for a quick
+install), run `sh scripts/outlook-cert.sh --trust`, restart SF Desk, then follow
+[OUTLOOK.md](OUTLOOK.md) from step 2. Updates keep the certificate.
+
 ## Where your data lives
 
 Paths are inside `~/SF-Desk` for a quick install, or your checkout for a manual one.
