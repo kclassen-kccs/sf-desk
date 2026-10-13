@@ -13,7 +13,9 @@
   body { margin: 0; font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; background: var(--bg); color: var(--ink); }
   header { display: flex; align-items: center; gap: 12px; height: 50px; padding: 0 16px; background: var(--panel); border-bottom: 1px solid var(--line); }
   header h1 { font-size: 15px; margin: 0; letter-spacing: .2px; }
-  #who { margin-left: auto; color: var(--muted); font-size: 13px; }
+  #who { color: var(--muted); font-size: 13px; overflow-wrap: anywhere; }
+  .hdr-right { margin-left: auto; display: flex; align-items: center; gap: 12px; }
+  #navToggle { display: none; margin-left: auto; font-size: 18px; line-height: 1; padding: 6px 10px; }
   button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
   button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
   button:disabled { opacity: .45; cursor: default; }
@@ -21,7 +23,7 @@
   input:disabled, select:disabled, textarea:disabled { background: var(--bg); color: var(--muted); }
   .dirty { background: var(--dirty); border-color: #e6b94a; }
 
-  main { display: grid; grid-template-columns: 320px 1fr; height: calc(100vh - 50px); }
+  main { display: grid; grid-template-columns: clamp(280px, 20vw, 380px) minmax(0, 1fr); height: calc(100vh - 50px); height: calc(100dvh - 50px); }
   #list { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
   #list .controls { padding: 10px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
   #list .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
@@ -46,12 +48,15 @@
   td.pick, th.pick { width: 1%; }
   .empty { padding: 24px 16px; color: var(--muted); }
 
-  #detail { overflow: auto; padding: 18px 22px 40px; min-width: 0; }
+  #detail { overflow: auto; padding: 18px clamp(12px, 2vw, 32px) 40px; min-width: 0; }
   .title-row { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; margin-bottom: 4px; }
   .title-row h2 { margin: 0; font-size: 20px; }
+  .rep-pill { align-self: center; display: inline-flex; align-items: baseline; gap: 6px; padding: 3px 12px; border-radius: 999px;
+    background: var(--accent); color: #fff; font-size: 15px; font-weight: 700; }
+  .rep-pill .k { font-size: 11px; font-weight: 500; text-transform: uppercase; letter-spacing: .4px; opacity: .85; }
   .sub { color: var(--muted); font-size: 12px; margin-bottom: 14px; }
   section { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; margin-bottom: 18px; }
-  section h3 { margin: 0 0 12px; font-size: 14px; display: flex; align-items: center; gap: 10px; }
+  section h3 { margin: 0 0 12px; font-size: 14px; display: flex; align-items: center; gap: 8px 10px; flex-wrap: wrap; }
   section h3 .spacer { flex: 1; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px 14px; }
   .grid label span { display: block; font-size: 12px; color: var(--muted); margin-bottom: 3px; }
@@ -83,15 +88,17 @@
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px; max-width: 420px; text-align: center; }
   .card p { color: var(--muted); }
 
-  #toast { position: fixed; right: 16px; bottom: 16px; max-width: 420px; padding: 10px 14px; border-radius: 8px; background: #1b1f24; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; }
+  #toast { position: fixed; right: 16px; bottom: 16px; max-width: min(420px, calc(100vw - 32px)); z-index: 30; padding: 10px 14px; border-radius: 8px; background: #1b1f24; color: #fff; box-shadow: 0 4px 16px rgba(0,0,0,.18); display: none; }
   #toast.ok { background: var(--ok); } #toast.err { background: var(--err); }
 
   /* ---------- dashboard ---------- */
-  header nav { display: flex; gap: 4px; margin-left: 12px; }
+  header { position: sticky; top: 0; z-index: 20; }
+  header nav { display: flex; gap: 4px; margin-left: 12px; flex: 1; align-items: center; min-width: 0; }
   header nav button { border-color: transparent; background: none; color: var(--muted); }
+  header nav .hdr-right button { border-color: var(--line); background: var(--panel); color: var(--ink); }
   header nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
   .dash { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #a3a29c; --grid: #eceef1;
-    max-width: 1180px; margin: 0 auto; padding: 18px 22px 48px; height: calc(100vh - 50px); overflow: auto; }
+    max-width: 1720px; margin: 0 auto; padding: 18px clamp(12px, 2vw, 32px) 48px; height: calc(100vh - 50px); height: calc(100dvh - 50px); overflow: auto; }
   .dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 2px; }
   .dash-head h2 { margin: 0; font-size: 20px; }
   .dash-head label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
@@ -112,6 +119,7 @@
   .charts { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 7fr); gap: 18px; }
   .charts section { margin-bottom: 0; }
   .dash section { margin-bottom: 18px; }
+  .dash .charts { margin-bottom: 18px; } .dash .charts section { margin-bottom: 0; }
   .seg { display: inline-flex; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
   .seg button { border: 0; border-radius: 0; padding: 4px 10px; font-size: 13px; }
   .seg button + button { border-left: 1px solid var(--line); }
@@ -140,32 +148,166 @@
   .deals td { white-space: nowrap; } .deals td.n { text-align: right; font-variant-numeric: tabular-nums; }
   .deals th.n { text-align: right; }
   .deals tfoot td { font-weight: 600; border-top: 2px solid var(--line); border-bottom: 0; }
-  .deals tbody tr { cursor: pointer; } .deals tbody tr:hover td { background: var(--bg); }
+  .deals tbody tr { cursor: pointer; } .deals tbody tr.nolink { cursor: default; } .deals tr.subtotal td { font-weight: 600; background: var(--bg); } .deals tbody tr:hover td { background: var(--bg); }
   .deals td.wrap { white-space: normal; min-width: 180px; }
   .pastdue { color: var(--err); }
+  /* ---------- my calendar ---------- */
+  .cal { --covered: #c9f2d6; --covered-line: #12924a; --open: #fdd3cf; --open-line: #d92d20; --skip: #eef0f3; --skip-line: #98a2b3; --hour: 48px;
+    display: grid; grid-template-columns: minmax(0, 1fr); gap: 18px; padding: 18px clamp(12px, 2vw, 32px) 40px; height: calc(100vh - 50px); height: calc(100dvh - 50px); overflow: auto; }
+  .cal.with-panel { grid-template-columns: minmax(0, 1fr) clamp(380px, 28vw, 540px); }
+  .cal-panel { position: sticky; top: 0; align-self: start; max-height: calc(100vh - 50px - 36px); max-height: calc(100dvh - 50px - 36px); overflow: auto; }
+  .cal.with-panel #calWeekDs .deals td { white-space: normal; } .cal.with-panel #calWeekDs .deals td.wrap { min-width: 0; }
+  .cal.with-panel #calWeekDs .deals td:nth-child(3), .cal.with-panel #calWeekDs .deals td.n { white-space: nowrap; }
+  .cal-empty { border-style: dashed; text-align: center; padding: 28px 20px; }
+  .cal-empty h3 { justify-content: center; }
+  #calWeekDs { margin: 18px 0 0; }
+  .agenda { display: grid; gap: 10px; }
+  .agenda-day { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 6px; }
+  .agenda-head { font-size: 13px; font-weight: 600; color: var(--muted); }
+  .agenda-day.today .agenda-head { color: var(--accent); }
+  .agenda .ev { position: static; display: block; width: 100%; padding: 8px 10px; font-size: 14px; }
+  .agenda .ev .t { font-size: 12px; }
+  .mobile-only { display: none; }
+  .cal-main { min-width: 0; }
+  .cal-legend { display: flex; gap: 14px; font-size: 12px; color: var(--muted); }
+  .cal-legend i { display: inline-block; width: 12px; height: 12px; border-radius: 3px; margin-right: 5px; vertical-align: -2px; border-left: 3px solid; }
+  .week { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+  .week-row { display: grid; grid-template-columns: 52px repeat(var(--days), minmax(0, 1fr)); }
+  .week-row > div { border-left: 1px solid var(--line); min-width: 0; }
+  .week-row > div:first-child { border-left: 0; }
+  .day-head { padding: 6px 8px; font-size: 12px; color: var(--muted); border-bottom: 1px solid var(--line); }
+  .day-head b { display: block; font-size: 16px; color: var(--ink); }
+  .day-head.today b { color: var(--accent); }
+  .allday { padding: 3px; border-bottom: 1px solid var(--line); min-height: 26px; display: grid; gap: 3px; align-content: start; }
+  .gutter-label { font-size: 11px; color: var(--muted); padding: 4px 6px; text-align: right; }
+  .hours-col { position: relative; }
+  .hours-col .hl { position: absolute; left: 0; right: 0; border-top: 1px solid #f0f1f4; }
+  .hours-col .now-line { position: absolute; left: 0; right: 0; border-top: 2px solid var(--accent); z-index: 2; }
+  .gutter .hl-label { position: absolute; right: 6px; font-size: 11px; color: var(--muted); transform: translateY(-50%); }
+  .ev { position: absolute; border-radius: 4px; padding: 2px 5px; font-size: 12px; line-height: 1.3; overflow: hidden; cursor: pointer;
+    border-left: 3px solid; text-align: left; font-family: inherit; color: var(--ink); min-height: 18px; }
+  .allday .ev { position: static; }
+  .ev.covered { background: var(--covered); border-color: var(--covered-line); }
+  .ev.open { background: var(--open); border-color: var(--open-line); }
+  .ev.skipped { background: var(--skip); border-color: var(--skip-line); color: var(--muted); }
+  .ev.sel { box-shadow: 0 0 0 2px var(--accent); z-index: 3; }
+  .ev .t { font-size: 11px; opacity: .8; }
+  .ev .s { font-weight: 600; overflow-wrap: anywhere; }
+  .cal-panel section { margin-bottom: 14px; }
+  button.linkish { border: 0; background: none; padding: 0; color: var(--accent); text-decoration: underline; text-align: left; display: block; }
+  button.icon-btn { border: 0; background: none; padding: 0 4px; color: var(--muted); font-size: 15px; line-height: 1; cursor: pointer; }
+  button.icon-btn:hover { color: var(--accent); }
+  td.edit-cell { width: 1%; padding-right: 0; }
+  section.ds-edit { margin-bottom: 14px; }
+  .deals tr.sel td { background: var(--accent-soft); }
+  .cal-panel .grid { grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); }
+  .cal-panel .desc { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 220px; overflow: auto; font-size: 13px; background: var(--bg); border-radius: 6px; padding: 8px; }
+  .cal-panel dl { display: grid; grid-template-columns: 90px 1fr; gap: 4px 10px; margin: 0 0 10px; font-size: 13px; }
+  .cal-panel dt { color: var(--muted); } .cal-panel dd { margin: 0; overflow-wrap: anywhere; }
+  .status-pill { display: inline-block; font-size: 12px; font-weight: 600; border-radius: 10px; padding: 1px 9px; }
+  .status-pill.covered { background: var(--covered); color: #05603a; } .status-pill.open { background: var(--open); color: #912018; }
+  .status-pill.skipped { background: var(--skip); color: var(--muted); }
+  .opp-pick { max-height: 220px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; margin-top: 6px; }
+  .opp-pick button { display: block; width: 100%; text-align: left; border: 0; border-bottom: 1px solid var(--line); border-radius: 0; padding: 6px 8px; }
+  .opp-pick button:last-child { border-bottom: 0; }
+  .opp-pick button.on { background: var(--accent-soft); }
+  .opp-pick button.active { outline: 2px solid var(--accent); outline-offset: -2px; }
+  .opp-pick .m { color: var(--muted); font-size: 12px; }
+  .panel-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+  /* ---------- responsive ---------- */
   @media (max-width: 1000px) {
+    .cal.with-panel { grid-template-columns: minmax(0, 1fr); }
+    .cal-panel { order: -1; scroll-margin-top: 60px; position: static; max-height: none; overflow: visible; }
     .tiles { grid-template-columns: repeat(2, 1fr); } .tile.hero { grid-column: 1 / -1; }
     .tiles.even { grid-template-columns: repeat(3, minmax(0, 1fr)); }
     .charts { grid-template-columns: 1fr; }
   }
 
+  /* Phones and small tablets: one column, tabs in a menu, the page scrolls as a whole. */
   @media (max-width: 760px) {
+    header { padding: 0 12px; }
+    #navToggle { display: inline-block; }
+    header nav { display: none; }
+    header.menu-open nav:not([hidden]) { display: flex; flex-direction: column; align-items: stretch; gap: 2px; position: absolute; top: 50px; left: 0; right: 0;
+      margin: 0; padding: 8px 12px 12px; background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 8px 20px rgba(0,0,0,.12); }
+    header.menu-open nav button { text-align: left; padding: 10px 12px; }
+    .hdr-right { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--line); justify-content: space-between; }
+    .dash, .cal, main, #detail { height: auto; overflow: visible; }
+    .dash, .cal, #detail { padding: 14px 12px 32px; }
+    main { grid-template-columns: minmax(0, 1fr); }
+    #list { border-right: 0; }
+    #accounts { overflow: visible; }
+    main.has-detail #list { display: none; }
+    main:not(.has-detail) #detail { display: none; }
+    .mobile-only { display: inline-block; }
     .tiles.even { grid-template-columns: repeat(2, minmax(0, 1fr)); }
-    main { grid-template-columns: 1fr; height: auto; }
-    #list { max-height: 40vh; border-right: 0; border-bottom: 1px solid var(--line); }
+    .tile { padding: 12px; }
+    .tile .v { font-size: 20px; }
+    section { padding: 12px; }
+    .dash-head { gap: 8px 10px; }
+    .dash-head h2, .title-row h2 { font-size: 18px; }
+    .picks { gap: 8px; width: 100%; }
+    .picks label, .picks > * { flex: 1 1 140px; }
+    .picks select { max-width: none; width: 100%; }
+    .cal-legend { flex-wrap: wrap; gap: 6px 12px; }
+    #calSource { max-width: 100% !important; flex: 1 1 100%; }
+    .form-actions { position: sticky; bottom: 0; background: var(--panel); padding: 10px 0 2px; margin-bottom: -2px; }
+    .form-actions button { flex: 1; }
+    .cal-panel dl { grid-template-columns: 80px minmax(0, 1fr); }
+    .hbars { grid-template-columns: fit-content(45%) minmax(0, 1fr); }
+    #toast { left: 16px; right: 16px; max-width: none; }
+    .grid { grid-template-columns: repeat(auto-fill, minmax(min(100%, 150px), 1fr)); }
+    .cal-panel h3 { flex-wrap: nowrap; align-items: flex-start; }
+    .seg { max-width: 100%; overflow-x: auto; }
+    .seg button { white-space: nowrap; }
+    .charts { grid-template-columns: minmax(0, 1fr); }
+    .tiles.even > :last-child:nth-child(odd) { grid-column: 1 / -1; }
+  }
+
+  /* Phones: list tables become stacked cards, one per row, each value under its column's name. */
+  @media (max-width: 640px) {
+    .tablewrap:has(> table.deals) { overflow: visible; }
+    table.deals thead { display: none; }
+    table.deals, .deals tbody, .deals tfoot { display: block; }
+    .deals tbody tr { display: block; position: relative; padding: 8px 2px; border-bottom: 1px solid var(--line); }
+    .deals tbody td { display: flex; justify-content: space-between; gap: 12px; padding: 2px 4px; border: 0; white-space: normal; text-align: right; min-width: 0; overflow-wrap: anywhere; }
+    .deals tbody td.wrap { min-width: 0; }
+    .deals tbody td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12px; text-align: left; flex: none; max-width: 45%; }
+    .deals tbody td:first-child { font-weight: 600; }
+    .deals tbody td.edit-cell { position: absolute; top: 4px; right: 0; width: auto; padding: 0; }
+    .deals tbody td.edit-cell + td { padding-right: 48px; }
+    .deals tbody tr.subtotal, .deals tfoot tr { display: flex; justify-content: space-between; padding: 8px 4px; }
+    .deals tbody tr.subtotal td, .deals tfoot td { display: block; border: 0; padding: 0; }
+    .deals td.empty { display: block; text-align: left; }
+  }
+
+  /* Touch: bigger targets, and 16px text in fields so iOS doesn't zoom in. */
+  @media (pointer: coarse), (max-width: 760px) {
+    button:not(.ev), .btn, select, input:not([type=checkbox]):not([type=radio]) { min-height: 40px; }
+    input, select, textarea { font-size: 16px; }
+    input[type=checkbox] { width: 20px !important; height: 20px; }
+    button.icon-btn { padding: 8px 10px; font-size: 18px; min-height: 0; }
+    button.linkish { min-height: 0; padding: 4px 0; }
+    .seg button { padding: 8px 12px; min-height: 0; }
+    .fynav button { padding: 6px 12px; min-height: 0; }
+    td { padding: 8px 6px; }
   }
 </style>
 </head>
 <body>
-<header>
+<header id="hdr">
   <h1>SF Desk</h1>
+  <button id="navToggle" aria-label="Menu" aria-expanded="false" aria-controls="nav" hidden>☰</button>
   <nav id="nav" hidden>
     <button id="navDash" onclick="showDashboard()">Dashboard</button>
     <button id="navTime" onclick="showTime()">My Time</button>
+    <button id="navCal" onclick="showCalendar()">Time Entry</button>
     <button id="navAccts" onclick="showMain()">Accounts</button>
+  <div class="hdr-right">
+    <span id="who"></span>
+    <button id="logout" hidden>Disconnect</button>
+  </div>
   </nav>
-  <span id="who"></span>
-  <button id="logout" hidden>Disconnect</button>
 </header>
 <div id="app"></div>
 <div id="toast" role="status"></div>
@@ -295,10 +437,34 @@ function changes(container, original) {
 }
 
 // ---------- views ----------
+// On phones the tabs fold into a menu under the ☰ button.
+function menu(open) {
+  document.getElementById('hdr').classList.toggle('menu-open', open);
+  document.getElementById('navToggle').setAttribute('aria-expanded', String(open));
+}
+// On phones the list tables (class "deals") show each row as a card: every cell gets its column's
+// heading as a label. Done here for all of them as they're drawn.
+function labelCells(table) {
+  const heads = [...table.querySelectorAll('thead th')].map((th) => th.textContent.trim());
+  for (const tr of table.querySelectorAll('tbody tr')) {
+    if (tr.cells.length < 2) continue;
+    let col = 0;
+    for (const td of tr.cells) {
+      if (heads[col] && !td.hasAttribute('data-label')) td.dataset.label = heads[col];
+      col += td.colSpan || 1;
+    }
+  }
+}
+new MutationObserver(() => document.querySelectorAll('#app table.deals').forEach(labelCells))
+  .observe(document.getElementById('app'), { childList: true, subtree: true });
+document.getElementById('navToggle').addEventListener('click', () => menu(!document.getElementById('hdr').classList.contains('menu-open')));
+document.addEventListener('click', (e) => { if (!e.target.closest('#hdr')) menu(false); });
+
 function showConnect(message) {
   document.getElementById('who').textContent = '';
   document.getElementById('logout').hidden = true;
   document.getElementById('nav').hidden = true;
+  document.getElementById('navToggle').hidden = true;
   const app = document.getElementById('app');
   app.replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
     el('h2', {}, 'Connect to Salesforce'),
@@ -309,8 +475,12 @@ function showConnect(message) {
 
 function setNav(which) {
   document.getElementById('nav').hidden = false;
+  document.getElementById('navToggle').hidden = false;
+  menu(false);
+  window.scrollTo(0, 0);
   document.getElementById('navDash').classList.toggle('on', which === 'dash');
   document.getElementById('navTime').classList.toggle('on', which === 'time');
+  document.getElementById('navCal').classList.toggle('on', which === 'cal');
   document.getElementById('navAccts').classList.toggle('on', which === 'accts');
 }
 
@@ -451,6 +621,8 @@ async function openAccount(id) {
     current = await api('/accounts/' + id + (leadSeOnly ? '?leadse=1' : ''));
     renderList();
     renderDetail();
+    document.querySelector('main')?.classList.add('has-detail');
+    if (window.matchMedia('(max-width: 760px)').matches) window.scrollTo(0, 0);
   } catch (e) {
     detail.replaceChildren(el('div', { class: 'empty' }, e.message));
   }
@@ -459,17 +631,131 @@ async function openAccount(id) {
 function renderDetail() {
   const a = current.account;
   document.getElementById('detail').replaceChildren(
+    el('button', { class: 'back mobile-only', onclick: () => { document.querySelector('main').classList.remove('has-detail'); window.scrollTo(0, 0); } }, '‹ Accounts'),
     el('div', { class: 'title-row' },
       el('h2', {}, a.Name),
+      el('span', { class: 'rep-pill', title: 'Sales rep (account owner)' }, el('span', { class: 'k' }, 'Sales rep'), a.Owner?.Name || '—'),
       el('a', { href: `${me.instanceUrl}/${a.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
       el('button', { onclick: () => openAccount(a.Id) }, 'Reload'),
     ),
     el('div', { class: 'sub', id: 'acctSub' }),
     el('section', { id: 'acctSection' }),
     el('section', { id: 'oppSection' }),
+    el('section', { id: 'acctDs' }),
   );
   renderAccountForm();
   renderOpps();
+  loadAccountDealSupports(a.Id);
+}
+
+// ---------- account Deal Supports ----------
+// Everyone's Deal Supports on this account and its opportunities for the last 30, 60 or 90 days or this
+// fiscal year: count, hours and the list (newest first; click one to open it in Salesforce).
+let acctDsRange = '90', acctDsGroup = false;
+async function loadAccountDealSupports(accountId) {
+  const sec = document.getElementById('acctDs');
+  if (acctDsEdit.accountId !== accountId) Object.assign(acctDsEdit, { accountId, editing: null });
+  if (!acctDsEdit.editing) sec.replaceChildren(el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, 'Loading…'));
+  const today = todayStr(), fyStart = `${fiscal(today).fy - 1}-02-01`;
+  const since = [addDays(today, -90), fyStart].sort()[0];
+  try {
+    const [data] = await Promise.all([api(`/accounts/${accountId}/deal-supports?since=${since}`),
+      dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {})]);
+    data.accountId = accountId;
+    if (document.getElementById('acctDs') === sec && current?.account.Id === accountId) renderAccountDealSupports(data, fyStart);
+  } catch (e) {
+    sec.replaceChildren(el('h3', {}, 'Deal Supports'), el('div', { class: 'empty' }, e.message));
+  }
+}
+
+function renderAccountDealSupports(data, fyStart) {
+  const sec = document.getElementById('acctDs');
+  const today = todayStr();
+  const ranges = { 30: ['Last 30 days', addDays(today, -30)], 60: ['Last 60 days', addDays(today, -60)],
+    90: ['Last 90 days', addDays(today, -90)], fy: [`${fyName(fiscal(today).fy)} to date`, fyStart] };
+  const [rangeLabel, from] = ranges[acctDsRange];
+  const toHours = (v) => v == null || v === '' ? 0
+    : data.hoursUnit === 'text' ? parseDuration(v) : data.hoursUnit === 'minutes' ? Number(v) / 60 : Number(v) || 0;
+  const list = data.records.filter((r) => r.date && r.date >= from && r.date <= today);
+  const total = list.reduce((s, r) => s + toHours(r.hours), 0);
+  const seg = el('span', { class: 'seg' }, Object.entries({ 30: '30 days', 60: '60 days', 90: '90 days', fy: fyName(fiscal(today).fy) })
+    .map(([k, t]) => el('button', { class: acctDsRange === k ? 'on' : null, onclick: () => { acctDsRange = k; renderAccountDealSupports(data, fyStart); } }, t)));
+  const showRole = list.some((r) => r.role);
+  const showActivity = !!data.activityLabel;
+  // The opportunity only when it tells rows apart: not when they're all on one, nor when the name already says it.
+  const opps = new Set(list.map((r) => r.oppId));
+  // Grouped by opportunity (the default), each group's subtotal names it, so the column isn't needed.
+  const bySe = acctDsGroup && !!data.whoLabel;
+  const showOpp = bySe && opps.size > 1 && list.some((r) => r.oppName && !String(r.Name || '').toLowerCase().includes(r.oppName.toLowerCase()));
+  // The record number only (e.g. "DR-012345" -> "012345") keeps the first column narrow; the full name is its tooltip.
+  const canEdit = !!dsMeta?.canUpdate;
+  const ncols = 3 + showActivity + showOpp + !!data.whoLabel + showRole + canEdit;
+  const edit = (r) => editDealSupport(r.Id, acctDsEdit, () => renderAccountDealSupports(data, fyStart), () => loadAccountDealSupports(data.accountId));
+  const row = (r) => el('tr', { class: 'nolink' + (acctDsEdit.editing?.id === r.Id ? ' sel' : '') },
+    canEdit ? editPencil(r.Name, () => edit(r)) : null,
+    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, dsNum(r.Name) || r.Id)),
+    el('td', {}, r.date),
+    showActivity ? el('td', { class: 'wrap' }, r.activity) : null,
+    showOpp ? el('td', { class: 'wrap' }, r.oppName) : null,
+    data.whoLabel ? el('td', {}, r.who) : null,
+    showRole ? el('td', {}, r.role) : null,
+    el('td', { class: 'n' }, fmtH(toHours(r.hours))));
+  const sumRow = (text, rows, cls) => el('tr', { class: 'nolink ' + cls },
+    el('td', { colspan: ncols - 1 }, `${text} (${rows.length})`),
+    el('td', { class: 'n' }, fmtH(rows.reduce((s, r) => s + toHours(r.hours), 0))));
+  const tbody = el('tbody');
+  const blocks = [];
+  {
+    // One block per opportunity (or per Assigned SE when ticked), A–Z, each ending in its subtotal.
+    const groups = new Map();
+    for (const r of list) {
+      const k = (bySe ? r.who : r.oppName) || '(none)';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(r);
+    }
+    for (const [k, rows] of [...groups].sort((x, y) => x[0].localeCompare(y[0]))) {
+      blocks.push([k, rows]);
+      tbody.append(...rows.map(row), sumRow(`Subtotal ${k}`, rows, 'subtotal'));
+    }
+  }
+  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: ncols, class: 'empty' }, `No ${data.labelPlural.toLowerCase()} in this period.`)));
+  const group = data.whoLabel ? el('label', { class: 'selbar' }, el('input', { type: 'checkbox', checked: acctDsGroup,
+    onchange: (e) => { acctDsGroup = e.target.checked; renderAccountDealSupports(data, fyStart); } }), `Group by ${data.whoLabel}`) : null;
+  sec.replaceChildren(
+    el('h3', {}, `${data.labelPlural}: ${rangeLabel}`, el('span', { class: 'spacer' }), group, seg,
+      el('button', { disabled: !list.length, onclick: () => exportAccountDealSupports(data, blocks, bySe, toHours, rangeLabel) }, 'Export to Excel')),
+    el('div', { class: 'tiles', style: 'grid-template-columns:repeat(2, minmax(0, 220px));margin-bottom:12px' },
+      el('div', { class: 'tile' }, el('div', { class: 'k' }, data.labelPlural), el('div', { class: 'v' }, list.length.toLocaleString())),
+      el('div', { class: 'tile' }, el('div', { class: 'k' }, data.hoursLabel), el('div', { class: 'v' }, fmtH(total)))),
+    acctDsEdit.editing?.box || '',
+    el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, '#'), el('th', {}, data.dateLabel),
+        showActivity ? el('th', {}, data.activityLabel) : null, showOpp ? el('th', {}, 'Opportunity') : null,
+        data.whoLabel ? el('th', {}, data.whoLabel) : null, showRole ? el('th', {}, 'Role') : null, el('th', { class: 'n' }, 'Hours'))),
+      tbody,
+      list.length ? el('tfoot', {}, sumRow('Total', list, '')) : null)),
+  );
+}
+
+// The panel's rows as shown (same period and grouping), with full names, subtotals, the total and links.
+function exportAccountDealSupports(data, blocks, bySe, toHours, rangeLabel) {
+  const showRole = blocks.some(([, rows]) => rows.some((r) => r.role));
+  const cols = [
+    { header: data.label, width: 34 }, { header: data.dateLabel, type: 'date', width: 13 },
+    ...(data.activityLabel ? [{ header: data.activityLabel, width: 22 }] : []), { header: 'Opportunity', width: 36 },
+    ...(data.whoLabel ? [{ header: data.whoLabel, width: 22 }] : []), ...(showRole ? [{ header: 'Role', width: 14 }] : []),
+    { header: 'Hours', type: 'number', width: 10 }, { header: 'Salesforce link', width: 45 },
+  ];
+  const line = (r) => [r.Name || r.Id, r.date, ...(data.activityLabel ? [r.activity] : []), r.oppName,
+    ...(data.whoLabel ? [r.who] : []), ...(showRole ? [r.role] : []), toHours(r.hours), `${me.instanceUrl}/${r.Id}`];
+  const sumLine = (label, rows) => ({ bold: true, values: [label, ...Array(cols.length - 3).fill(''), rows.reduce((s, r) => s + toHours(r.hours), 0), ''] });
+  const rows = [];
+  for (const [k, list] of blocks) rows.push(...list.map(line), sumLine(`Subtotal ${k}`, list));
+  rows.push(sumLine('Total', blocks.flatMap(([, list]) => list)));
+  const acct = current?.account?.Name || 'Account';
+  downloadXlsx(`${acct} - ${data.labelPlural} - ${rangeLabel}${bySe ? ' by SE' : ''} - ${todayStr()}.xlsx`.replace(/[\\/:*?"<>|]/g, '-'),
+    data.labelPlural, cols, rows)
+    .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
 }
 
 function renderSub() {
@@ -477,7 +763,7 @@ function renderSub() {
   const openOpps = current.opportunities.filter((o) => !o.IsClosed && !isHidden(o.Id));
   const pipeline = openOpps.reduce((s, o) => s + (o.Amount || 0), 0);
   document.getElementById('acctSub').textContent =
-    `Sales rep (owner): ${a.Owner?.Name || '—'} · ${openOpps.length} open opportunities · ${money(pipeline)} open pipeline` +
+    `${openOpps.length} open opportunities · ${money(pipeline)} open pipeline` +
     (current.opportunities.some((o) => isHidden(o.Id)) ? ' (hidden ones not counted)' : '');
 }
 
@@ -651,8 +937,12 @@ function renderFocusOpp(o) {
   sec.replaceChildren(el('h3', {}, 'Opportunity', el('span', { class: 'spacer' }), revert, save), form);
 }
 
+// The open edit form on the opportunity's Deal Supports list, and on the account's Deal Supports panel.
+const oppDsEdit = { editing: null }, acctDsEdit = { editing: null };
+
 async function loadDealSupports(o) {
   const sec = document.getElementById('dealSupports');
+  if (oppDsEdit.oppId !== o.Id) Object.assign(oppDsEdit, { oppId: o.Id, editing: null });
   try {
     dsMeta ||= await api('/deal-supports/meta');
     const records = await api(`/opportunities/${o.Id}/deal-supports`);
@@ -685,7 +975,9 @@ function dsColumns() {
 function renderDealSupports(o, records) {
   const sec = document.getElementById('dealSupports');
   const cols = dsColumns();
-  const ncols = cols.length + 2;
+  const canEdit = dsMeta.canUpdate;
+  const ncols = cols.length + 2 + (canEdit ? 1 : 0);
+  const edit = (r) => editDealSupport(r.Id, oppDsEdit, () => renderDealSupports(o, records), () => loadDealSupports(o));
   const tbody = el('tbody');
   for (const r of records) {
     const more = el('tr', { class: 'ds-more', hidden: true }, el('td', { colspan: ncols },
@@ -694,8 +986,9 @@ function renderDealSupports(o, records) {
       el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
     ));
     tbody.append(
-      el('tr', { class: 'ds-row', onclick: () => { more.hidden = !more.hidden; } },
-        cols.map((f) => el('td', {}, dsText(f, r[f.name]) || '—')),
+      el('tr', { class: 'ds-row' + (oppDsEdit.editing?.id === r.Id ? ' sel' : ''), onclick: () => { more.hidden = !more.hidden; } },
+        canEdit ? editPencil(r.Name, () => edit(r)) : null,
+        cols.map((f) => f.name === 'Name' ? dsNameCell(r.Name) : el('td', {}, dsText(f, r[f.name]) || '—')),
         el('td', {}, r.CreatedBy?.Name || ''),
         el('td', {}, shortDate(r.CreatedDate)),
       ),
@@ -714,8 +1007,9 @@ function renderDealSupports(o, records) {
     el('h3', {}, `${dsMeta.labelPlural} (${records.length})`, el('span', { class: 'spacer' }),
       el('button', { onclick: () => loadDealSupports(o) }, 'Reload'), add),
     formBox,
+    oppDsEdit.editing?.box || '',
     el('div', { class: 'tablewrap' }, el('table', {},
-      el('thead', {}, el('tr', {}, cols.map((f) => el('th', {}, f.label)), el('th', {}, 'Created by'), el('th', {}, 'Created'))),
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, cols.map((f) => el('th', {}, f.label)), el('th', {}, 'Created by'), el('th', {}, 'Created'))),
       tbody,
     )),
   );
@@ -754,35 +1048,97 @@ function dsValue(f, n) {
   return n.value;
 }
 
-function dealSupportForm(o, close) {
+// opts.values prefills fields by name; opts.submit(fields) does the create instead of posting to `o`
+// (My Calendar uses both); opts.title replaces the heading. opts.edit makes it an edit form for the
+// record in opts.values: fields Salesforce won't let you change are read-only, and submit gets only
+// the changed fields (null for a cleared one).
+function dealSupportForm(o, close, opts = {}) {
   const fields = dsMeta.fields.filter((f) => f.createable);
   const inputs = new Map(fields.map((f) => [f, dsInput(f)]));
+  for (const [f, n] of inputs) {
+    if (opts.edit) {
+      if (f.type === 'boolean') n.checked = false; else if (f.type !== 'multipicklist') n.value = '';
+      if (f.updateable === false) n.disabled = true;
+    }
+    const v = opts.values?.[f.name];
+    if (v == null || v === '') continue;
+    if (f.type === 'boolean') n.checked = !!v;
+    else if (f.type === 'multipicklist') for (const x of n.options) x.selected = String(v).split(';').includes(x.value);
+    else if (f.type === 'datetime') n.value = `${localDay(new Date(v))}T${hhmm24(new Date(v))}`;
+    else n.value = v;
+  }
+  // opts.derived fills one field from others as they change, e.g. the details from the activity and platform,
+  // until it is typed in.
+  if (opts.derived) {
+    const { field, from, value } = opts.derived;
+    const target = fields.find((f) => f.name === field), srcs = from.map((n) => fields.find((f) => f.name === n)).filter(Boolean);
+    if (target && srcs.length) {
+      const t = inputs.get(target);
+      let typed = false;
+      t.addEventListener('input', () => { typed = true; });
+      const update = () => { if (!typed) t.value = value(srcs.map((f) => dsText(f, dsValue(f, inputs.get(f))))); };
+      for (const f of srcs) for (const ev of ['input', 'change']) inputs.get(f).addEventListener(ev, update);
+      update();
+    }
+  }
+  const initial = new Map([...inputs].map(([f, n]) => [f, JSON.stringify(dsValue(f, n))]));
+  // A lookup on a saved record shows its record's name, with the Id it holds underneath (until it's changed).
+  const refName = (f) => {
+    const name = opts.edit && f.relationshipName && opts.values?.[f.relationshipName]?.Name;
+    if (!name) return null;
+    const n = inputs.get(f), id = n.value;
+    const note = el('span', { class: 'sub', style: 'margin:2px 0 0;display:block' }, 'Id: ' + id);
+    const show = el('b', { style: 'display:block;padding:6px 0' }, name);
+    n.hidden = true;
+    const change = el('button', { type: 'button', class: 'linkish', style: 'display:inline;margin-left:8px' }, 'Change');
+    change.addEventListener('click', (ev) => { ev.preventDefault(); n.hidden = false; show.remove(); note.remove(); change.remove(); n.focus(); });
+    return [show, note, n.disabled ? null : change];
+  };
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
-    el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f));
-  const required = fields.filter((f) => f.required);
-  const optional = fields.filter((f) => !f.required);
-  const create = el('button', { class: 'primary' }, `Create ${dsMeta.label}`);
+    el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f), refName(f));
+  // Shown up front: required fields, then the time fields (customer-facing, internal, travel) with a live total.
+  const time = fields.filter((f) => f.timeEntry);
+  const required = fields.filter((f) => f.required && !f.timeEntry);
+  const optional = fields.filter((f) => !f.required && !f.timeEntry);
+  const total = el('output', { style: 'display:block;padding:6px 0;font-weight:600' });
+  const showTotal = () => {
+    const h = time.reduce((s, f) => s + (Number(inputs.get(f).value) || 0), 0);
+    total.textContent = h.toLocaleString(undefined, { maximumFractionDigits: 2 });
+  };
+  for (const f of time) inputs.get(f).addEventListener('input', showTotal);
+  showTotal();
+  const create = el('button', { class: 'primary' }, opts.edit ? 'Save changes' : `Create ${dsMeta.label}`);
   const box = el('section', {},
-    el('h3', {}, `New ${dsMeta.label} for ${o.Name}`),
+    el('h3', {}, opts.title || `New ${dsMeta.label} for ${o.Name}`),
     el('div', { class: 'grid' }, required.map(cell)),
-    optional.length ? el('details', { class: 'optional', open: required.length === 0 },
+    time.length ? el('div', { class: 'grid', style: 'margin-top:10px' }, time.map(cell),
+      time.length > 1 ? el('label', {}, el('span', {}, 'Total time'), total) : null) : null,
+    optional.length ? el('details', { class: 'optional' },
       el('summary', {}, `More fields (${optional.length})`), el('div', { class: 'grid' }, optional.map(cell))) : null,
     el('div', { class: 'form-actions' }, el('button', { onclick: close }, 'Cancel'), create),
   );
   create.addEventListener('click', async () => {
-    const body = {};
+    const body = {}, now = new Map();
     for (const [f, n] of inputs) {
       const v = dsValue(f, n);
-      if (v !== null && !(f.type === 'boolean' && v === false && f.defaultValue !== true)) body[f.name] = v;
+      now.set(f, v);
+      if (opts.edit) { if (!n.disabled && JSON.stringify(v) !== initial.get(f)) body[f.name] = v; }
+      else if (v !== null && !(f.type === 'boolean' && v === false && f.defaultValue !== true)) body[f.name] = v;
     }
-    const missing = required.filter((f) => body[f.name] == null);
+    const missing = fields.filter((f) => f.required && now.get(f) == null);
     if (missing.length) return toast('Required: ' + missing.map((f) => f.label).join(', '), 'err');
     create.disabled = true;
     try {
+      if (opts.submit) return await opts.submit(body);
       const rec = await api(`/opportunities/${o.Id}/deal-supports`, { method: 'POST', body: { fields: body } });
       toast(`Created ${dsMeta.label}${rec?.Name ? ` "${rec.Name}"` : ''} in Salesforce`, 'ok');
       loadDealSupports(o);
-    } catch (e) { toast(e.message, 'err'); create.disabled = false; }
+    } catch (e) {
+      toast(e.message, 'err'); create.disabled = false;
+      // Salesforce wants a field that sits under "More fields": open it so the field can be filled in.
+      const named = optional.find((f) => e.message.includes(f.name) || e.message.includes(f.label));
+      if (named) { box.querySelector('details.optional').open = true; inputs.get(named).focus(); }
+    }
   });
   return box;
 }
@@ -951,7 +1307,7 @@ function renderForecastChart(opps, now, today) {
   const legend = cats.length > 1 ? el('div', { class: 'legend' },
     cats.map(([c, color]) => el('span', {}, el('i', { style: `background:${color}` }), c))) : null;
   const box = el('div');
-  sec.replaceChildren(el('h3', {}, 'Forecast by close date', el('span', { class: 'spacer' }), fynav, seg), legend, box);
+  sec.replaceChildren(el('h3', {}, 'Forecast by close date', el('span', { class: 'spacer' }), fynav, seg), legend || '', box);
 
   // Draw once the section is in the page, so its width is known.
   const W = Math.max(320, box.clientWidth || 600), H = 250, top = 18, bottom = 26, left = 46, right = 4;
@@ -1204,7 +1560,8 @@ async function showTime() {
 async function loadTime() {
   try {
     const by = timePrefs().by;
-    time.data = await api('/my-time' + (by ? '?by=' + encodeURIComponent(by) : ''));
+    [time.data] = await Promise.all([api('/my-time' + (by ? '?by=' + encodeURIComponent(by) : '')),
+      dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {})]);
     if (document.getElementById('timeBody')) renderTime();
   } catch (e) {
     const sub = document.getElementById('timeSub');
@@ -1362,26 +1719,530 @@ function renderTimeList(all, today) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const oppName = time.opp !== null ? list[0]?.oppName : null;
   const showRole = list.some((e) => e.role);
-  const tbody = el('tbody', {}, list.map((e) => el('tr', e.oppId && e.accountId ? { onclick: () => openDeal({ Id: e.oppId, AccountId: e.accountId }), title: 'Open this opportunity' } : {},
+  const canEdit = !!dsMeta?.canUpdate;
+  const edit = (e) => editDealSupport(e.id, time, () => renderTimeList(all, today), loadTime);
+  const tbody = el('tbody', {}, list.map((e) => el('tr', {
+    ...(e.oppId && e.accountId ? { onclick: () => openDeal({ Id: e.oppId, AccountId: e.accountId }), title: 'Open this opportunity' } : {}),
+    class: time.editing?.id === e.id ? 'sel' : null },
+    canEdit ? editPencil(e.name, () => edit(e)) : null,
     el('td', {}, e.date || '—'),
     el('td', { class: 'wrap' }, e.oppName),
     el('td', { class: 'wrap' }, e.accountName),
     showRole ? el('td', {}, e.role) : null,
-    el('td', { class: 'wrap' }, e.name || ''),
+    dsNameCell(e.name),
     el('td', { class: 'n' }, fmtH(e.hours)),
   )));
-  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 6, class: 'empty' }, 'No activities here.')));
+  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, 'No activities here.')));
   sec.replaceChildren(
     el('h3', {}, `${range.label}${oppName ? ` · ${oppName}` : ''}: ${plural(list.length, 'activity', 'activities')}, ${fmtH(hoursOf(list))}`,
       el('span', { class: 'spacer' }),
       time.opp !== null ? el('button', { onclick: () => { time.opp = null; renderTime(); } }, 'All opportunities')
         : el('span', { class: 'sub', style: 'margin:0' }, 'Click a tile, week or opportunity to narrow this list'),
       el('button', { disabled: !list.length, onclick: () => exportTime(list, showRole, range.label + (oppName ? ` - ${oppName}` : '')) }, 'Export to Excel')),
+    time.editing?.box || el('div'),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
-      el('thead', {}, el('tr', {}, el('th', {}, 'Date'), el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, 'Date'), el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
         showRole ? el('th', {}, 'Role') : null, el('th', {}, time.data.label), el('th', { class: 'n' }, 'Hours'))),
       tbody)),
   );
+}
+
+// ---------- My Calendar ----------
+// Your Salesforce calendar (Events you own), a week at a time. Events covered by a Deal Support are
+// green, the rest red (grey once marked "No Deal Support needed"). Pick an event to create a Deal
+// Support from it: choose the opportunity, and the form is prefilled from the event.
+const cal = { week: null, data: null, sel: null, loading: 0, sources: null, source: null };
+const CAL_SOURCE = 'sfdesk.calSource';
+const evTime = (s) => new Date(String(s).replace(/\+0000$/, 'Z'));
+const hhmm = (d) => d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+const evStatus = (e) => e.supports.length ? 'covered' : e.skipped ? 'skipped' : 'open';
+const STATUS_TEXT = { covered: 'Has a Deal Support', open: 'No Deal Support', skipped: 'No Deal Support needed' };
+const localDate = (s) => new Date(+s.slice(0, 4), +s.slice(5, 7) - 1, +s.slice(8, 10));
+
+function showCalendar() {
+  setNav('cal');
+  current = null;
+  cal.week ||= mondayOf(todayStr());
+  document.getElementById('app').replaceChildren(el('div', { class: 'cal', id: 'cal' },
+    el('div', { class: 'cal-main' },
+      el('div', { class: 'dash-head' },
+        el('h2', {}, 'Time Entry'),
+        el('span', { class: 'fynav' },
+          el('button', { onclick: () => moveWeek(-7), title: 'Previous week', 'aria-label': 'Previous week' }, '‹'),
+          el('span', { id: 'calWeek' }),
+          el('button', { onclick: () => moveWeek(7), title: 'Next week', 'aria-label': 'Next week' }, '›')),
+        el('button', { onclick: () => { cal.week = mondayOf(todayStr()); loadCalendar(); } }, 'This week'),
+        el('select', { id: 'calSource', 'aria-label': 'Calendar', style: 'width:auto;max-width:280px', hidden: true }),
+        el('span', { class: 'cal-legend' },
+          el('span', {}, el('i', { style: 'background:var(--covered);border-color:var(--covered-line)' }), 'Has a Deal Support'),
+          el('span', {}, el('i', { style: 'background:var(--open);border-color:var(--open-line)' }), 'No Deal Support'),
+          el('span', {}, el('i', { style: 'background:var(--skip);border-color:var(--skip-line)' }), 'Not needed')),
+        el('span', { class: 'spacer', style: 'flex:1' }),
+        el('button', { onclick: () => loadSources().then(loadCalendar) }, 'Reload'),
+      ),
+      el('div', { class: 'sub', id: 'calSub' }, 'Loading…'),
+      el('div', { id: 'calBody', class: 'cal-body' }),
+    ),
+    el('div', { class: 'cal-panel', id: 'calPanel', hidden: true }),
+  ));
+  loadSources().then(loadCalendar);
+}
+
+// Calendars to show: your Salesforce events, or (when SF Desk runs on a Mac) any calendar from the Mac's
+// Internet Accounts. The choice is remembered on this machine; the first time, the Exchange account's
+// main calendar is picked if there is one.
+async function loadSources() {
+  // Asked again after a refusal, so allowing access in System Settings and clicking Reload picks it up.
+  const wasRefused = !!cal.sources?.error;
+  if (!cal.sources || wasRefused) {
+    try { cal.sources = await api('/calendar/sources'); } catch { cal.sources = { mac: false, calendars: [] }; }
+  }
+  const { calendars, error } = cal.sources;
+  let saved = null;
+  try { saved = localStorage.getItem(CAL_SOURCE); } catch {}
+  const exchange = calendars.filter((c) => c.type === 'exchange');
+  const pick = (saved === 'salesforce' || calendars.some((c) => c.id === saved)) ? saved
+    : (exchange.find((c) => /^calendar$/i.test(c.title)) || exchange[0])?.id || 'salesforce';
+  if (!cal.source || (wasRefused && !error)) cal.source = pick;
+  cal.sourceNote = error || '';
+  const select = document.getElementById('calSource');
+  if (!select) return;
+  const groups = new Map();
+  for (const c of calendars) {
+    if (!groups.has(c.account)) groups.set(c.account, []);
+    groups.get(c.account).push(c);
+  }
+  select.replaceChildren(el('option', { value: 'salesforce' }, 'Salesforce events'),
+    ...[...groups].map(([account, list]) => el('optgroup', { label: `${account}${list[0].type === 'exchange' ? ' (Exchange)' : ''}` },
+      list.map((c) => el('option', { value: c.id }, c.title)))));
+  select.value = cal.source;
+  select.hidden = !cal.sources.mac;
+  select.onchange = () => {
+    cal.source = select.value; cal.sel = null;
+    try { localStorage.setItem(CAL_SOURCE, cal.source); } catch {}
+    loadCalendar();
+  };
+}
+
+function moveWeek(days) { cal.week = addDays(cal.week, days); cal.sel = null; loadCalendar(); }
+
+async function loadCalendar() {
+  const week = cal.week, ticket = ++cal.loading;
+  const end = addDays(week, 7);
+  document.getElementById('calWeek').textContent = `${monDay(week)} – ${monDay(addDays(week, 6))}, ${addDays(week, 6).slice(0, 4)}`;
+  const params = new URLSearchParams({ from: localDate(week).toISOString(), to: localDate(end).toISOString(),
+    d0: week, d1: addDays(week, 6), tz: new Date().getTimezoneOffset(), source: cal.source || 'salesforce' });
+  document.getElementById('calSub').textContent = 'Loading…';
+  try {
+    const [data] = await Promise.all([api('/calendar?' + params), dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; })]);
+    if (ticket !== cal.loading || !document.getElementById('calBody')) return;
+    cal.data = data;
+    renderCalendar();
+  } catch (e) {
+    if (ticket !== cal.loading) return;
+    // The Mac calendar refused (no permission yet) or failed: say why and show Salesforce events instead.
+    if (cal.source !== 'salesforce' && e.status !== 401) {
+      cal.sourceNote = e.message;
+      cal.source = 'salesforce';
+      const select = document.getElementById('calSource');
+      if (select) select.value = 'salesforce';
+      return loadCalendar();
+    }
+    const sub = document.getElementById('calSub');
+    if (sub) sub.textContent = e.message;
+    document.getElementById('calBody')?.replaceChildren();
+  }
+}
+
+function renderCalendar() {
+  const { events } = cal.data;
+  const by = { covered: 0, open: 0, skipped: 0 };
+  for (const e of events) by[evStatus(e)]++;
+  const fromMac = cal.data.source && cal.data.source !== 'salesforce';
+  document.getElementById('calSub').textContent = (cal.sourceNote && !fromMac ? `${cal.sourceNote} Showing Salesforce events. · ` : '') + (events.length
+    ? `${plural(events.length, 'event')} this week · ${by.covered} with a ${dsMeta.label} · ${by.open} without` +
+      (by.skipped ? ` · ${by.skipped} marked not needed` : '') + ' · Click an event to see it or create a ' + dsMeta.label
+    : fromMac ? 'No events in this calendar this week.' : 'No Salesforce events this week. If your Outlook or Google calendar reaches Salesforce through Einstein Activity Capture, ' +
+      'those meetings may not be stored as Salesforce events, so they can\'t be shown here.');
+
+  // Monday to Friday, plus the weekend days that have something on them.
+  const days = Array.from({ length: 7 }, (_, i) => addDays(cal.week, i))
+    .filter((d, i) => i < 5 || events.some((e) => e.date === d));
+  const timed = events.filter((e) => !e.allDay), allDay = events.filter((e) => e.allDay);
+  // Hours shown: 8:00 to 18:00, widened to fit the week's events.
+  let h0 = 8, h1 = 18;
+  for (const e of timed) {
+    const s = evTime(e.start), en = evTime(e.end);
+    h0 = Math.min(h0, s.getHours());
+    h1 = Math.max(h1, en.getDate() !== s.getDate() ? 24 : Math.ceil(en.getHours() + en.getMinutes() / 60));
+  }
+  const hourPx = 48, height = (h1 - h0) * hourPx, today = todayStr();
+  const evBox = (e) => {
+    const st = evStatus(e);
+    const n = el('button', { class: `ev ${st}${cal.sel === e.id ? ' sel' : ''}`, title: `${e.title || e.subject} · ${STATUS_TEXT[st]}`,
+      onclick: () => selectEvent(e.id) },
+      el('div', { class: 's' }, e.title || e.subject),
+      e.allDay ? null : el('div', { class: 't' }, `${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`));
+    return n;
+  };
+  const cols = days.map((d) => {
+    const col = el('div', { class: 'hours-col', style: `height:${height}px` });
+    for (let h = h0; h < h1; h++) col.append(el('div', { class: 'hl', style: `top:${(h - h0) * hourPx}px` }));
+    if (d === today) {
+      const now = new Date(), m = (now.getHours() - h0) * 60 + now.getMinutes();
+      if (m >= 0 && m <= (h1 - h0) * 60) col.append(el('div', { class: 'now-line', style: `top:${m / 60 * hourPx}px` }));
+    }
+    // Lay overlapping events side by side: group events that overlap, then give each the first free lane.
+    const list = timed.filter((e) => e.date === d).map((e) => {
+      const s = evTime(e.start), en = evTime(e.end);
+      const a = (s.getHours() - h0) * 60 + s.getMinutes();
+      const b = en.getDate() !== s.getDate() ? (h1 - h0) * 60 : (en.getHours() - h0) * 60 + en.getMinutes();
+      return { e, a, b: Math.max(b, a + 20) };
+    }).sort((x, y) => x.a - y.a || y.b - x.b);
+    let group = [], groupEnd = -1;
+    const flush = () => {
+      const lanes = [];
+      for (const it of group) {
+        let lane = lanes.findIndex((end) => end <= it.a);
+        if (lane < 0) { lane = lanes.length; lanes.push(0); }
+        lanes[lane] = it.b; it.lane = lane;
+      }
+      for (const it of group) {
+        const w = 100 / lanes.length;
+        const n = evBox(it.e);
+        n.style.cssText = `top:${it.a / 60 * hourPx}px;height:${(it.b - it.a) / 60 * hourPx - 2}px;left:calc(${it.lane * w}% + 2px);width:calc(${w}% - 4px)`;
+        col.append(n);
+      }
+      group = []; groupEnd = -1;
+    };
+    for (const it of list) {
+      if (group.length && it.a >= groupEnd) flush();
+      group.push(it); groupEnd = Math.max(groupEnd, it.b);
+    }
+    flush();
+    return col;
+  });
+  const gutter = el('div', { class: 'hours-col gutter', style: `height:${height}px` });
+  for (let h = h0 + 1; h < h1; h++) {
+    gutter.append(el('div', { class: 'hl-label', style: `top:${(h - h0) * hourPx}px` },
+      new Date(2000, 0, 1, h).toLocaleTimeString([], { hour: 'numeric' })));
+  }
+  const dayName = (d) => localDate(d).toLocaleDateString([], { weekday: 'short' });
+  // Phones get a list of the week's days instead of the time grid.
+  if (CAL_NARROW.matches) {
+    const at = (e) => e.allDay ? '' : e.start;
+    document.getElementById('calBody').replaceChildren(el('div', { class: 'agenda' }, days.map((d) => {
+      const list = events.filter((e) => e.date === d).sort((x, y) => at(x).localeCompare(at(y)));
+      return el('div', { class: 'agenda-day' + (d === today ? ' today' : '') },
+        el('div', { class: 'agenda-head' }, localDate(d).toLocaleDateString([], { weekday: 'long', month: 'short', day: 'numeric' })),
+        list.length ? list.map(evBox) : el('div', { class: 'sub', style: 'margin:0' }, 'Nothing scheduled'));
+    })), el('section', { id: 'calWeekDs' }));
+    renderWeekDealSupports();
+    renderEventPanel();
+    return;
+  }
+  document.getElementById('calBody').replaceChildren(el('div', { class: 'week', style: `--days:${days.length}` },
+    el('div', { class: 'week-row' }, el('div', { class: 'day-head' }),
+      days.map((d) => el('div', { class: 'day-head' + (d === today ? ' today' : '') }, dayName(d), el('b', {}, +d.slice(8, 10))))),
+    allDay.length ? el('div', { class: 'week-row' }, el('div', { class: 'gutter-label' }, 'All day'),
+      days.map((d) => el('div', { class: 'allday' }, allDay.filter((e) => e.date === d).map(evBox)))) : null,
+    el('div', { class: 'week-row' }, gutter, cols),
+  ), el('section', { id: 'calWeekDs' }));
+  renderWeekDealSupports();
+  renderEventPanel();
+}
+
+// My Deal Supports dated in the week shown, with a total; "Event" picks the meeting each one covers.
+function renderWeekDealSupports() {
+  const sec = document.getElementById('calWeekDs');
+  const { week = [], weekHours, activityLabel } = cal.data;
+  const unit = weekHours?.unit;
+  const toHours = (v) => v == null || v === '' ? 0 : unit === 'text' ? parseDuration(v) : unit === 'minutes' ? Number(v) / 60 : Number(v) || 0;
+  const evTitle = (id) => cal.data.events.find((e) => e.id === id)?.title || 'event';
+  const canEdit = dsMeta.canUpdate;
+  const tbody = el('tbody', {}, week.map((r) => el('tr', { class: 'nolink' + (r.events.includes(cal.sel) ? ' sel' : '') + (cal.editing?.id === r.Id ? ' sel' : '') },
+    canEdit ? editPencil(r.Name, () => editWeekDealSupport(r)) : null,
+    el('td', {}, el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: `${r.Name || r.Id} · Open in Salesforce` }, dsNum(r.Name) || r.Id)),
+    el('td', {}, r.date),
+    activityLabel ? el('td', { class: 'wrap' }, r.activity) : null,
+    el('td', { class: 'wrap' }, [r.accountName, r.oppName].filter(Boolean).join(' · ')),
+    el('td', { class: 'wrap' }, r.events.length
+      ? r.events.map((id) => el('button', { class: 'linkish', onclick: () => { cal.sel = id; renderCalendar(); } }, evTitle(id)))
+      : el('span', { class: 'sub', style: 'margin:0' }, 'No matching event')),
+    el('td', { class: 'n' }, fmtH(toHours(r.hours))))));
+  if (!week.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, `None of your ${dsMeta.labelPlural.toLowerCase()} are dated this week.`)));
+  sec.replaceChildren(
+    el('h3', {}, `Your ${dsMeta.labelPlural} this week (${week.length})`),
+    (!CAL_WIDE.matches && cal.editing?.box) || el('div'),
+    el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, '#'), el('th', {}, 'Date'), activityLabel ? el('th', {}, activityLabel) : null,
+        el('th', {}, 'Account · Opportunity'), el('th', {}, 'Event'), el('th', { class: 'n' }, 'Hours'))),
+      tbody,
+      week.length ? el('tfoot', {}, el('tr', {}, el('td', { colspan: (activityLabel ? 5 : 4) + (canEdit ? 1 : 0) }, `Total (${week.length})`),
+        el('td', { class: 'n' }, fmtH(week.reduce((s, r) => s + toHours(r.hours), 0))))) : null)),
+  );
+}
+
+// Edit one of the week's Deal Supports, above the list.
+// On wide screens the form opens in the panel beside the calendar, in place of a selected event.
+const editWeekDealSupport = (r) => {
+  if (CAL_WIDE.matches) cal.sel = null;
+  editDealSupport(r.Id, cal, () => { renderWeekDealSupports(); renderEventPanel(); renderCalendarSel(); }, loadCalendar);
+};
+
+// Edit a Deal Support in the create form, prefilled from the record. `host` is the page's state, whose
+// `editing` holds the open form; rerender() redraws the list it sits above, reload() refreshes after saving.
+async function editDealSupport(id, host, rerender, reload) {
+  if (host.editing?.id === id) return host.editing.box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+  const close = () => { host.editing = null; rerender(); };
+  let data;
+  try {
+    dsMeta ||= await api('/deal-supports/meta');
+    data = await api(`/deal-supports/${id}`);
+  } catch (err) { return toast(err.message, 'err'); }
+  let picked = data.opportunity;
+  const picker = dsMeta.oppUpdateable ? oppCombobox({ picked, onPick: (o) => { picked = o; } }) : null;
+  const box = dealSupportForm(null, close, {
+    edit: true,
+    title: `Edit ${dsMeta.label} ${data.record.Name || ''}`.trim(),
+    values: data.record,
+    submit: async (fields) => {
+      if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
+      const moved = picked.Id !== data.opportunity?.Id;
+      await api(`/deal-supports/${id}`, { method: 'PATCH', body: { fields, opportunityId: moved ? picked.Id : undefined } });
+      toast(`Saved ${dsMeta.label}${data.record.Name ? ` "${data.record.Name}"` : ''}`, 'ok');
+      host.editing = null;
+      await reload();
+    },
+  });
+  box.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
+    picker ? [el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), picker.input)),
+      picker.list, picker.status]
+      : el('div', {}, 'Opportunity: ', el('b', {}, picked?.Name || '—'))));
+  box.classList.add('ds-edit');
+  host.editing = { id, box };
+  rerender();
+  box.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+}
+
+// Lists show a Deal Support by the number in its name (e.g. "DR-012345" -> "012345"); the full name is the tooltip.
+const dsNum = (name) => (String(name || '').match(/\d+(?!.*\d)/) || [name])[0];
+const dsNameCell = (name, props = {}) => el('td', { ...props, title: name || null }, dsNum(name) || '');
+
+// The pencil that opens a Deal Support's edit form (shown when your user can edit them).
+const editPencil = (name, onclick) => el('td', { class: 'edit-cell' }, el('button', { class: 'icon-btn', title: `Edit ${name || dsMeta.label}`,
+  'aria-label': `Edit ${name || dsMeta.label}`, onclick: (ev) => { ev.stopPropagation(); onclick(); } }, '✎'));
+
+function selectEvent(id) {
+  cal.sel = cal.sel === id ? null : id;
+  if (cal.sel && CAL_WIDE.matches) cal.editing = null;
+  renderCalendar();
+  // Below 1000px the event panel sits above the calendar: bring it into view.
+  if (cal.sel && window.matchMedia('(max-width: 1000px)').matches) document.getElementById('calPanel').scrollIntoView({ block: 'start', behavior: 'smooth' });
+}
+// Keep the calendar's selected-event outline in step without redrawing it.
+function renderCalendarSel() {
+  document.querySelectorAll('#calBody .ev.sel').forEach((n) => n.classList.remove('sel'));
+}
+const CAL_WIDE = window.matchMedia('(min-width: 1100px)');
+CAL_WIDE.addEventListener('change', () => { if (cal.data && document.getElementById('calBody')) renderCalendar(); });
+const CAL_NARROW = window.matchMedia('(max-width: 640px)');
+CAL_NARROW.addEventListener('change', () => { if (cal.data && document.getElementById('calBody')) renderCalendar(); });
+
+// Values for the new Deal Support form, taken from the event.
+function eventPrefill(e) {
+  const p = cal.data.prefill, v = {};
+  if (p.nameField) v[p.nameField.name] = (e.title || e.subject).slice(0, p.nameField.length || 80);
+  if (p.dateField) {
+    v[p.dateField.name] = p.dateField.type === 'datetime' && !e.allDay
+      ? `${e.date}T${hhmm24(evTime(e.start))}` : e.date;
+  }
+  const mins = e.minutes ?? (e.allDay ? null : (evTime(e.end) - evTime(e.start)) / 60000);
+  if (p.hoursField && mins != null && !e.allDay) {
+    const hours = Math.round(mins / 60 * 100) / 100;
+    if (p.hoursField.unit === 'minutes') v[p.hoursField.name] = Math.round(mins);
+    else if (p.hoursField.unit === 'hours') v[p.hoursField.name] = hours;
+    else if (p.hoursField.picklist) {
+      const opt = p.hoursField.picklist.find((o) => Math.abs(parseDuration(o) - hours) < 0.01);
+      if (opt) v[p.hoursField.name] = opt;
+    } else v[p.hoursField.name] = String(hours);
+  }
+  const desc = meetingNotes(e.description);
+  if (p.descField && desc) v[p.descField.name] = desc.slice(0, p.descField.length || 32000);
+  if (p.userField?.onForm) v[p.userField.name] = me.user.id;
+  return v;
+}
+// An event's description without the online-meeting invitation (Teams, Zoom, Webex, Google Meet):
+// the block from its "____" divider or "Microsoft Teams meeting" / "Join ..." line through the meeting
+// Id, passcode, dial-in numbers and help links. What's left is what was written about the meeting.
+function meetingNotes(text) {
+  let lines = String(text || '').replace(/\r\n?/g, '\n').split('\n');
+  const divider = (l) => /^\s*[_\-=]{10,}\s*$/.test(l);
+  const opener = (l) => /^\s*(microsoft teams( meeting| need help)?|join (the meeting now|on your computer|zoom meeting|with google meet|webex meeting|from the meeting link)|.*is inviting you to a scheduled zoom meeting|you have been invited to a webex|join meeting)\b/i.test(l);
+  const invite = (l) => /^\s*(meeting id|passcode|password|phone conference id|dial[- ]?in|dial by your location|one tap mobile|join by phone|find a local number|reset (dial-in )?pin|need help\?|meeting options|learn more|for organizers|join with a video conferencing device|or call in|access code|tap to join|\+?\d[\d\s().,#*-]{7,})/i.test(l) ||
+    /(teams\.microsoft\.com|teams\.live\.com|zoom\.us\/|webex\.com|meet\.google\.com|aka\.ms\/JoinTeamsMeeting)/i.test(l);
+  // Drop each invitation block: from an opening divider or line to the closing divider (or the end).
+  for (let i = 0; i < lines.length; i++) {
+    if (!(divider(lines[i]) && lines.slice(i + 1, i + 4).some(opener)) && !opener(lines[i])) continue;
+    let j = i + 1;
+    while (j < lines.length && !divider(lines[j])) j++;
+    lines.splice(i, Math.min(j + 1, lines.length) - i);
+    i--;
+  }
+  // Meeting footers: image placeholders ("[Company Logo]"), copyright notices and "Org help | Privacy and security" links.
+  const footer = (l) => /^\s*\[[^\]]{1,60}\]\s*$/.test(l) || /^\s*(©|\(c\)|copyright\b)/i.test(l) || /all rights reserved\.?\s*$/i.test(l) ||
+    /^\s*(org help|privacy and security|privacy statement)\b/i.test(l);
+  lines = lines.filter((l) => !invite(l) && !divider(l) && !footer(l));
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+const hhmm24 = (d) => `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+const localDay = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+function renderEventPanel() {
+  const panel = document.getElementById('calPanel');
+  const e = cal.data?.events.find((x) => x.id === cal.sel);
+  // Wide screens keep the panel beside the calendar as the place to enter time: the event and its
+  // create form, a Deal Support being edited, or a prompt when neither is picked.
+  const wide = CAL_WIDE.matches;
+  document.getElementById('cal').classList.toggle('with-panel', !!e || wide);
+  panel.hidden = !e && !wide;
+  if (wide && cal.editing) return panel.replaceChildren(cal.editing.box);
+  if (!e) return panel.replaceChildren(wide ? el('section', { class: 'cal-empty' }, el('h3', {}, 'Enter time'),
+    el('p', { class: 'sub', style: 'margin:0' }, `Select an event on the calendar to create a ${dsMeta.label} from it, ` +
+      `or click ✎ on one of your ${dsMeta.labelPlural} below to edit it.`)) : '');
+  const st = evStatus(e);
+  const when = e.allDay ? `${localDate(e.date).toLocaleDateString()} (all day)`
+    : `${evTime(e.start).toLocaleDateString([], { weekday: 'short', month: 'short', day: 'numeric' })}, ${hhmm(evTime(e.start))} – ${hhmm(evTime(e.end))}`;
+  const sfLink = (id, text) => el('a', { href: `${me.instanceUrl}/${id}`, target: '_blank', rel: 'noopener' }, text);
+  const skip = el('button', { onclick: async () => {
+    try {
+      await api(`/calendar/events/${e.id}/skip`, { method: 'POST', body: { skip: !e.skipped, copies: e.copies || [] } });
+      e.skipped = !e.skipped;
+      renderCalendar();
+    } catch (err) { toast(err.message, 'err'); }
+  } }, e.skipped ? 'Needs a Deal Support after all' : 'No Deal Support needed');
+  const formBox = el('div');
+  const create = el('button', { class: 'primary', onclick: () => { create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
+    st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
+  if (!dsMeta.canCreate) create.hidden = true;
+
+  panel.replaceChildren(
+    el('section', {},
+      el('h3', {}, e.title || e.subject, el('span', { class: 'spacer' }), el('button', { onclick: () => selectEvent(e.id), 'aria-label': 'Close' }, '✕')),
+      el('div', { style: 'margin:-6px 0 10px' }, el('span', { class: 'status-pill ' + st }, STATUS_TEXT[st])),
+      el('dl', {},
+        el('dt', {}, 'When'), el('dd', {}, when),
+        e.calendar ? [el('dt', {}, 'Calendar'), el('dd', {}, e.calendar)] : null,
+        e.location ? [el('dt', {}, 'Where'), el('dd', {}, e.location)] : null,
+        e.who ? [el('dt', {}, 'With'), el('dd', {}, e.who)] : null,
+        e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
+        e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
+          el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null)))] : null,
+      ),
+      e.description ? el('div', { class: 'desc' }, e.description) : el('div', { class: 'sub' }, 'No description on this event.'),
+      el('div', { class: 'panel-actions', style: 'margin-top:12px' }, create, st !== 'covered' ? skip : null, e.sfEvent === false ? null : sfLink(e.id, 'Open event in Salesforce ↗')),
+    ),
+    formBox,
+  );
+}
+
+// The "create from event" form: pick an opportunity, then the Deal Support fields, prefilled from the event.
+// With nothing written about the meeting but the invitation, the details default to
+// "<Requested Activity> - <Platform Request>" from the form, kept up to date as those are picked.
+function descDefault(e) {
+  const p = cal.data.prefill;
+  if (!p.descField || meetingNotes(e.description)) return null;
+  const find = (...tests) => tests.map((t) => dsMeta.fields.find((f) => typeof t === 'string' ? f.name === t : t.test(f.label))).find(Boolean);
+  const from = [find('Requested_SaaS_Activity__c', /requested.*activity/i),
+    find('Platform_Request__c', /^platform request$/i, 'IdentityNow_Platform_Modules__c', /platform/i)]
+    .filter((f) => f && f.name !== p.descField.name).map((f) => f.name);
+  return from.length ? { field: p.descField.name, from, value: (vals) => vals.filter(Boolean).join(' - ') } : null;
+}
+
+function createFromEvent(e, close) {
+  // The event's opportunity (its own, or borrowed from the Salesforce copy of a Mac event) is preselected.
+  const oppId = e.oppId || (e.what?.type === 'Opportunity' || String(e.what?.id || '').startsWith('006') ? e.what.id : null);
+  let picked = oppId ? { Id: oppId, Name: e.what?.id === oppId ? e.what.name || oppId : oppId } : null;
+  const picker = oppCombobox({
+    picked,
+    // Opportunities on the event's account, or on accounts named in its title, are listed first.
+    accounts: [e.what?.type === 'Account' && e.what.id].filter(Boolean),
+    title: e.title || e.subject,
+    onPick: (o) => { picked = o; },
+  });
+  const form = dealSupportForm(null, close, {
+    title: `New ${dsMeta.label} from this event`,
+    values: eventPrefill(e),
+    derived: descDefault(e),
+    submit: async (fields) => {
+      if (!picked) throw new Error('Pick the opportunity this ' + dsMeta.label + ' is for.');
+      const rec = await api(`/calendar/events/${e.id}/deal-support`, { method: 'POST', body: { opportunityId: picked.Id, fields } });
+      toast(`Created ${dsMeta.label}${rec?.Name ? ` "${rec.Name}"` : ''} on ${picked.Name}`, 'ok');
+      await loadCalendar();
+    },
+  });
+  // The opportunity picker goes at the top of the form.
+  form.querySelector('h3').after(el('div', { style: 'margin-bottom:12px' },
+    el('div', { class: 'grid' }, el('label', {}, el('span', {}, 'Opportunity', el('span', { class: 'req' }, ' *')), picker.input)),
+    picker.list, picker.status));
+  return form;
+}
+
+// Type to filter all open opportunities (searched on the server's local copy, sorted by name).
+// Arrow keys move through the list and Enter picks; suggested ones (see /opportunities/open) come first.
+function oppCombobox({ picked, accounts = [], title = '', onPick }) {
+  const input = el('input', { type: 'search', placeholder: 'Type to find an open opportunity or account…', autocomplete: 'off',
+    role: 'combobox', 'aria-label': 'Opportunity', 'aria-expanded': 'true' });
+  const list = el('div', { class: 'opp-pick', role: 'listbox' }, el('div', { class: 'empty' }, 'Loading open opportunities…'));
+  const status = el('div', { class: 'sub', style: 'margin:6px 0 0' });
+  let rows = [], active = -1, ticket = 0, info = null;
+  const showStatus = () => {
+    status.textContent = (picked ? `Picked: ${picked.Name}${picked.Account?.Name ? ` (${picked.Account.Name})` : ''}` : 'Nothing picked yet.') +
+      (info ? ` · ${info.matched.toLocaleString()} of ${info.total.toLocaleString()} open opportunities match` +
+        (info.matched > rows.length ? `, showing the first ${rows.length}` : '') : '');
+  };
+  const choose = (o) => { picked = o; onPick(o); render(); };
+  const render = () => {
+    const shown = picked && !input.value.trim() && !rows.some((o) => o.Id === picked.Id) ? [picked, ...rows] : rows;
+    list.replaceChildren(...(shown.length ? shown.map((o, i) => el('button', {
+      type: 'button', role: 'option', 'aria-selected': String(picked?.Id === o.Id),
+      class: [picked?.Id === o.Id && 'on', i === active && 'active'].filter(Boolean).join(' ') || null,
+      onclick: () => choose(o),
+    }, el('div', {}, o.Name, o.suggested ? el('span', { class: 'tag' }, 'suggested') : null),
+      el('div', { class: 'm' }, [o.Account?.Name, o.StageName, o.CloseDate && `closes ${o.CloseDate}`, o.Owner?.Name].filter(Boolean).join(' · '))))
+      : [el('div', { class: 'empty' }, input.value.trim() ? 'No open opportunities match.' : 'No open opportunities.')]));
+    list.querySelector('.active')?.scrollIntoView({ block: 'nearest' });
+    showStatus();
+  };
+  const load = async () => {
+    const my = ++ticket;
+    const params = new URLSearchParams({ q: input.value.trim(), limit: 100 });
+    if (accounts.length) params.set('accounts', accounts.join(','));
+    if (title) params.set('title', title);
+    try {
+      const r = await api('/opportunities/open?' + params);
+      if (my !== ticket) return;
+      rows = r.records; info = r; active = -1;
+      render();
+    } catch (err) { if (my === ticket) list.replaceChildren(el('div', { class: 'empty' }, err.message)); }
+  };
+  let timer;
+  input.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(load, 120); });
+  input.addEventListener('keydown', (ev) => {
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') {
+      ev.preventDefault();
+      const n = list.querySelectorAll('button').length;
+      if (n) { active = (active + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n; render(); }
+    } else if (ev.key === 'Enter') {
+      ev.preventDefault();
+      const btn = list.querySelectorAll('button')[active < 0 ? 0 : active];
+      btn?.click();
+    }
+  });
+  showStatus();
+  load();
+  return { input, list, status };
 }
 
 let resizeTimer;

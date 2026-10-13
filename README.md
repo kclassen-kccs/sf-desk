@@ -12,12 +12,39 @@ your Salesforce user is already allowed to, and it only writes when you click **
   starts Feb 1 and is named for the calendar year it ends in (FY27 = Feb 2026 – Jan 2027)
 - **My Time** totals the hours on your Deal Supports across all opportunities: this week, the previous week,
   the last 30 days, this fiscal quarter and this fiscal year, hours per week for the last 13 weeks, and hours
-  per opportunity for any of those periods. Click a tile, week or opportunity to list its activities. Weeks
+  per opportunity for any of those periods. Click a tile, week or opportunity to list its activities (the pencil
+  on a row edits that Deal Support). Weeks
   start on Monday
 - **Export to Excel** on the Pipeline deal list and the My Time activity list downloads the rows shown (after
   filters, hidden records and any clicked bar, tile or opportunity) as an .xlsx with typed dates, amounts and
   hours, a total row and a link to each record
+- **Time Entry** shows your calendar a week at a time. On a Mac it reads the calendars from your Internet
+  Accounts (System Settings > Internet Accounts), starting with the Exchange account's calendar if there is
+  one; pick another calendar, or **Salesforce events** (the Event records you own), from the list at the top.
+  The first time, macOS asks to let the app you run SF Desk from (e.g. Terminal) access your calendars; if you
+  say no, the tab says so and shows Salesforce events. SF Desk builds a small calendar reader (`mac/calendar.swift`)
+  with the Xcode Command Line Tools on first use; without them it asks Calendar.app instead, which is slower.
+  Events with a Deal Support are green, events without one are red, and ones you mark **No Deal Support needed**
+  turn grey. Click an event to see its details, then **Create Deal Support**: type to find the opportunity among
+  all open opportunities (opportunities on accounts named in the meeting title come first), and the form is
+  prefilled from the event: name from the title, activity date from the start, meeting duration in hours, the
+  event description in the details field (without the Teams, Zoom or Webex joining details; when nothing else is
+  written, the details default to "Requested Activity - Platform Request" from the form), and you as the Assigned SE. An event counts as covered when a Deal
+  Support was created from it here (remembered in the local database), or when one of yours has the same
+  activity date and the same opportunity, account or name. For Mac calendar events the account and opportunity
+  come from the matching Salesforce event (e.g. synced by Outreach) at the same time, else from the meeting
+  title and the attendees' email domains. Salesforce events logged twice at the same time (e.g. by
+  Outreach, on the account and on the opportunity) are shown once. The open opportunity list is kept in the
+  local database and refreshed from Salesforce every 4 hours. Under the calendar is the list of your Deal
+  Supports dated that week; the pencil on a row opens it in the same form to edit (only changed fields are saved)
+- Works from phone width up to wide desktops: on phones the tabs fold into a ☰ menu, Accounts shows the list
+  or the account (with a back button), Time Entry lists the week day by day, and list tables become cards; on wide
+  screens (1100px and up) Time Entry keeps a panel beside the calendar for entering time: the selected event and its
+  create form, the Deal Support being edited, or a prompt when nothing is picked
 - Lists accounts where you are the Lead SE by default (or all you can see) with search
+- The account screen shows the sales rep prominently, and a **Deal Supports** panel with everyone's Deal Supports
+  on the account and its opportunities for the last 30, 60 or 90 days or the fiscal year to date: count, total
+  hours and the list (click one to open it in Salesforce; the pencil edits it)
 - Shows account details plus its opportunities (only the ones where you are Lead SE, unless you untick the filter), with open pipeline total
 - Lists accounts A–Z by name (or most recently modified first); filters the list to one sales rep and/or groups it by sales rep (the sales rep is the account owner)
 - Shows only open opportunities on an account by default; tick **Show closed** to see all of them
@@ -97,7 +124,10 @@ Custom fields work too, e.g. `Region__c`.
 SF Desk finds the Deal Support object by its label ("Deal Support") and uses its lookup to Opportunity.
 The new-record form shows the fields on its page layout (for your default record type): required ones first,
 the rest under **More fields**. To pick the fields yourself, set `SF_DEAL_SUPPORT_FIELDS` in `.env` to a
-comma-separated list of API names.
+comma-separated list of API names. **More fields** starts closed. Platform Capabilities and Integration
+Modules are optional on the form even though the layout requires them (`SF_DEAL_SUPPORT_OPTIONAL` lists the
+fields treated this way); if Salesforce itself requires one, the save fails with its message and the field is
+shown. Role starts as **Lead SE** when that is one of its values.
 If it can't find the object, set `SF_DEAL_SUPPORT_OBJECT` in `.env` to its API name (e.g. `Deal_Support__c`);
 if the object has more than one lookup to Opportunity, set `SF_DEAL_SUPPORT_OPP_FIELD` to the right one.
 Deal Supports are read live from Salesforce and aren't kept in the local copy, except the last My Time load,
