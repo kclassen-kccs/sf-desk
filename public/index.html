@@ -928,8 +928,8 @@ function dealSupportForm(o, close, opts = {}) {
   const cell = (f) => el('label', { class: f.type === 'textarea' ? 'wide' : null },
     el('span', {}, f.label, f.required ? el('span', { class: 'req' }, ' *') : null), inputs.get(f));
   // Shown up front: required fields, then the time fields (customer-facing, internal, travel) with a live total.
-  const time = fields.filter((f) => f.timeEntry && !f.required);
-  const required = fields.filter((f) => f.required);
+  const time = fields.filter((f) => f.timeEntry);
+  const required = fields.filter((f) => f.required && !f.timeEntry);
   const optional = fields.filter((f) => !f.required && !f.timeEntry);
   const total = el('output', { style: 'display:block;padding:6px 0;font-weight:600' });
   const showTotal = () => {
@@ -954,7 +954,7 @@ function dealSupportForm(o, close, opts = {}) {
       const v = dsValue(f, n);
       if (v !== null && !(f.type === 'boolean' && v === false && f.defaultValue !== true)) body[f.name] = v;
     }
-    const missing = required.filter((f) => body[f.name] == null);
+    const missing = fields.filter((f) => f.required && body[f.name] == null);
     if (missing.length) return toast('Required: ' + missing.map((f) => f.label).join(', '), 'err');
     create.disabled = true;
     try {
