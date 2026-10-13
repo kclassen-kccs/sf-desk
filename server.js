@@ -16,6 +16,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { openDb } from './db.js';
 import { isMac, macCalendar } from './macCalendar.js';
+import { isWindows, windowsCalendar } from './windowsCalendar.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const { version: VERSION } = JSON.parse(fs.readFileSync(path.join(__dirname, 'package.json'), 'utf8'));
@@ -71,7 +72,9 @@ const wrap = (fn) => (req, res, next) => fn(req, res, next).catch(next);
 const b64url = (buf) => buf.toString('base64url');
 
 const store = openDb(DB_FILE);
-const macCal = isMac ? macCalendar(__dirname, path.dirname(DB_FILE)) : null;
+// This computer's own calendar for Time Entry: the Mac's Internet Accounts, or classic Outlook on Windows.
+const localCal = isMac ? macCalendar(__dirname, path.dirname(DB_FILE)) : isWindows ? windowsCalendar(__dirname) : null;
+const LOCAL_CAL_NAME = isWindows ? 'Outlook calendar' : 'Mac calendar';
 
 const app = express();
 app.use(express.json({ limit: '100kb' }));
@@ -105,12 +108,19 @@ app.get('/outlook/manifest.xml', (req, res) => {
 // The sf CLI reads SF_API_VERSION too, and rejects our "v62.0" form, so it doesn't get ours.
 const { SF_API_VERSION: _apiVersion, ...CLI_ENV } = process.env;
 
+// On Windows sf is a batch file (sf.cmd), which Node only runs through cmd.exe, so the command line
+// is quoted by hand there. Our arguments are fixed words plus the org alias.
+const winQuote = (a) => (/^[\w.:\\/@-]+$/.test(a) ? a : `"${String(a).replace(/"/g, '')}"`);
+
 // Run an sf CLI command with --json and return its parsed output (errors become HttpErrors).
 function runCli(args) {
   const target = SF_TARGET_ORG ? ['--target-org', SF_TARGET_ORG] : [];
+  const all = [...args, '--json', ...target];
+  const opts = { timeout: 60_000, maxBuffer: 1024 * 1024, env: CLI_ENV, windowsHide: true };
   return new Promise((resolve, reject) => {
-    execFile(SF_CLI, [...args, '--json', ...target], { timeout: 60_000, maxBuffer: 1024 * 1024, env: CLI_ENV }, (err, stdout) => {
-      if (err?.code === 'ENOENT') {
+    const done = (err, stdout) => {
+      // cmd.exe reports a missing sf as "not recognized" (exit code 1) rather than ENOENT.
+      if (err?.code === 'ENOENT' || (isWindows && !String(stdout).trim() && /not recognized/i.test(String(err?.message)))) {
         return reject(new HttpError(400, 'Salesforce CLI (sf) not found. Install it, or set SF_CLI_PATH in .env. See README.md.'));
       }
       let out = null;
@@ -121,7 +131,9 @@ function runCli(args) {
           `Run "sf org login web${SF_TARGET_ORG ? ` --alias ${SF_TARGET_ORG}` : ' --set-default'}" and try again.`));
       }
       resolve(out.result);
-    });
+    };
+    if (isWindows) execFile([SF_CLI, ...all].map(winQuote).join(' '), [], { ...opts, shell: true }, done);
+    else execFile(SF_CLI, all, opts, done);
   });
 }
 
@@ -1275,10 +1287,11 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
   return list;
 }
 
-// Events from one of the Mac's calendars. Attendee domains other than my own help find the account.
-async function macEvents(req, calendarId, { from, to }) {
+// Events from one of this computer's calendars (the Mac's, or Outlook's on Windows). Attendee domains
+// other than my own help find the account.
+async function localEvents(req, calendarId, { from, to }) {
   const myDomain = String(req.session.sf.user.username || '').split('@')[1]?.toLowerCase();
-  const events = await macCal.events(from, to, [calendarId]);
+  const events = await localCal.events(from, to, [calendarId]);
   return events.map((e) => {
     const others = (e.attendees || []).filter((a) => !a.me && a.email && !a.email.toLowerCase().endsWith('@' + myDomain));
     return {
@@ -1312,19 +1325,21 @@ async function borrowSalesforceLinks(req, events, range) {
   }
 }
 
-// The Mac's calendars, for the source picker. Empty when not on a Mac; an error message when access
-// was refused, so the page can say so and stay on Salesforce events.
+// This computer's calendars, for the source picker. Empty when there's no calendar reader for this OS;
+// an error message when access was refused, so the page can say so and stay on Salesforce events.
+// "mac" is kept for pages from before Windows support.
 api.get('/calendar/sources', wrap(async (req, res) => {
-  if (!macCal) return res.json({ mac: false, calendars: [] });
+  const info = { local: !!localCal, mac: isMac, platform: process.platform, name: LOCAL_CAL_NAME };
+  if (!localCal) return res.json({ ...info, calendars: [] });
   try {
-    res.json({ mac: true, calendars: await macCal.calendars() });
+    res.json({ ...info, calendars: await localCal.calendars() });
   } catch (err) {
-    res.json({ mac: true, calendars: [], error: err.message });
+    res.json({ ...info, calendars: [], error: err.message });
   }
 }));
 
 // Calendar events for a range, each marked as covered by a Deal Support or not. source is
-// "salesforce" (default) or a Mac calendar Id. from/to: the range's start and end as UTC instants;
+// "salesforce" (default) or a calendar Id from this computer (Mac or Outlook). from/to: the range's start and end as UTC instants;
 // d0/d1: its first and last local dates.
 api.get('/calendar', wrap(async (req, res) => {
   const range = {
@@ -1333,12 +1348,12 @@ api.get('/calendar', wrap(async (req, res) => {
     tz: Math.max(-840, Math.min(840, Number(req.query.tz) || 0)),
   };
   const source = String(req.query.source || 'salesforce').slice(0, 300);
-  if (source !== 'salesforce' && !macCal) throw new HttpError(400, 'The Mac calendar is only available when SF Desk runs on a Mac.');
+  if (source !== 'salesforce' && !localCal) throw new HttpError(400, 'Calendars from this computer are only available when SF Desk runs on a Mac or on Windows with Outlook.');
   const kind = `calendar:${source}:${range.d0}:${range.d1}`;
   res.json(await withCacheFallback(req, res, async () => {
     const ds = await dealSupportMeta(req);
     const cm = await calendarMeta(req);
-    const events = source === 'salesforce' ? await salesforceEvents(req, range) : await macEvents(req, source, range);
+    const events = source === 'salesforce' ? await salesforceEvents(req, range) : await localEvents(req, source, range);
     if (source !== 'salesforce') await borrowSalesforceLinks(req, events, range);
 
     const marks = store.eventMarks(orgOf(req), events.flatMap((e) => [e.id, ...e.copies]));
@@ -1390,10 +1405,10 @@ function coveringSupports(e, marks, linkedById, mine) {
   return supports;
 }
 
-// Event Ids: Salesforce Ids, or "mac_" (Mac calendar) or "ol_" (Outlook add-in) plus a hash.
+// Event Ids: Salesforce Ids, or "mac_" (Mac calendar), "win_" (Outlook on Windows) or "ol_" (Outlook add-in) plus a hash.
 function eventId(value) {
   const id = String(value || '');
-  if (/^(mac|ol)_[0-9a-f]{24}$/.test(id)) return id;
+  if (/^(mac|win|ol)_[0-9a-f]{24}$/.test(id)) return id;
   return sfId(id);
 }
 

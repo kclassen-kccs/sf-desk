@@ -1870,14 +1870,14 @@ function showCalendar() {
   loadSources().then(loadCalendar);
 }
 
-// Calendars to show: your Salesforce events, or (when SF Desk runs on a Mac) any calendar from the Mac's
-// Internet Accounts. The choice is remembered on this machine; the first time, the Exchange account's
+// Calendars to show: your Salesforce events, or any calendar on this computer: the Mac's Internet Accounts
+// when SF Desk runs on a Mac, or classic Outlook's when it runs on Windows. The choice is remembered on this machine; the first time, the Exchange account's
 // main calendar is picked if there is one.
 async function loadSources() {
   // Asked again after a refusal, so allowing access in System Settings and clicking Reload picks it up.
   const wasRefused = !!cal.sources?.error;
   if (!cal.sources || wasRefused) {
-    try { cal.sources = await api('/calendar/sources'); } catch { cal.sources = { mac: false, calendars: [] }; }
+    try { cal.sources = await api('/calendar/sources'); } catch { cal.sources = { local: false, calendars: [] }; }
   }
   const { calendars, error } = cal.sources;
   let saved = null;
@@ -1898,7 +1898,7 @@ async function loadSources() {
     ...[...groups].map(([account, list]) => el('optgroup', { label: `${account}${list[0].type === 'exchange' ? ' (Exchange)' : ''}` },
       list.map((c) => el('option', { value: c.id }, c.title)))));
   select.value = cal.source;
-  select.hidden = !cal.sources.mac;
+  select.hidden = !(cal.sources.local ?? cal.sources.mac);
   select.onchange = () => {
     cal.source = select.value; cal.sel = null;
     try { localStorage.setItem(CAL_SOURCE, cal.source); } catch {}
@@ -1922,7 +1922,7 @@ async function loadCalendar() {
     renderCalendar();
   } catch (e) {
     if (ticket !== cal.loading) return;
-    // The Mac calendar refused (no permission yet) or failed: say why and show Salesforce events instead.
+    // This computer's calendar refused (no permission yet) or failed: say why and show Salesforce events instead.
     if (cal.source !== 'salesforce' && e.status !== 401) {
       cal.sourceNote = e.message;
       cal.source = 'salesforce';
@@ -2290,7 +2290,7 @@ function renderEventPanel() {
         e.what ? [el('dt', {}, 'Related to'), el('dd', {}, sfLink(e.what.id, e.what.name || e.what.id), e.what.type ? ` (${e.what.type})` : '')] : null,
         e.supports.length ? [el('dt', {}, dsMeta.labelPlural), el('dd', {}, e.supports.map((r) => el('div', {},
           el('a', { href: `${me.instanceUrl}/${r.Id}`, target: '_blank', rel: 'noopener', title: r.Name || null }, dsNum(r.Name) || r.Id), r.oppName ? ` · ${r.oppName}` : '',
-          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac events), or with the same name' }, 'matched') : null,
+          r.how === 'matched' ? el('span', { class: 'tag', title: 'Yours, on the same date, on the same opportunity or account (from the title or attendees for Mac and Outlook calendar events), or with the same name' }, 'matched') : null,
           dsMeta.canUpdate && editing?.id !== r.Id ? el('button', { class: 'linkish', style: 'display:inline;margin-left:8px', onclick: () => editFromEvent(r) }, 'Edit') : null)))] : null,
       ),
       // Meeting invitations (Teams, Zoom...) are never shown, only what was written about the meeting.
@@ -2323,7 +2323,7 @@ const meetingSubject = (e) => String(e.title || e.subject || '').replace(/^\s*\[
 
 // onCreated(rec, opp) runs after the save; by default the Time Entry calendar reloads.
 function createFromEvent(e, close, onCreated = () => loadCalendar()) {
-  // The event's opportunity (its own, or borrowed from the Salesforce copy of a Mac event) is preselected.
+  // The event's opportunity (its own, or borrowed from the Salesforce copy of a Mac or Outlook event) is preselected.
   const oppId = e.oppId || (e.what?.type === 'Opportunity' || String(e.what?.id || '').startsWith('006') ? e.what.id : null);
   let picked = oppId ? { Id: oppId, Name: e.what?.id === oppId ? e.what.name || oppId : oppId } : null;
   const picker = oppCombobox({

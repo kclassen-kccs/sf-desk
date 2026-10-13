@@ -86,6 +86,21 @@ signs you in (Option A below), so the setup steps that follow are only for runni
   your browser. If SF Desk is already running (e.g. `npm start` in a checkout), the app shows that one.
 - **Logs:** `~/Library/Logs/SF Desk/server.log` (**Help > Show Server Log**).
 
+## Windows
+
+SF Desk also runs on Windows 10 and 11 (source in `windows/`, packaged by `scripts/build-windows-package.sh`;
+see [INSTALL.md](INSTALL.md#windows)). `SF-Desk-windows.zip` holds the app, Node.js for 64-bit Windows and an
+**Install SF Desk** script that needs no admin rights. SF Desk opens in an Edge window of its own and keeps an
+icon by the clock to reopen it, edit settings, restart the server, see the log or quit.
+
+- **Calendar:** Time Entry reads classic Outlook's calendars through Outlook's COM API
+  (`windows/outlook-calendar.ps1`, run by `windowsCalendar.js` with Windows PowerShell), with the same details
+  as on a Mac: title, times, location, body and attendee emails for matching the account. The new Outlook has
+  no COM API, so with it Time Entry shows Salesforce events only.
+- **Settings and data:** `%LOCALAPPDATA%\SF Desk` (`.env`, `data\`, `logs\server.log`, `sf-cli\`); the app is in
+  `%LOCALAPPDATA%\Programs\SF Desk`.
+- **Not yet:** the Outlook add-in's certificate script is Mac-only.
+
 ## 1. Choose how to sign in (one-time)
 
 ### Option A: Salesforce CLI login (no app needed)
