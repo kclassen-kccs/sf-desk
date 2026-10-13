@@ -2156,8 +2156,9 @@ function renderEventPanel() {
   const editing = e.supports.some((r) => r.Id === evEdit.editing?.id) ? evEdit.editing : null;
   const formBox = el('div', {}, editing?.box);
   const create = el('button', { class: 'primary', onclick: () => { evEdit.editing = null; create.hidden = true; formBox.replaceChildren(createFromEvent(e, () => { create.hidden = false; formBox.replaceChildren(); })); } },
-    st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
-  if (!dsMeta.canCreate) create.hidden = true;
+    `Create ${dsMeta.label}`);
+  // One Deal Support per event: one that has it offers only editing or removing it.
+  if (!dsMeta.canCreate || st === 'covered') create.hidden = true;
 
   panel.replaceChildren(
     el('section', {},
@@ -2365,7 +2366,7 @@ function renderOutlookPane(e, reload) {
       el('a', { href: `${me.instanceUrl}/${rec.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗')));
     setTimeout(reload, 1500);
   }));
-  const again = el('button', { class: 'primary', onclick: open }, st === 'covered' ? `Create another ${dsMeta.label}` : `Create ${dsMeta.label}`);
+  const again = el('button', { class: 'primary', onclick: open }, `Create ${dsMeta.label}`);
   document.getElementById('app').replaceChildren(
     el('section', {},
       el('h3', {}, e.title || e.subject),
@@ -2382,9 +2383,15 @@ function renderOutlookPane(e, reload) {
     ),
     formBox,
   );
+  // One Deal Support per meeting: a meeting that has one opens it for editing or removing.
+  if (st === 'covered') {
+    if (!dsMeta.canUpdate) return;
+    const host = { editing: null };
+    return editDealSupport(e.supports[0].Id, host, () => formBox.replaceChildren(host.editing?.box || ''), reload);
+  }
   if (!dsMeta.canCreate) return formBox.replaceChildren(el('div', { class: 'empty' }, `Your Salesforce user can't create ${dsMeta.labelPlural}.`));
   // A meeting with nothing yet opens straight into the form.
-  if (st === 'covered') formBox.replaceChildren(again); else open();
+  open();
 }
 
 (async function init() {
