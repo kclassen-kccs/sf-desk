@@ -724,7 +724,10 @@ async function openAccount(id) {
   const detail = document.getElementById('detail');
   detail.replaceChildren(el('div', { class: 'empty' }, 'Loading…'));
   try {
-    current = await api('/accounts/' + id);
+    // The SailPoint BOAT field (shown in the Account block) comes from the account filters.
+    const [detail_] = await Promise.all([api('/accounts/' + id),
+      acctFilters ? null : api('/account-filters').then((f) => { acctFilters = f; }, () => {})]);
+    current = detail_;
     renderList();
     renderDetail();
     document.querySelector('main')?.classList.add('has-detail');
@@ -956,6 +959,14 @@ function renderAccountForm() {
   for (const def of ACCOUNT_UI) {
     form.append(el('label', { class: def[1] === 'textarea' ? 'wide' : null },
       el('span', {}, label(def[0])), field(def, a[def[0]], meta.editable.Account.includes(def[0]), onChange)));
+    // SailPoint BOAT (read-only) right after Billing state.
+    const b = acctFilters?.boat;
+    if (def[0] === 'BillingState' && b) {
+      const v = a[b.name];
+      form.append(el('label', { title: `${b.label} (${b.name})` }, el('span', {}, 'SailPoint BOAT'),
+        el('input', { type: 'text', disabled: true, 'aria-label': 'SailPoint BOAT',
+          value: v == null || v === '' ? '' : b.options.find((o) => o.value === String(v))?.label || String(v) })));
+    }
   }
   revert.addEventListener('click', renderAccountForm);
   save.addEventListener('click', async () => {
