@@ -1683,6 +1683,21 @@ api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
 // lists with these ids and can show them again with "Show hidden".
 api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
 
+// The Accounts tab's filters (My Accounts, SailPoint BOAT, SE, sales rep, sort, grouping), kept in the
+// local database so they come back when SF Desk restarts.
+const ACCT_PREF_KEYS = { mine: 'boolean', boat: 'string', se: 'string', rep: 'string', repName: 'string',
+  sortRecent: 'boolean', groupByRep: 'boolean', showHidden: 'boolean' };
+api.get('/prefs/accounts', (req, res) => res.json(store.getSetting(orgOf(req), 'acctPrefs') || {}));
+api.put('/prefs/accounts', (req, res) => {
+  const prefs = {};
+  for (const [k, type] of Object.entries(ACCT_PREF_KEYS)) {
+    const v = req.body?.[k];
+    if (typeof v === type) prefs[k] = type === 'string' ? v.slice(0, 255) : v;
+  }
+  store.saveSetting(orgOf(req), 'acctPrefs', prefs);
+  res.json(prefs);
+});
+
 function hiddenIds(body) {
   const ids = Array.isArray(body?.ids) ? body.ids : [];
   if (!ids.length || ids.length > 500) throw new HttpError(400, 'Pick between 1 and 500 records');

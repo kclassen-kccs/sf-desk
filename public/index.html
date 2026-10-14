@@ -350,6 +350,23 @@ let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
 let myAcctsOnly = true, boatFilter = '', seFilter = '', acctFilters = null;
 // While a BOAT is picked: the SEs and sales reps with accounts in it ({ se, reps }), which the dropdowns then list.
 let boatPeople = null;
+let savedRepName = ''; // the picked rep's name from the saved filters, until accounts load
+
+// The Accounts filters are saved in SF Desk's local database, so they survive a restart.
+async function loadAcctPrefs() {
+  try {
+    const p = await api('/prefs/accounts');
+    if (typeof p.mine === 'boolean') myAcctsOnly = p.mine;
+    boatFilter = p.boat || ''; seFilter = p.se || ''; repFilter = p.rep || ''; savedRepName = p.repName || '';
+    sortRecent = !!p.sortRecent; groupByRep = !!p.groupByRep; showHiddenAccts = !!p.showHidden;
+  } catch { /* first run or offline: keep the defaults */ }
+}
+function saveAcctPrefs() {
+  const repName = repFilter ? ([...acctOwners.values()].find((r) => r.id === repFilter)?.name
+    || boatPeople?.reps.find((r) => r.value === repFilter)?.label || savedRepName) : '';
+  api('/prefs/accounts', { method: 'PUT', body: { mine: myAcctsOnly, boat: boatFilter, se: seFilter, rep: repFilter, repName,
+    sortRecent, groupByRep, showHidden: showHiddenAccts } }).catch(() => {});
+}
 const acctOwners = new Map(); // account Id -> { id, name } of its owner, for every account loaded this session
 
 // Hidden records live in the local database (never in Salesforce). Lists leave them out
@@ -517,20 +534,21 @@ function showMain() {
   const sort = el('select', { 'aria-label': 'Sort accounts' },
     el('option', { value: 'name' }, 'Sort: Name A–Z'), el('option', { value: 'recent' }, 'Sort: Recently modified'));
   sort.value = sortRecent ? 'recent' : 'name';
-  sort.addEventListener('change', () => { sortRecent = sort.value === 'recent'; loadAccounts(); });
+  sort.addEventListener('change', () => { sortRecent = sort.value === 'recent'; saveAcctPrefs(); loadAccounts(); });
   let timer;
-  rep.addEventListener('change', () => { repFilter = rep.value; loadAccounts(); });
-  group.addEventListener('change', () => { groupByRep = group.checked; renderList(); });
+  rep.addEventListener('change', () => { repFilter = rep.value; saveAcctPrefs(); loadAccounts(); });
+  group.addEventListener('change', () => { groupByRep = group.checked; saveAcctPrefs(); renderList(); });
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(loadAccounts, 300); });
-  mine.addEventListener('change', () => { myAcctsOnly = mine.value === 'mine'; loadAccounts(); });
+  mine.addEventListener('change', () => { myAcctsOnly = mine.value === 'mine'; saveAcctPrefs(); loadAccounts(); });
   boat.addEventListener('change', async () => {
     boatFilter = boat.value;
     await loadBoatPeople();
+    saveAcctPrefs();
     loadAccounts();
   });
-  se.addEventListener('change', () => { seFilter = se.value; loadAccounts(); });
+  se.addEventListener('change', () => { seFilter = se.value; saveAcctPrefs(); loadAccounts(); });
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
-  showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; renderList(); });
+  showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; saveAcctPrefs(); renderList(); });
 
   app.replaceChildren(el('main', {},
     el('div', { id: 'list' },
@@ -667,7 +685,7 @@ function renderReps() {
   } else {
     for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
   }
-  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || repFilter);
+  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || savedRepName || repFilter);
   select.replaceChildren(el('option', { value: '' }, 'All sales reps'),
     ...[...byId].sort((x, y) => x[1].localeCompare(y[1])).map(([id, name]) => el('option', { value: id }, name)));
   select.value = repFilter;
@@ -2649,6 +2667,7 @@ function renderOutlookPane(e, reload) {
     document.getElementById('logout').hidden = false;
     meta = await api('/meta');
     await loadHidden();
+    await loadAcctPrefs();
     showDashboard();
   } catch (e) {
     if (e.status !== 401) toast(e.message, 'err');
