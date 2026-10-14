@@ -93,6 +93,7 @@
   .grid input[type=checkbox] { width: auto; }
   details.optional summary { cursor: pointer; color: var(--accent); margin: 12px 0 8px; }
   .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .reassign-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; max-height: 160px; overflow: auto; }
 
   .center { display: grid; place-items: center; height: calc(100vh - var(--chrome)); }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px; max-width: 420px; text-align: center; }
@@ -650,7 +651,10 @@ function renderDetail() {
       el('span', { class: 'rep-pill', title: 'Sales rep (account owner)' }, el('span', { class: 'k' }, 'Sales rep'), a.Owner?.Name || '—'),
       el('a', { href: `${me.instanceUrl}/${a.Id}`, target: '_blank', rel: 'noopener' }, 'Open in Salesforce ↗'),
       el('button', { onclick: () => openAccount(a.Id) }, 'Reload'),
+      el('button', { onclick: () => changeRole(a, 'rep') }, 'Change Rep'),
+      el('button', { onclick: () => changeRole(a, 'se') }, 'Change SE'),
     ),
+    el('div', { id: 'reassignBox' }),
     el('div', { class: 'sub', id: 'acctSub' }),
     el('section', { id: 'acctSection' }),
     el('section', { id: 'oppSection' }),
@@ -659,6 +663,75 @@ function renderDetail() {
   renderAccountForm();
   renderOpps();
   loadAccountDealSupports(a.Id);
+}
+
+// ---------- Change Rep / Change SE ----------
+// Pick a user, then make them the sales rep (owner) or Lead SE of the account and all its open opportunities.
+async function changeRole(a, role) {
+  const box = document.getElementById('reassignBox');
+  const title = role === 'rep' ? 'Change Rep' : 'Change SE';
+  const close = () => box.replaceChildren();
+  const cancel = el('button', { onclick: close }, 'Cancel');
+  const say = (...kids) => box.replaceChildren(el('section', {}, el('h3', {}, title), ...kids, el('div', { class: 'form-actions' }, cancel)));
+  say(el('div', { class: 'empty' }, 'Loading…'));
+  let d;
+  try { d = await api(`/accounts/${a.Id}/reassign?role=${role}`); } catch (e) { return say(el('div', { class: 'empty' }, e.message)); }
+  if (current?.account.Id !== a.Id) return;
+  const who = d.label === 'Sales rep' ? 'sales rep' : 'Lead SE';
+
+  const search = el('input', { type: 'search', placeholder: `Search for a ${who} by name…`, 'aria-label': 'Search users' });
+  const results = el('select', { size: 6, 'aria-label': 'Users', style: 'width:100%;margin-top:6px' });
+  const go = el('button', { class: 'primary', disabled: true }, 'Assign');
+  let users = [], timer, seq = 0;
+  const find = async () => {
+    const q = search.value.trim(), n = ++seq;
+    if (q.length < 2) { users = []; results.replaceChildren(); go.disabled = true; return; }
+    try {
+      const found = await api('/users?q=' + encodeURIComponent(q));
+      if (n !== seq) return;
+      users = found;
+      results.replaceChildren(...(users.length ? users.map((u) => el('option', { value: u.Id }, [u.Name, u.Title].filter(Boolean).join(' · ')))
+        : [el('option', { disabled: true }, 'No active users match')]));
+      go.disabled = true;
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(find, 250); });
+  results.addEventListener('change', () => { go.disabled = !users.some((u) => u.Id === results.value); });
+
+  const opps = d.opportunities;
+  const lines = [
+    d.accountField ? `Account: ${d.account.Name} (now ${d.account.current || 'nobody'})` : null,
+    ...opps.map((o) => `${o.Name} (now ${o.current || 'nobody'})`),
+  ].filter(Boolean);
+  go.addEventListener('click', async () => {
+    const u = users.find((x) => x.Id === results.value);
+    if (!u) return;
+    const shown = lines.length > 15 ? [...lines.slice(0, 15), `…and ${lines.length - 15} more`] : lines;
+    if (!confirm(`Make ${u.Name} the ${who} on ${d.accountField ? 'this account and ' : ''}${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}?\n\n` +
+      shown.join('\n'))) return;
+    go.disabled = search.disabled = results.disabled = cancel.disabled = true;
+    try {
+      const r = await api(`/accounts/${a.Id}/reassign`, { method: 'POST', body: { role, userId: u.Id, oppIds: opps.map((o) => o.Id) } });
+      const done = `${u.Name} is now ${who} on ${r.updated.length + r.unchanged.length} of ${r.updated.length + r.unchanged.length + r.failed.length} records`;
+      if (r.failed.length) toast(`${done}. ${r.failed.length} failed: ` + r.failed.map((f) => `${f.Name}: ${f.error}`).join('; '), 'err');
+      else toast(done + '.', 'ok');
+      close();
+      openAccount(a.Id);
+    } catch (e) { toast(e.message, 'err'); go.disabled = search.disabled = results.disabled = cancel.disabled = false; }
+  });
+
+  const notes = [];
+  if (!d.accountField) notes.push(`Accounts have no ${who} field, so only the opportunities change.`);
+  if (!d.oppField) notes.push(`Opportunities have no ${who} field, so only the account changes.`);
+  box.replaceChildren(el('section', {},
+    el('h3', {}, title),
+    el('div', { class: 'sub' }, `Pick the new ${who} for ${d.account.Name}` +
+      (d.oppField ? ` and its ${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}` : '') + '. ' + notes.join(' ')),
+    search, results,
+    el('ul', { class: 'reassign-list' }, lines.map((l) => el('li', {}, l))),
+    el('div', { class: 'form-actions' }, cancel, go),
+  ));
+  search.focus();
 }
 
 // ---------- account Deal Supports ----------
