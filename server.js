@@ -1332,21 +1332,67 @@ async function timeMeta(req) {
   return meta;
 }
 
-// Every Deal Support where the chosen user field is me, across all opportunities, newest first.
+// My team: the users whose Lead SE (User.SE_Manager__c, or the User lookup SF_TEAM_FIELD names) is me,
+// which is how Kerry's org records an SE's team. When that's empty (or the field doesn't exist), my
+// Default Opportunity Team, then my Default Account Team (My Settings > Advanced User Details), then the
+// users who report to me. SF_TEAM_SOURCE (leadSe, opportunity, account or reports) pins one.
+const TEAM_FIELD = /^\w+$/.test(process.env.SF_TEAM_FIELD || '') ? process.env.SF_TEAM_FIELD : 'SE_Manager__c';
+const TEAM_SOURCES = {
+  leadse: { label: 'Lead SE team', soql: (me) =>
+    `SELECT Id, Name, IsActive FROM User WHERE ${TEAM_FIELD} = '${me}'` },
+  opportunity: { label: 'Default Opportunity Team', soql: (me) =>
+    `SELECT UserId, User.Name, User.IsActive FROM UserTeamMember WHERE OwnerId = '${me}'` },
+  account: { label: 'Default Account Team', soql: (me) =>
+    `SELECT UserId, User.Name, User.IsActive FROM UserAccountTeamMember WHERE OwnerId = '${me}'` },
+  reports: { label: 'direct reports', soql: (me) =>
+    `SELECT Id, Name, IsActive FROM User WHERE ManagerId = '${me}'` },
+};
+const TEAM_SOURCE = (process.env.SF_TEAM_SOURCE || '').toLowerCase().replace(/[^a-z]/g, '');
+
+async function myTeam(req) {
+  if (req.session.team) return req.session.team;
+  const me = sfId(req.session.sf.user.id);
+  const order = TEAM_SOURCES[TEAM_SOURCE] ? [TEAM_SOURCE] : Object.keys(TEAM_SOURCES);
+  let team = { source: null, label: null, members: [] };
+  for (const key of order) {
+    // An object the org or user can't read counts as an empty team.
+    const rows = await query(req, TEAM_SOURCES[key].soql(me)).catch(() => []);
+    const seen = new Set([me]);
+    const members = rows.map((r) => ({ id: r.UserId || r.Id, name: r.User?.Name || r.Name || r.UserId || r.Id, active: (r.User || r).IsActive !== false }))
+      .filter((m) => m.id && !seen.has(m.id) && seen.add(m.id))
+      .sort((a, b) => b.active - a.active || a.name.localeCompare(b.name));
+    if (members.length) { team = { source: key, label: TEAM_SOURCES[key].label, members }; break; }
+  }
+  req.session.team = team;
+  return team;
+}
+
+api.get('/my-team', wrap(async (req, res) => res.json(await myTeam(req))));
+
+// Every Deal Support where the chosen user field is me (who=me), anyone on my team (who=team) or
+// one team member (who=<their user Id>), across all opportunities, newest first.
 // The page does the totals by week, period and opportunity.
 api.get('/my-time', wrap(async (req, res) => {
   const userId = sfId(req.session.sf.user.id);
-  // Saved per user field, so the last copy can be shown when Salesforce can't be reached.
-  const kind = 'myTime:' + String(req.query.by || 'default').slice(0, 80);
+  const who = String(req.query.who || 'me');
+  // Saved per user field and person, so the last copy can be shown when Salesforce can't be reached.
+  const kind = 'myTime:' + String(req.query.by || 'default').slice(0, 80) + (who === 'me' ? '' : ':' + who.slice(0, 20));
   res.json(await withCacheFallback(req, res, async () => {
     const tm = await timeMeta(req);
     const by = tm.userFields.find((f) => f.name === req.query.by) || tm.userFields[0];
+    let ids = [userId], team = null;
+    if (who !== 'me') {
+      team = await myTeam(req);
+      ids = who === 'team' ? team.members.map((m) => m.id) : team.members.filter((m) => m.id === sfId(who)).map((m) => m.id);
+      if (who !== 'team' && !ids.length) throw new HttpError(404, 'That person is not on your team.');
+    }
     const fields = ['Id', 'Name', ...tm.dateFields.map((f) => f.name), ...tm.hoursFields.map((f) => f.name), tm.oppField,
       ...(tm.oppRel ? [`${tm.oppRel}.Name`, `${tm.oppRel}.AccountId`, `${tm.oppRel}.Account.Name`, `${tm.oppRel}.StageName`] : []),
-      ...(tm.roleField ? [tm.roleField] : [])].filter((f, i, all) => all.indexOf(f) === i);
-    const records = await query(req, `SELECT ${fields.join(', ')} FROM ${tm.object} ` +
-      `WHERE ${by.name} = '${userId}' ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`, 10000);
-    const out = { ...tm, by: by.name, records };
+      ...(tm.roleField ? [tm.roleField] : []),
+      ...(who !== 'me' ? [by.name, ...(by.rel ? [`${by.rel}.Name`] : [])] : [])].filter((f, i, all) => all.indexOf(f) === i);
+    const records = !ids.length ? [] : await query(req, `SELECT ${fields.join(', ')} FROM ${tm.object} ` +
+      `WHERE ${by.name} IN (${ids.map((id) => `'${id}'`).join(', ')}) ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`, who === 'team' ? 50000 : 10000);
+    const out = { ...tm, by: by.name, who, team, records };
     store.saveSetting(orgOf(req), kind, out);
     return out;
   }, () => {

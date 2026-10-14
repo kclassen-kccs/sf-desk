@@ -113,6 +113,9 @@
 
   .center { display: grid; place-items: center; height: calc(100vh - var(--chrome)); }
   .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 28px; max-width: 420px; text-align: center; }
+  .spinner { display: inline-block; width: 14px; height: 14px; margin-right: 8px; vertical-align: -2px; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .btn.busy { opacity: .8; pointer-events: none; cursor: progress; }
   .card p { color: var(--muted); }
 
   body { display: flex; flex-direction: column; min-height: 100vh; min-height: 100dvh; } #app { flex: 1 0 auto; min-width: 0; }
@@ -544,11 +547,24 @@ function showConnect(message) {
   document.getElementById('nav').hidden = true;
   document.getElementById('navToggle').hidden = true;
   const app = document.getElementById('app');
+  const text = el('p', {}, message || 'Sign in with your Salesforce account. The app only sees what your user can see, and only saves when you click Save.');
+  // Signing in can take a while before the next page comes back, so show that the click was taken.
+  const go = el('a', { class: 'btn primary', href: IN_OUTLOOK ? '/login?next=/outlook/pane' : '/login' }, 'Connect');
+  go.addEventListener('click', (e) => {
+    if (go.classList.contains('busy')) return e.preventDefault();
+    go.classList.add('busy');
+    go.setAttribute('aria-busy', 'true');
+    go.replaceChildren(el('span', { class: 'spinner', 'aria-hidden': 'true' }), 'Connecting…');
+    text.textContent = 'Signing in to Salesforce. This can take up to a minute; your accounts and deals will appear when it\'s done.';
+  });
   app.replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
-    el('h2', {}, 'Connect to Salesforce'),
-    el('p', {}, message || 'Sign in with your Salesforce account. The app only sees what your user can see, and only saves when you click Save.'),
-    el('a', { class: 'btn primary', href: IN_OUTLOOK ? '/login?next=/outlook/pane' : '/login' }, 'Connect'),
-  )));
+    el('h2', {}, 'Connect to Salesforce'), text, go)));
+}
+
+// Shown while the first data loads after connecting, so the window isn't blank.
+function showLoading(message) {
+  document.getElementById('app').replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
+    el('h2', {}, el('span', { class: 'spinner', 'aria-hidden': 'true' }), message))));
 }
 
 function setNav(which) {
@@ -1852,7 +1868,7 @@ async function openDeal(o) {
 // Your hours from the Deal Supports where you are the chosen user (Owner by default), across all
 // opportunities: this week, last week, the last 30 days, this fiscal quarter and year, per week,
 // and per opportunity. Weeks start on Monday.
-const time = { data: null, range: 'fy', opp: null };
+const time = { data: null, team: null, range: 'fy', opp: null };
 // Field picks that differ from the server's defaults, kept in this browser. (v2: picks saved by the
 // first version, which had different defaults, are ignored.)
 const TIME_PREFS = 'sfdesk.time.v2';
@@ -1911,9 +1927,18 @@ function timeEntries() {
       accountId: opp?.AccountId || null,
       accountName: opp?.Account?.Name || '',
       role: d.roleField ? r[d.roleField] || '' : '',
+      person: d.who && d.who !== 'me' ? teamName(r[d.by]) || r[byRel(d)]?.Name || '' : '',
     };
   });
 }
+const byRel = (d) => d.userFields.find((f) => f.name === d.by)?.rel;
+const teamName = (id) => time.team?.members.find((m) => m.id === id)?.name;
+// Whose time is shown: 'me', 'team' or one team member's user Id (the saved pick, if still on the team).
+function timeWho() {
+  const w = timePrefs().who;
+  return w === 'team' ? (time.team?.members.length ? 'team' : 'me') : teamName(w) ? w : 'me';
+}
+const whoTitle = (who) => who === 'me' ? 'My Time' : who === 'team' ? 'My Team' : teamName(who) || 'My Time';
 
 // The periods on the tiles, plus "all time" and any week picked on the chart.
 function timeRanges(today) {
@@ -1942,7 +1967,7 @@ async function showTime() {
   current = null;
   document.getElementById('app').replaceChildren(el('div', { class: 'dash' },
     el('div', { class: 'dash-head' },
-      el('h2', {}, 'My Time'),
+      el('h2', { id: 'timeTitle' }, whoTitle(timeWho())),
       el('span', { id: 'timePicks', class: 'picks' }),
       el('span', { class: 'spacer', style: 'flex:1' }),
       el('button', { onclick: loadTime }, 'Reload'),
@@ -1955,8 +1980,10 @@ async function showTime() {
 
 async function loadTime() {
   try {
-    const by = timePrefs().by;
-    [time.data] = await Promise.all([api('/my-time' + (by ? '?by=' + encodeURIComponent(by) : '')),
+    if (!time.team) time.team = await api('/my-team').catch(() => ({ members: [] }));
+    const by = timePrefs().by, who = timeWho();
+    const q = new URLSearchParams({ ...(by ? { by } : {}), ...(who !== 'me' ? { who } : {}) });
+    [time.data] = await Promise.all([api('/my-time' + (q.size ? '?' + q : '')),
       dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {})]);
     if (document.getElementById('timeBody')) renderTime();
   } catch (e) {
@@ -1982,19 +2009,36 @@ function renderTime() {
     s.addEventListener('change', () => onPick(s.value));
     return el('label', {}, labelText, s);
   };
+  // Whose time: mine, my whole team, or one person on it.
+  const who = d.who || 'me', members = time.team?.members || [];
+  const whoPick = el('select', { title: time.team?.label ? `Your team is your ${time.team.label} in Salesforce` : null },
+    el('option', { value: 'me', selected: who === 'me' }, 'My Time'),
+    members.length ? el('option', { value: 'team', selected: who === 'team' }, `My Team (${members.length})`) : null,
+    members.length ? el('optgroup', { label: 'Team members' }, members.map((m) =>
+      el('option', { value: m.id, selected: who === m.id }, m.name + (m.active ? '' : ' (inactive)')))) : null);
+  whoPick.addEventListener('change', () => {
+    saveTimePrefs('who', whoPick.value, 'me');
+    time.opp = null; time.editing = null;
+    document.getElementById('timeTitle').textContent = whoTitle(whoPick.value);
+    document.getElementById('timeSub').textContent = 'Loading…';
+    loadTime();
+  });
+  document.getElementById('timeTitle').textContent = whoTitle(who);
   document.getElementById('timePicks').replaceChildren(
+    el('label', {}, 'Show', whoPick),
     pick('Mine by', d.userFields.map((f) => [f.name, f.label + counted(f)]), by.name,
       (v) => { saveTimePrefs('by', v, d.userFields[0].name); loadTime(); }),
     pick('Hours from', hoursOpts.map((o) => [o.key, unitLabel(o) + counted(o)]), hours.key,
       (v) => { saveTimePrefs('hours', v, hoursOpts[0].key); renderTime(); }),
     d.dateFields.length > 1 ? pick('Date', d.dateFields.map((f) => [f.name, f.label]), date.name,
-      (v) => { saveTimePrefs('date', v, d.dateFields[0].name); renderTime(); }) : null,
+      (v) => { saveTimePrefs('date', v, d.dateFields[0].name); renderTime(); }) : '',
   );
 
   const all = timeEntries();
   const undated = all.filter((e) => !e.date).length;
   document.getElementById('timeSub').textContent =
-    `${plural(all.length, d.label, d.labelPlural)} where ${by.label} is you · hours from ${hours.label}` +
+    `${plural(all.length, d.label, d.labelPlural)} where ${by.label} is ${who === 'me' ? 'you' : who === 'team'
+      ? `on your team (${plural(members.length, 'person', 'people')}, from your ${time.team.label})` : teamName(who)} · hours from ${hours.label}` +
     `, dated by ${date.label}${undated ? ` (${undated} undated, counted only in All time)` : ''}` +
     ` · Weeks start Monday · ${fyName(now.fy)} = Feb ${now.fy - 1} – Jan ${now.fy}`;
 
@@ -2095,15 +2139,17 @@ function renderOppTime(all, today) {
 }
 
 // The activity list as shown, with the hours as numbers and a link to each Deal Support.
-function exportTime(list, showRole, what) {
+function exportTime(list, showRole, what, showPerson) {
   const cols = [
-    { header: 'Date', type: 'date', width: 12 }, { header: 'Opportunity', width: 40 }, { header: 'Account', width: 28 },
+    { header: 'Date', type: 'date', width: 12 }, ...(showPerson ? [{ header: 'Person', width: 22 }] : []),
+    { header: 'Opportunity', width: 40 }, { header: 'Account', width: 28 },
     ...(showRole ? [{ header: 'Role', width: 16 }] : []), { header: time.data.label, width: 18 },
     { header: 'Hours', type: 'number', width: 9, sum: true }, { header: 'Salesforce link', width: 45 },
   ];
-  const rows = list.map((e) => [e.date, e.oppName, e.accountName, ...(showRole ? [e.role] : []), e.name, e.hours,
+  const rows = list.map((e) => [e.date, ...(showPerson ? [e.person] : []), e.oppName, e.accountName, ...(showRole ? [e.role] : []), e.name, e.hours,
     `${me.instanceUrl}/${e.id}`]);
-  downloadXlsx(`My Time - ${what} - ${todayStr()}.xlsx`, 'My Time', cols, rows, { totals: true })
+  const title = whoTitle(time.data.who || 'me');
+  downloadXlsx(`${title} - ${what} - ${todayStr()}.xlsx`.replace(/[\\/:*?"<>|]/g, "-"), title.slice(0, 31), cols, rows, { totals: true })
     .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
 }
 
@@ -2115,6 +2161,7 @@ function renderTimeList(all, today) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const oppName = time.opp !== null ? list[0]?.oppName : null;
   const showRole = list.some((e) => e.role);
+  const showPerson = time.data.who === 'team';
   const canEdit = !!dsMeta?.canUpdate;
   const edit = (e) => editDealSupport(e.id, time, () => renderTimeList(all, today), loadTime);
   const tbody = el('tbody', {}, list.map((e) => el('tr', {
@@ -2122,22 +2169,24 @@ function renderTimeList(all, today) {
     class: time.editing?.id === e.id ? 'sel' : null },
     canEdit ? editPencil(e.name, () => edit(e)) : null,
     el('td', {}, e.date || '—'),
+    showPerson ? el('td', { class: 'wrap' }, e.person) : null,
     el('td', { class: 'wrap' }, e.oppName),
     el('td', { class: 'wrap' }, e.accountName),
     showRole ? el('td', {}, e.role) : null,
     dsNameCell(e.name),
     el('td', { class: 'n' }, fmtH(e.hours)),
   )));
-  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, 'No activities here.')));
+  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 8, class: 'empty' }, 'No activities here.')));
   sec.replaceChildren(
     el('h3', {}, `${range.label}${oppName ? ` · ${oppName}` : ''}: ${plural(list.length, 'activity', 'activities')}, ${fmtH(hoursOf(list))}`,
       el('span', { class: 'spacer' }),
       time.opp !== null ? el('button', { onclick: () => { time.opp = null; renderTime(); } }, 'All opportunities')
         : el('span', { class: 'sub', style: 'margin:0' }, 'Click a tile, week or opportunity to narrow this list'),
-      el('button', { disabled: !list.length, onclick: () => exportTime(list, showRole, range.label + (oppName ? ` - ${oppName}` : '')) }, 'Export to Excel')),
+      el('button', { disabled: !list.length, onclick: () => exportTime(list, showRole, range.label + (oppName ? ` - ${oppName}` : ''), showPerson) }, 'Export to Excel')),
     time.editing?.box || el('div'),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
-      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, 'Date'), el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, 'Date'),
+        showPerson ? el('th', {}, 'Person') : null, el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
         showRole ? el('th', {}, 'Role') : null, el('th', {}, time.data.label), el('th', { class: 'n' }, 'Hours'))),
       tbody)),
   );
@@ -2941,12 +2990,21 @@ function renderOutlookPane(e, reload) {
     if (!me.connected) return showConnect();
     document.getElementById('who').textContent = me.user?.username || me.user?.name || '';
     document.getElementById('logout').hidden = false;
+    showLoading('Loading your Salesforce data…');
     meta = await api('/meta');
     await loadHidden();
     await loadAcctPrefs();
     showDashboard();
   } catch (e) {
-    if (e.status !== 401) toast(e.message, 'err');
+    if (e.status === 401) return;
+    toast(e.message, 'err');
+    // Don't leave the loading card spinning.
+    const app = document.getElementById('app');
+    if (app.querySelector('.card .spinner')) {
+      app.replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
+        el('h2', {}, "Couldn't load your Salesforce data"), el('p', {}, e.message),
+        el('button', { class: 'primary', onclick: () => location.reload() }, 'Try again'))));
+    }
   }
 })();
 </script>

@@ -206,6 +206,12 @@ The page shows which fields it used and has a dropdown for each; your choice is 
 To pin them for everyone, set `SF_TIME_USER_FIELD`, `SF_TIME_HOURS_FIELD` or `SF_TIME_DATE_FIELD` in `.env`
 to the field's API name.
 
+The **Show** dropdown switches between My Time, My Team (everyone on your team together, with a Person column) and
+each team member. Your team is the users whose Lead SE (`User.SE_Manager__c`) is you; if that's empty, your
+Default Opportunity Team, then your Default Account Team (My Settings > Advanced User Details), then the users who report
+to you. `SF_TEAM_FIELD` names a different User lookup, and `SF_TEAM_SOURCE` (`leadSe`, `opportunity`, `account` or
+`reports`) pins one of these.
+
 ## Security notes
 
 - The server listens on `localhost` only.
