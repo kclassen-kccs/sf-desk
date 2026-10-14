@@ -36,8 +36,8 @@ unzip -q -j "$TMP/$NODE_NAME.zip" "$NODE_NAME/node.exe" "$NODE_NAME/LICENSE" -d 
 rm -rf "$TMP"
 
 cp "$ROOT/windows/package/Install SF Desk.cmd" "$ROOT/windows/package/READ ME FIRST.txt" "$STAGE/"
-printf 'SF Desk %s (%s), Node.js %s for Windows '"$ARCH"'\n' "$(git -C "$ROOT" describe --always --dirty)" \
-  "$(git -C "$ROOT" log -1 --format=%cs)" "$NODE_VERSION" | tee "$OUT/VERSION-windows-$ARCH.txt" > "$STAGE/app/VERSION.txt"
+printf 'SF Desk %s (%s, %s), Node.js %s for Windows '"$ARCH"'\n' "$(sed -n 's/.*"version": *"\([^"]*\)".*/\1/p' "$ROOT/package.json" | head -1)" \
+  "$(git -C "$ROOT" describe --always --dirty)" "$(git -C "$ROOT" log -1 --format=%cs)" "$NODE_VERSION" | tee "$OUT/VERSION-windows-$ARCH.txt" > "$STAGE/app/VERSION.txt"
 
 (cd "$OUT" && zip -qry "$ZIP" "SF Desk for Windows")
 rm -rf "$STAGE"
