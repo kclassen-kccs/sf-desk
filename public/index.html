@@ -98,6 +98,13 @@
   .grid input[type=checkbox] { width: auto; }
   details.optional summary { cursor: pointer; color: var(--accent); margin: 12px 0 8px; }
   .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .pick { position: relative; max-width: 360px; }
+  .pick-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 2px); margin: 0; padding: 4px 0; list-style: none;
+    background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.12); max-height: 220px; overflow: auto; }
+  .pick-list li { padding: 6px 10px; cursor: pointer; display: flex; gap: 8px; align-items: baseline; }
+  .pick-list li span { color: var(--muted); font-size: 12px; }
+  .pick-list li.on, .pick-list li:hover { background: var(--bg); }
+  .pick-list li.none { color: var(--muted); cursor: default; }
   .reassign-list { margin: 10px 0 0; padding-left: 18px; color: var(--muted); font-size: 12px; max-height: 160px; overflow: auto; }
 
   .center { display: grid; place-items: center; height: calc(100vh - var(--chrome)); }
@@ -815,24 +822,50 @@ async function changeRole(a, role) {
   if (current?.account.Id !== a.Id) return;
   const who = d.label === 'Sales rep' ? 'sales rep' : 'Lead SE';
 
-  const search = el('input', { type: 'search', placeholder: `Search for a ${who} by name…`, 'aria-label': 'Search users' });
-  const results = el('select', { size: 6, 'aria-label': 'Users', style: 'width:100%;margin-top:6px' });
+  // A type-to-search box that picks one person: matches drop down under it while typing.
+  const search = el('input', { type: 'text', placeholder: `Type a name to pick the ${who}…`, 'aria-label': `New ${who}`,
+    role: 'combobox', 'aria-autocomplete': 'list', autocomplete: 'off' });
+  const results = el('ul', { class: 'pick-list', role: 'listbox', hidden: true });
   const go = el('button', { class: 'primary', disabled: true }, 'Assign');
-  let users = [], timer, seq = 0;
+  let users = [], picked = null, active = -1, timer, seq = 0;
+  const showList = () => {
+    results.hidden = !users.length && !search.value.trim();
+    results.replaceChildren(...(users.length ? users.map((u, i) => el('li', {
+      role: 'option', class: i === active ? 'on' : null,
+      onmousedown: (e) => { e.preventDefault(); choose(u); },
+    }, el('b', {}, u.Name), u.Title ? el('span', {}, u.Title) : null))
+      : search.value.trim().length >= 2 ? [el('li', { class: 'none' }, 'No active users match')] : []));
+    if (!results.children.length) results.hidden = true;
+  };
+  const choose = (u) => {
+    picked = u; search.value = u.Name; users = []; active = -1;
+    results.hidden = true; go.disabled = false;
+  };
   const find = async () => {
     const q = search.value.trim(), n = ++seq;
-    if (q.length < 2) { users = []; results.replaceChildren(); go.disabled = true; return; }
+    if (q.length < 2) { users = []; return showList(); }
     try {
       const found = await api('/users?q=' + encodeURIComponent(q));
       if (n !== seq) return;
-      users = found;
-      results.replaceChildren(...(users.length ? users.map((u) => el('option', { value: u.Id }, [u.Name, u.Title].filter(Boolean).join(' · ')))
-        : [el('option', { disabled: true }, 'No active users match')]));
-      go.disabled = true;
+      users = found; active = users.length ? 0 : -1;
+      showList();
     } catch (e) { toast(e.message, 'err'); }
   };
-  search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(find, 250); });
-  results.addEventListener('change', () => { go.disabled = !users.some((u) => u.Id === results.value); });
+  search.addEventListener('input', () => {
+    picked = null; go.disabled = true;
+    clearTimeout(timer); timer = setTimeout(find, 250);
+  });
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!users.length) return;
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : users.length - 1)) % users.length;
+      showList();
+    } else if (e.key === 'Enter' && users[active]) { e.preventDefault(); choose(users[active]); }
+    else if (e.key === 'Escape') { users = []; results.hidden = true; }
+  });
+  search.addEventListener('blur', () => { results.hidden = true; });
+  search.addEventListener('focus', () => { if (users.length) showList(); });
 
   const opps = d.opportunities;
   const lines = [
@@ -840,12 +873,12 @@ async function changeRole(a, role) {
     ...opps.map((o) => `${o.Name} (now ${o.current || 'nobody'})`),
   ].filter(Boolean);
   go.addEventListener('click', async () => {
-    const u = users.find((x) => x.Id === results.value);
+    const u = picked;
     if (!u) return;
     const shown = lines.length > 15 ? [...lines.slice(0, 15), `…and ${lines.length - 15} more`] : lines;
     if (!confirm(`Make ${u.Name} the ${who} on ${d.accountField ? 'this account and ' : ''}${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}?\n\n` +
       shown.join('\n'))) return;
-    go.disabled = search.disabled = results.disabled = cancel.disabled = true;
+    go.disabled = search.disabled = cancel.disabled = true;
     try {
       const r = await api(`/accounts/${a.Id}/reassign`, { method: 'POST', body: { role, userId: u.Id, oppIds: opps.map((o) => o.Id) } });
       const done = `${u.Name} is now ${who} on ${r.updated.length + r.unchanged.length} of ${r.updated.length + r.unchanged.length + r.failed.length} records`;
@@ -853,7 +886,7 @@ async function changeRole(a, role) {
       else toast(done + '.', 'ok');
       close();
       openAccount(a.Id);
-    } catch (e) { toast(e.message, 'err'); go.disabled = search.disabled = results.disabled = cancel.disabled = false; }
+    } catch (e) { toast(e.message, 'err'); go.disabled = search.disabled = cancel.disabled = false; }
   });
 
   const notes = [];
@@ -863,7 +896,7 @@ async function changeRole(a, role) {
     el('h3', {}, title),
     el('div', { class: 'sub' }, `Pick the new ${who} for ${d.account.Name}` +
       (d.oppField ? ` and its ${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}` : '') + '. ' + notes.join(' ')),
-    search, results,
+    el('div', { class: 'pick' }, search, results),
     el('ul', { class: 'reassign-list' }, lines.map((l) => el('li', {}, l))),
     el('div', { class: 'form-actions' }, cancel, go),
   ));
