@@ -149,13 +149,27 @@ Open http://localhost:3000 and click **Connect**.
 
 Sandbox? Set `SF_LOGIN_URL=https://test.salesforce.com`. Using a My Domain login? Use that URL.
 
-## Lead SE filter
+## Accounts filters
 
-By default the app only shows accounts and opportunities where you are the **Lead SE**. An account
-counts if you are its Lead SE, or the Lead SE on any of its opportunities. The app finds the field by
-its label "Lead SE" on Account and Opportunity. If yours is labelled differently, set
-`SF_LEAD_SE_FIELD` in `.env` to its API name (e.g. `Lead_SE__c`). A user lookup field is matched
-against your Salesforce user; a text or picklist field is matched against your full name.
+The Accounts tab shows **My Accounts** by default: accounts where you are in any of these Account
+fields: Account Owner, Lead SE, Lead SE Manager, ATS, DSR, CSM, CSM Manager or Services Manager. The
+app finds each by its label (with or without an "Account " prefix); hover over the dropdown to see
+which fields it found. If some are labelled differently, set `SF_MY_ACCOUNT_FIELDS` in `.env` to the
+full comma-separated list of API names. A user lookup field is matched against your Salesforce user;
+a text field is matched against your full name. **My BOATs** shows every account in the SailPoint
+BOATs your accounts are in (hover over the dropdown to see which). Pick **All accounts** to see everything.
+
+The **SailPoint BOAT** dropdown filters on the Account field labelled "SailPoint BOAT" (set
+`SF_BOAT_FIELD` to its API name if it isn't found).
+
+The **SE** dropdown (All SEs by default) narrows the list to one Account Lead SE. It offers everyone
+who is Lead SE on some account. While a SailPoint BOAT is picked, the SE and sales rep dropdowns
+only list people with accounts in that BOAT.
+
+## Deals tab
+
+The Deals tab uses the same **My Accounts / My BOATs / All accounts** choice as the Accounts tab: with My
+Accounts it shows the open opportunities on accounts where you are in any of the role fields above.
 
 ## Changing which fields appear
 

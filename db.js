@@ -149,31 +149,39 @@ export function openDb(file) {
       saveOpportunities(orgId, opportunities);
     }),
 
-    // `leadSe`, when given, keeps only accounts where the user is Lead SE: on the account itself
-    // or on any of its saved opportunities. Each side is { field, value } or null; field names
-    // come from the org's describe, and are compared like SOQL does (case-insensitively).
+    // `mine`, when given, keeps only accounts where any of those { field, value } pairs holds (the
+    // My Accounts filter); field names come from the org's describe, and are compared like SOQL does
+    // (case-insensitively). Each of `match` (the SailPoint BOAT and SE filters) keeps accounts whose
+    // { field } has that value (one of the values for a multi-select picklist), or none with `blank`.
     // `ownerId`, when given, keeps only accounts owned by that user (the sales rep filter).
     // Sorted A–Z by name, or most recently modified first with `recent`.
-    listAccounts(orgId, { q = '', ownerId = '', recent = false, leadSe = null, limit = 200 } = {}) {
-      const acct = leadSe?.account, opp = leadSe?.opportunity;
+    listAccounts(orgId, { q = '', ownerId = '', recent = false, mine = null, match = [], limit = 200 } = {}) {
+      const params = { orgId, q, ownerId, limit };
+      const where = [];
+      if (mine) {
+        where.push('(' + (mine.length ? mine.map((m, i) => {
+          params['minePath' + i] = '$.' + m.field;
+          params['mineValue' + i] = m.value;
+          return `lower(json_extract(a.data, @minePath${i})) = lower(@mineValue${i})`;
+        }).join(' OR ') : '0') + ')');
+      }
+      match.forEach((m, i) => {
+        const path = '@matchPath' + i, value = '@matchValue' + i;
+        params['matchPath' + i] = '$.' + m.field;
+        params['matchValue' + i] = m.type === 'boolean' ? (m.value === 'true' ? 1 : 0) : m.value;
+        where.push(m.blank ? `coalesce(json_extract(a.data, ${path}), '') = ''`
+          : m.type === 'multipicklist'
+            ? `instr(';' || lower(json_extract(a.data, ${path})) || ';', ';' || lower(${value}) || ';') > 0`
+            : `lower(json_extract(a.data, ${path})) = lower(${value})`);
+      });
       const rows = db.prepare(`
         SELECT data, synced_at FROM accounts a
         WHERE org_id = @orgId
           AND (@q = '' OR instr(lower(name), lower(@q)) > 0)
           AND (@ownerId = '' OR json_extract(a.data, '$.OwnerId') = @ownerId)
-          AND (NOT @filter
-            OR (@acctPath IS NOT NULL AND lower(json_extract(a.data, @acctPath)) = lower(@acctValue))
-            OR (@oppPath IS NOT NULL AND EXISTS (
-              SELECT 1 FROM opportunities o
-              WHERE o.org_id = a.org_id AND o.account_id = a.id
-                AND lower(json_extract(o.data, @oppPath)) = lower(@oppValue))))
+          ${where.map((w) => 'AND ' + w).join('\n          ')}
         ORDER BY ${recent ? 'last_modified DESC' : 'lower(name) ASC'} LIMIT @limit
-      `).all({
-        orgId, q, ownerId, limit,
-        filter: leadSe ? 1 : 0,
-        acctPath: acct ? '$.' + acct.field : null, acctValue: acct?.value ?? null,
-        oppPath: opp ? '$.' + opp.field : null, oppValue: opp?.value ?? null,
-      });
+      `).all(params);
       return { records: rows.map((r) => JSON.parse(r.data)), syncedAt: oldest(rows) };
     },
 
@@ -191,23 +199,23 @@ export function openDb(file) {
       };
     },
 
-    // Open opportunities for the dashboard, with the same Lead SE rule as the live query: on the
-    // opportunity when that side has a field, otherwise on its account.
-    listOpenOpportunities(orgId, leadSe = null) {
-      const opp = leadSe?.opportunity, acct = opp ? null : leadSe?.account;
+    // Open opportunities for the Deals tab. `mine`, when given, keeps those whose saved account has any
+    // of those { field, value } pairs (the My Accounts rule), compared case-insensitively like SOQL.
+    listOpenOpportunities(orgId, { mine = null } = {}) {
+      const params = { orgId };
+      const where = mine ? '(' + (mine.length ? mine.map((m, i) => {
+        params['minePath' + i] = '$.' + m.field;
+        params['mineValue' + i] = m.value;
+        return `lower(json_extract(a.data, @minePath${i})) = lower(@mineValue${i})`;
+      }).join(' OR ') : '0') + ')' : '1';
       const rows = db.prepare(`
         SELECT o.data, o.synced_at, a.name AS account_name FROM opportunities o
         LEFT JOIN accounts a ON a.org_id = o.org_id AND a.id = o.account_id
         WHERE o.org_id = @orgId
           AND NOT coalesce(json_extract(o.data, '$.IsClosed'), 0)
-          AND (@oppPath IS NULL OR lower(json_extract(o.data, @oppPath)) = lower(@oppValue))
-          AND (@acctPath IS NULL OR lower(json_extract(a.data, @acctPath)) = lower(@acctValue))
+          AND ${where}
         ORDER BY json_extract(o.data, '$.CloseDate') ASC
-      `).all({
-        orgId,
-        oppPath: opp ? '$.' + opp.field : null, oppValue: opp?.value ?? null,
-        acctPath: acct ? '$.' + acct.field : null, acctValue: acct?.value ?? null,
-      });
+      `).all(params);
       return {
         records: rows.map((r) => {
           const rec = JSON.parse(r.data);
