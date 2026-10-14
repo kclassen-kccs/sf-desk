@@ -894,12 +894,13 @@ async function changeRole(a, role) {
       oppHave ? `${plural(oppHave, 'open opportunity already has', 'open opportunities already have')} ${u.Name} and will be skipped.` : null,
       d.closedCount ? `${plural(d.closedCount, 'closed opportunity', 'closed opportunities')} will be left alone.` : null,
     ].filter(Boolean);
-    const changing = [acctChanges ? `Account: ${d.account.Name} (now ${d.account.current || 'nobody'})` : null,
-      ...oppChanges.map((o) => `${o.Name} (now ${o.current || 'nobody'})`)].filter(Boolean);
-    return { count: (acctChanges ? 1 : 0) + oppChanges.length, acct, opps: oppParts.join(' '), changing };
+    return { count: (acctChanges ? 1 : 0) + oppChanges.length, acct, opps: oppParts.join(' ') };
   };
   const summary = el('div', { class: 'sub', style: 'margin:8px 0 0' });
+  // Who holds the role now; replaced by the summary once a person is picked.
+  const list = el('ul', { class: 'reassign-list' }, lines.map((l) => el('li', {}, l)));
   const showPlan = () => {
+    list.hidden = !!picked;
     if (!picked) return summary.replaceChildren();
     const p = plan(picked);
     summary.replaceChildren(el('div', {}, el('b', {}, p.acct)), el('div', {}, p.opps),
@@ -914,9 +915,7 @@ async function changeRole(a, role) {
     if (!u) return;
     const p = plan(u);
     if (!p.count) return;
-    const shown = p.changing.length > 15 ? [...p.changing.slice(0, 15), `…and ${p.changing.length - 15} more`] : p.changing;
-    if (!confirm(`Make ${u.Name} the ${who}?\n\n${p.acct}\n${p.opps}` +
-      `\n\nChanging:\n${shown.join('\n')}`)) return;
+    if (!confirm(`Make ${u.Name} the ${who}?\n\n${p.acct} ${p.opps}`)) return;
     go.disabled = search.disabled = cancel.disabled = true;
     try {
       const r = await api(`/accounts/${a.Id}/reassign`, { method: 'POST', body: { role, userId: u.Id, oppIds: opps.map((o) => o.Id) } });
@@ -937,7 +936,7 @@ async function changeRole(a, role) {
       (d.oppField ? ` and its ${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}` : '') + '. ' + notes.join(' ')),
     el('div', { class: 'pick' }, search, results),
     summary,
-    el('ul', { class: 'reassign-list' }, lines.map((l) => el('li', {}, l))),
+    list,
     el('div', { class: 'form-actions' }, cancel, go),
   ));
   search.focus();
