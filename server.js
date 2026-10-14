@@ -887,6 +887,87 @@ api.post('/accounts/:id/reassign', wrap(async (req, res) => {
   res.json({ label: f.label, user: { Id: user.Id, Name: user.Name }, updated, unchanged, failed });
 }));
 
+// ---------- Change Rep / Change SE for several accounts at once ----------
+
+// Up to this many accounts per bulk change; ids go into SOQL IN lists in chunks.
+const BULK_MAX = 1000, IN_CHUNK = 200;
+const chunks = (list, n) => Array.from({ length: Math.ceil(list.length / n) }, (_, i) => list.slice(i * n, (i + 1) * n));
+function bulkIds(body) {
+  const ids = [...new Set((Array.isArray(body?.ids) ? body.ids : []).map(sfId))];
+  if (!ids.length) throw new HttpError(400, 'Pick at least one account.');
+  if (ids.length > BULK_MAX) throw new HttpError(400, `Pick at most ${BULK_MAX} accounts at a time.`);
+  return ids;
+}
+// The picked accounts and all their open opportunities, each with who holds the role now, plus the closed count.
+async function bulkTargets(req, ids, f) {
+  const accounts = [], opps = [];
+  let closedCount = 0;
+  for (const part of chunks(ids, IN_CHUNK)) {
+    const inList = part.map((id) => `'${id}'`).join(',');
+    accounts.push(...await query(req, `SELECT Id, Name${f.Account ? `, ${f.Account.name}, ${f.Account.read}` : ''} FROM Account WHERE Id IN (${inList}) ORDER BY Name`, 5000));
+    opps.push(...await query(req, `SELECT Id, Name, AccountId${f.Opportunity ? `, ${f.Opportunity.name}, ${f.Opportunity.read}` : ''} ` +
+      `FROM Opportunity WHERE AccountId IN (${inList}) AND IsClosed = false ORDER BY CloseDate ASC`, 20000));
+    const [closed] = await query(req, `SELECT COUNT(Id) n FROM Opportunity WHERE AccountId IN (${inList}) AND IsClosed = true`);
+    closedCount += Number(closed?.n ?? closed?.expr0 ?? 0);
+  }
+  return { accounts, opps, closedCount };
+}
+
+api.post('/accounts/reassign-preview', wrap(async (req, res) => {
+  const f = await reassignFields(req, req.body?.role);
+  const { accounts, opps, closedCount } = await bulkTargets(req, bulkIds(req.body), f);
+  res.json({
+    label: f.label,
+    accountField: !!f.Account, accountIsUser: !!f.Account?.isUser,
+    oppField: !!f.Opportunity, oppIsUser: !!f.Opportunity?.isUser,
+    accounts: accounts.map((a) => ({ Id: a.Id, Name: a.Name,
+      current: f.Account ? readName(a, f.Account) : null, value: f.Account ? a[f.Account.name] ?? null : null })),
+    opportunities: f.Opportunity
+      ? opps.map((o) => ({ Id: o.Id, Name: o.Name, AccountId: o.AccountId, current: readName(o, f.Opportunity), value: o[f.Opportunity.name] ?? null }))
+      : [],
+    closedCount,
+  });
+}));
+
+// Set the role to the picked user on each picked account and all of their open opportunities (re-read
+// here), skipping records that already have that user. Saved 200 at a time with partial success allowed,
+// so one record without edit access doesn't stop the rest; failures are reported per record.
+api.post('/accounts/reassign-bulk', wrap(async (req, res) => {
+  const f = await reassignFields(req, req.body?.role);
+  const ids = bulkIds(req.body);
+  const [user] = await query(req, `SELECT Id, Name FROM User WHERE Id = '${sfId(req.body?.userId)}' AND IsActive = true`);
+  if (!user) throw new HttpError(400, 'That user was not found or is inactive.');
+  const { accounts, opps } = await bulkTargets(req, ids, f);
+  const jobs = [];
+  if (f.Account) for (const a of accounts) jobs.push({ sobject: 'Account', rec: a, field: f.Account });
+  if (f.Opportunity) for (const o of opps) jobs.push({ sobject: 'Opportunity', rec: o, field: f.Opportunity });
+  const updated = [], unchanged = [], failed = [], todo = [];
+  for (const job of jobs) {
+    const { sobject, rec, field } = job;
+    const value = field.isUser ? user.Id : user.Name;
+    const item = { type: sobject, Id: rec.Id, Name: rec.Name };
+    const now = String(rec[field.name] || '');
+    if (field.isUser ? now.slice(0, 15) === value.slice(0, 15) : now.toLowerCase() === value.toLowerCase()) unchanged.push(item);
+    else todo.push({ item, record: { attributes: { type: sobject }, id: rec.Id, [field.name]: value } });
+  }
+  for (const part of chunks(todo, 200)) {
+    let results;
+    try {
+      results = await sf(req, 'PATCH', `/services/data/${API}/composite/sobjects`, { body: { allOrNone: false, records: part.map((t) => t.record) } });
+    } catch (err) {
+      if (err.status === 401) throw err;
+      for (const t of part) failed.push({ ...t.item, error: err.message });
+      continue;
+    }
+    part.forEach((t, i) => {
+      const r = results?.[i];
+      if (r?.success) updated.push(t.item);
+      else failed.push({ ...t.item, error: (r?.errors || []).map((e) => e.message).join('; ') || 'Not saved' });
+    });
+  }
+  res.json({ label: f.label, user: { Id: user.Id, Name: user.Name }, accounts: accounts.length, updated, unchanged, failed });
+}));
+
 // ---------- Deal Support ----------
 
 // Find the Deal Support object, its lookup to Opportunity, and the fields the form can show.

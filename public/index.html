@@ -65,6 +65,13 @@
   .selbar[hidden] { display: none; }
   .selbar input { width: auto; } label.selbar { white-space: nowrap; font-weight: 400; }
   td.pick, th.pick { width: 1%; }
+  .acct-tools { display: flex; gap: 4px; align-items: center; padding: 6px 10px 6px 12px; border-bottom: 1px solid var(--line); font-size: 13px; color: var(--muted); }
+  .acct-tools label { display: flex; gap: 8px; align-items: center; flex: 1; min-width: 0; white-space: nowrap; overflow: hidden; }
+  .acct-tools label span { overflow: hidden; text-overflow: ellipsis; }
+  .acct-tools input[type=checkbox] { width: auto; margin: 0; }
+  .acct-tools button { width: auto; padding: 3px 5px; display: inline-flex; align-items: center; gap: 3px; font-size: 12px; color: var(--ink); }
+  .acct-tools button svg { width: 16px; height: 16px; }
+  .acct-tools button:not(:disabled):hover { border-color: var(--accent); color: var(--accent); }
   .empty { padding: 24px 16px; color: var(--muted); }
 
   #detail { overflow: auto; padding: 18px clamp(12px, 2vw, 32px) 40px; min-width: 0; }
@@ -422,6 +429,7 @@ const acctOwners = new Map(); // account Id -> { id, name } of its owner, for ev
 let hidden = new Map();          // id -> { id, type, name, hiddenAt }
 let showHiddenAccts = false, showHiddenOpps = false;
 const pickedAccts = new Set(), pickedOpps = new Set();
+let reloadAccounts = () => {};   // re-runs the Accounts list query (set by showMain)
 const isHidden = (id) => hidden.has(id);
 
 async function loadHidden() {
@@ -615,8 +623,8 @@ function showMain() {
     el('div', { id: 'list' },
       el('div', { class: 'controls' }, search, mine, boat, se, rep, sort,
         el('label', {}, group, 'Group by sales rep'),
-        el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden')),
-        el('div', { class: 'selbar', id: 'acctSelbar', hidden: true })),
+        el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden'))),
+      el('div', { class: 'acct-tools', id: 'acctTools' }),
       el('div', { id: 'accounts' }, el('div', { class: 'empty' }, 'Loading…')),
     ),
     el('div', { id: 'detail' }, el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.')),
@@ -635,6 +643,7 @@ function showMain() {
       renderList();
     } catch (e) { toast(e.message, 'err'); }
   }
+  reloadAccounts = loadAccounts;
   renderReps();
   renderAcctFilters();
   loadAccounts();
@@ -697,7 +706,7 @@ function renderList() {
   const box = document.getElementById('accounts');
   const hiddenCount = accounts.filter((a) => isHidden(a.Id)).length;
   document.getElementById('hiddenAcctLabel').textContent = `Show hidden (${hiddenCount})`;
-  const shown = showHiddenAccts ? accounts : accounts.filter((a) => !isHidden(a.Id));
+  const shown = shownAccounts();
   for (const id of [...pickedAccts]) if (!shown.some((a) => a.Id === id)) pickedAccts.delete(id);
   renderAcctSelbar();
   renderReps();
@@ -780,15 +789,57 @@ function selbar(bar, picked, records, type, after) {
   );
 }
 
+// Small line icons for the Accounts list's selection tools.
+const ICONS = {
+  hide: '<path d="M3 3l18 18"/><path d="M10.6 5.1A10 10 0 0 1 12 5c5 0 9 4.5 10 7a12.6 12.6 0 0 1-3.2 4.3M6.1 6.1C3.9 7.6 2.5 9.8 2 12c1 2.5 5 7 10 7a9.8 9.8 0 0 0 4.9-1.3"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/>',
+  unhide: '<path d="M2 12c1-2.5 5-7 10-7s9 4.5 10 7c-1 2.5-5 7-10 7S3 14.5 2 12z"/><circle cx="12" cy="12" r="3"/>',
+  person: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20c.6-3.5 3.3-5.5 6.5-5.5s5.9 2 6.5 5.5"/><path d="M16 8h6m-2.5-2.5L22 8l-2.5 2.5"/>',
+};
+function icon(name) {
+  const span = el('span', { 'aria-hidden': 'true', style: 'display:inline-flex' });
+  span.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">${ICONS[name]}</svg>`;
+  return span;
+}
+
+// The accounts the list shows right now (all pages), leaving out hidden ones unless "Show hidden" is ticked.
+const shownAccounts = () => showHiddenAccts ? accounts : accounts.filter((a) => !isHidden(a.Id));
+
+// The row above the Accounts list: a select-all box with the count, and icons that act on the ticked accounts.
 function renderAcctSelbar() {
-  selbar(document.getElementById('acctSelbar'), pickedAccts, accounts, 'Account', () => {
+  const bar = document.getElementById('acctTools');
+  if (!bar) return;
+  const shown = shownAccounts();
+  const recs = shown.filter((a) => pickedAccts.has(a.Id));
+  const all = el('input', { type: 'checkbox', 'aria-label': 'Select all accounts', checked: !!recs.length && recs.length === shown.length, disabled: !shown.length });
+  all.indeterminate = !!recs.length && recs.length < shown.length;
+  all.addEventListener('change', () => {
+    if (all.checked) for (const a of shown) pickedAccts.add(a.Id); else pickedAccts.clear();
     renderList();
-    // Hiding the open account closes it, unless hidden accounts are being shown.
-    if (current && isHidden(current.account.Id) && !showHiddenAccts) {
-      current = null;
-      document.getElementById('detail').replaceChildren(el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.'));
-    }
   });
+  const toHide = recs.filter((a) => !isHidden(a.Id)), toShow = recs.filter((a) => isHidden(a.Id));
+  const btn = (name, text, title, enabled, onclick) =>
+    el('button', { title, 'aria-label': title, disabled: !enabled, onclick }, icon(name), text);
+  const plural = (n) => `${n} account${n === 1 ? '' : 's'}`;
+  bar.replaceChildren(
+    el('label', { title: 'Select all accounts in the list' }, all, el('span', {}, recs.length ? `${recs.length.toLocaleString()} selected` : 'All')),
+    btn('hide', null, toHide.length ? `Hide ${plural(toHide.length)}` : 'Hide selected accounts', toHide.length, () => hideAccts(toHide, true)),
+    btn('unhide', null, toShow.length ? `Unhide ${plural(toShow.length)}` : 'Unhide selected hidden accounts', toShow.length, () => hideAccts(toShow, false)),
+    btn('person', 'SE', recs.length ? `Change the SE on ${plural(recs.length)} and their open opportunities` : 'Change SE on selected accounts', recs.length, () => bulkChangeRole(recs, 'se')),
+    btn('person', 'Rep', recs.length ? `Change the sales rep on ${plural(recs.length)} and their open opportunities` : 'Change Rep on selected accounts', recs.length, () => bulkChangeRole(recs, 'rep')),
+  );
+}
+
+async function hideAccts(list, hide) {
+  const n = list.length, what = n === 1 ? `"${list[0].Name}"` : `these ${n.toLocaleString()} accounts`;
+  if (!confirm(hide ? `Hide ${what}? They stay in Salesforce; tick "Show hidden" to see them again.` : `Unhide ${what}?`)) return;
+  try { await setHiddenState('Account', list, hide); } catch (e) { return toast(e.message, 'err'); }
+  pickedAccts.clear();
+  renderList();
+  // Hiding the open account closes it, unless hidden accounts are being shown.
+  if (current && isHidden(current.account.Id) && !showHiddenAccts) {
+    current = null;
+    document.getElementById('detail').replaceChildren(el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.'));
+  }
 }
 
 async function openAccount(id) {
@@ -846,50 +897,10 @@ async function changeRole(a, role) {
   if (current?.account.Id !== a.Id) return;
   const who = d.label === 'Sales rep' ? 'sales rep' : 'Lead SE';
 
-  // A type-to-search box that picks one person: matches drop down under it while typing.
-  const search = el('input', { type: 'text', placeholder: `Type a name to pick the ${who}…`, 'aria-label': `New ${who}`,
-    role: 'combobox', 'aria-autocomplete': 'list', autocomplete: 'off' });
-  const results = el('ul', { class: 'pick-list', role: 'listbox', hidden: true });
   const go = el('button', { class: 'primary', disabled: true }, 'Assign');
-  let users = [], picked = null, active = -1, timer, seq = 0;
-  const showList = () => {
-    results.hidden = !users.length && !search.value.trim();
-    results.replaceChildren(...(users.length ? users.map((u, i) => el('li', {
-      role: 'option', class: i === active ? 'on' : null,
-      onmousedown: (e) => { e.preventDefault(); choose(u); },
-    }, el('b', {}, u.Name), u.Title ? el('span', {}, u.Title) : null))
-      : search.value.trim().length >= 2 ? [el('li', { class: 'none' }, 'No active users match')] : []));
-    if (!results.children.length) results.hidden = true;
-  };
-  const choose = (u) => {
-    picked = u; search.value = u.Name; users = []; active = -1;
-    results.hidden = true; go.disabled = false;
-  };
-  const find = async () => {
-    const q = search.value.trim(), n = ++seq;
-    if (q.length < 2) { users = []; return showList(); }
-    try {
-      const found = await api('/users?q=' + encodeURIComponent(q));
-      if (n !== seq) return;
-      users = found; active = users.length ? 0 : -1;
-      showList();
-    } catch (e) { toast(e.message, 'err'); }
-  };
-  search.addEventListener('input', () => {
-    picked = null; go.disabled = true;
-    clearTimeout(timer); timer = setTimeout(find, 250);
-  });
-  search.addEventListener('keydown', (e) => {
-    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-      if (!users.length) return;
-      e.preventDefault();
-      active = (active + (e.key === 'ArrowDown' ? 1 : users.length - 1)) % users.length;
-      showList();
-    } else if (e.key === 'Enter' && users[active]) { e.preventDefault(); choose(users[active]); }
-    else if (e.key === 'Escape') { users = []; results.hidden = true; }
-  });
-  search.addEventListener('blur', () => { results.hidden = true; });
-  search.addEventListener('focus', () => { if (users.length) showList(); });
+  const pk = personPicker(who, () => { go.disabled = !pk.picked; showPlan(); });
+  const search = pk.input;
+  let picked = null;
 
   const opps = d.opportunities;
   const lines = [
@@ -919,6 +930,7 @@ async function changeRole(a, role) {
   // Who holds the role now; replaced by the summary once a person is picked.
   const list = el('ul', { class: 'reassign-list' }, lines.map((l) => el('li', {}, l)));
   const showPlan = () => {
+    picked = pk.picked;
     list.hidden = !!picked;
     if (!picked) return summary.replaceChildren();
     const p = plan(picked);
@@ -926,9 +938,6 @@ async function changeRole(a, role) {
       ...(p.count ? [] : [el('div', {}, `Nothing to change: everything already has ${picked.Name}.`)]));
     go.disabled = !p.count;
   };
-  search.addEventListener('input', showPlan);
-  results.addEventListener('mousedown', () => setTimeout(showPlan));
-  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') setTimeout(showPlan); });
   go.addEventListener('click', async () => {
     const u = picked;
     if (!u) return;
@@ -953,12 +962,159 @@ async function changeRole(a, role) {
     el('h3', {}, title),
     el('div', { class: 'sub' }, `Pick the new ${who} for ${d.account.Name}` +
       (d.oppField ? ` and its ${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}` : '') + '. ' + notes.join(' ')),
-    el('div', { class: 'pick' }, search, results),
+    pk.node,
     summary,
     list,
     el('div', { class: 'form-actions' }, cancel, go),
   ));
   search.focus();
+}
+
+// A type-to-search box that picks one active user: matches drop down under it while typing.
+// `onChange` runs whenever the pick changes (picked, or cleared by typing).
+function personPicker(who, onChange) {
+  const search = el('input', { type: 'text', placeholder: `Type a name to pick the ${who}…`, 'aria-label': `New ${who}`,
+    role: 'combobox', 'aria-autocomplete': 'list', autocomplete: 'off' });
+  const results = el('ul', { class: 'pick-list', role: 'listbox', hidden: true });
+  let users = [], picked = null, active = -1, timer, seq = 0;
+  const showList = () => {
+    results.hidden = !users.length && !search.value.trim();
+    results.replaceChildren(...(users.length ? users.map((u, i) => el('li', {
+      role: 'option', class: i === active ? 'on' : null,
+      onmousedown: (e) => { e.preventDefault(); choose(u); },
+    }, el('b', {}, u.Name), u.Title ? el('span', {}, u.Title) : null))
+      : search.value.trim().length >= 2 ? [el('li', { class: 'none' }, 'No active users match')] : []));
+    if (!results.children.length) results.hidden = true;
+  };
+  const choose = (u) => {
+    picked = u; search.value = u.Name; users = []; active = -1;
+    results.hidden = true; onChange();
+  };
+  const find = async () => {
+    const q = search.value.trim(), n = ++seq;
+    if (q.length < 2) { users = []; return showList(); }
+    try {
+      const found = await api('/users?q=' + encodeURIComponent(q));
+      if (n !== seq) return;
+      users = found; active = users.length ? 0 : -1;
+      showList();
+    } catch (e) { toast(e.message, 'err'); }
+  };
+  search.addEventListener('input', () => {
+    if (picked) { picked = null; onChange(); }
+    clearTimeout(timer); timer = setTimeout(find, 250);
+  });
+  search.addEventListener('keydown', (e) => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      if (!users.length) return;
+      e.preventDefault();
+      active = (active + (e.key === 'ArrowDown' ? 1 : users.length - 1)) % users.length;
+      showList();
+    } else if (e.key === 'Enter' && users[active]) { e.preventDefault(); choose(users[active]); }
+    else if (e.key === 'Escape') { users = []; results.hidden = true; }
+  });
+  search.addEventListener('blur', () => { results.hidden = true; });
+  search.addEventListener('focus', () => { if (users.length) showList(); });
+  return { node: el('div', { class: 'pick' }, search, results), input: search, get picked() { return picked; } };
+}
+
+// Change Rep / Change SE on every ticked account in the list and all of their open opportunities:
+// pick a person, read one combined summary with counts, confirm, then apply.
+async function bulkChangeRole(recs, role) {
+  const detail = document.getElementById('detail');
+  const n = recs.length, accts = `${n.toLocaleString()} account${n === 1 ? '' : 's'}`;
+  const title = `${role === 'rep' ? 'Change Rep' : 'Change SE'} on ${accts}`;
+  const close = () => {
+    if (current) return renderDetail();
+    detail.replaceChildren(el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.'));
+  };
+  const cancel = el('button', { onclick: close }, 'Cancel');
+  const say = (...kids) => detail.replaceChildren(el('section', {}, el('h3', {}, title), ...kids, el('div', { class: 'form-actions' }, cancel)));
+  document.querySelector('main')?.classList.add('has-detail');
+  say(el('div', { class: 'empty' }, el('span', { class: 'spin dark', 'aria-hidden': 'true' }), ' Loading the accounts and their open opportunities…'));
+  const token = {};
+  bulkChangeRole.token = token;
+  let d;
+  try { d = await api('/accounts/reassign-preview', { method: 'POST', body: { role, ids: recs.map((a) => a.Id) } }); }
+  catch (e) { return say(el('div', { class: 'empty' }, e.message)); }
+  if (bulkChangeRole.token !== token) return;
+  const who = d.label === 'Sales rep' ? 'sales rep' : 'Lead SE';
+  const plural = (k, one, many) => `${k.toLocaleString()} ${k === 1 ? one : many}`;
+  const has = (value, isUser, u) => value != null && (isUser ? String(value).slice(0, 15) === u.Id.slice(0, 15)
+    : String(value).toLowerCase() === u.Name.toLowerCase());
+  const plan = (u) => {
+    const acctChange = d.accountField ? d.accounts.filter((a) => !has(a.value, d.accountIsUser, u)) : [];
+    const oppChange = d.opportunities.filter((o) => !has(o.value, d.oppIsUser, u));
+    const acctHave = d.accountField ? d.accounts.length - acctChange.length : 0, oppHave = d.opportunities.length - oppChange.length;
+    const acct = [
+      !d.accountField ? `Accounts have no ${who} field, so the accounts stay as they are.`
+        : acctChange.length ? `${plural(acctChange.length, 'account', 'accounts')} will change to ${u.Name}.` : null,
+      acctHave ? `${plural(acctHave, 'account already has', 'accounts already have')} ${u.Name} and will be skipped.` : null,
+    ].filter(Boolean).join(' ');
+    const opps = [
+      d.oppField && (oppChange.length || !oppHave) ? `${plural(oppChange.length, 'open opportunity', 'open opportunities')} will change to ${u.Name}.` : null,
+      oppHave ? `${plural(oppHave, 'open opportunity already has', 'open opportunities already have')} ${u.Name} and will be skipped.` : null,
+      d.closedCount ? `${plural(d.closedCount, 'closed opportunity', 'closed opportunities')} will be left alone.` : null,
+    ].filter(Boolean).join(' ');
+    return { count: acctChange.length + oppChange.length, acct, opps };
+  };
+
+  const go = el('button', { class: 'primary', disabled: true }, 'Assign');
+  const summary = el('div', { class: 'sub', style: 'margin:8px 0 0' });
+  // Who holds the role on each account now; replaced by the summary once a person is picked.
+  const oppCount = new Map();
+  for (const o of d.opportunities) oppCount.set(o.AccountId, (oppCount.get(o.AccountId) || 0) + 1);
+  const list = el('ul', { class: 'reassign-list' }, d.accounts.map((a) => el('li', {},
+    `${a.Name}` + (d.accountField ? ` (now ${a.current || 'nobody'})` : '') +
+    (d.oppField ? `, ${plural(oppCount.get(a.Id) || 0, 'open opportunity', 'open opportunities')}` : ''))));
+  const pk = personPicker(who, () => {
+    const u = pk.picked;
+    list.hidden = !!u;
+    if (!u) { go.disabled = true; return summary.replaceChildren(); }
+    const p = plan(u);
+    summary.replaceChildren(el('div', {}, el('b', {}, p.acct)), el('div', {}, p.opps),
+      ...(p.count ? [] : [el('div', {}, `Nothing to change: everything already has ${u.Name}.`)]));
+    go.disabled = !p.count;
+  });
+  go.addEventListener('click', async () => {
+    const u = pk.picked;
+    if (!u) return;
+    const p = plan(u);
+    if (!p.count) return;
+    if (!confirm(`Make ${u.Name} the ${who} on ${accts}?\n\n${p.acct} ${p.opps}`)) return;
+    go.disabled = pk.input.disabled = cancel.disabled = true;
+    go.replaceChildren(el('span', { class: 'spin', 'aria-hidden': 'true' }), ' Assigning…');
+    try {
+      const r = await api('/accounts/reassign-bulk', { method: 'POST', body: { role, userId: u.Id, ids: d.accounts.map((a) => a.Id) } });
+      const total = r.updated.length + r.unchanged.length + r.failed.length;
+      const done = `${u.Name} is now ${who} on ${(r.updated.length + r.unchanged.length).toLocaleString()} of ${total.toLocaleString()} records`;
+      if (r.failed.length) toast(`${done}. ${r.failed.length} failed: ` + r.failed.slice(0, 5).map((f) => `${f.Name}: ${f.error}`).join('; ') +
+        (r.failed.length > 5 ? `; and ${r.failed.length - 5} more` : ''), 'err');
+      else toast(done + '.', 'ok');
+      pickedAccts.clear();
+      reloadAccounts();
+      if (current && d.accounts.some((a) => a.Id === current.account.Id)) openAccount(current.account.Id);
+      else close();
+    } catch (e) {
+      toast(e.message, 'err');
+      go.replaceChildren('Assign');
+      go.disabled = pk.input.disabled = cancel.disabled = false;
+    }
+  });
+
+  const notes = [];
+  if (!d.accountField) notes.push(`Accounts have no ${who} field, so only the opportunities change.`);
+  if (!d.oppField) notes.push(`Opportunities have no ${who} field, so only the accounts change.`);
+  detail.replaceChildren(el('section', {},
+    el('h3', {}, title),
+    el('div', { class: 'sub' }, `Pick the new ${who} for ${accts}` +
+      (d.oppField ? ` and their ${plural(d.opportunities.length, 'open opportunity', 'open opportunities')}` : '') + '. ' + notes.join(' ')),
+    pk.node,
+    summary,
+    list,
+    el('div', { class: 'form-actions' }, cancel, go),
+  ));
+  pk.input.focus();
 }
 
 // ---------- account Deal Supports ----------
