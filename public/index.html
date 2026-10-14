@@ -367,53 +367,126 @@ let me = null, meta = null, current = null, accounts = [], dsMeta = null;
 // Account list: filter to one sales rep (account owner) and/or group the list by rep.
 // Opportunities: closed ones are hidden unless showClosed is ticked.
 let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
-// Account list: My Accounts (I'm in one of the account's role fields) or all, and the SailPoint BOAT filter.
-// acctScope: 'mine' (My Accounts), 'boats' (My BOATs: accounts in the BOATs of my accounts) or 'all'.
-let acctScope = 'mine', boatFilter = '', seFilter = '', acctFilters = null;
-// While a BOAT is picked: the SEs and sales reps with accounts in it ({ se, reps }), which the dropdowns then list.
-let boatPeople = null;
+// The filters the Accounts, Deals and My Time tabs share, in this order:
+// boatFilter: 'mine' (the BOATs of my accounts), 'all', a SailPoint BOAT, or '__blank__' (no BOAT);
+// teamFilter: 'mine' (My Accounts: I'm in one of the account's role fields), 'team' (me or anyone on
+//   my team is), a team member's User Id, or 'all' (My Time picks whose time instead, see timePrefs);
+// repFilter: one sales rep (the account owner), from the reps the first two filters leave.
+let boatFilter = 'mine', teamFilter = 'mine', acctFilters = null;
+// The sales reps the BOAT and team filters leave on the Accounts and Deals tabs: { key, reps }.
+let repChoices = null;
 // The account list shows ACCT_PAGE accounts at a time, with paging controls above and below when there are more.
 const ACCT_PAGE = 200, ACCT_MAX = 5000;
 let acctPage = 0;
-let savedRepName = ''; // the picked rep's name from the saved filters, until accounts load
+let savedRepName = ''; // the picked rep's name from the saved filters, until the rep choices load
 
-// The Accounts filters are saved in SF Desk's local database, so they survive a restart.
-// The My Accounts / My BOATs / All accounts dropdown, shared by the Accounts and Deals tabs.
-function scopeSelect(onChange) {
-  const select = el('select', { 'aria-label': 'Which accounts', class: 'scopeSelect' },
-    el('option', { value: 'mine' }, 'My Accounts'), el('option', { value: 'boats' }, 'My BOATs'),
-    el('option', { value: 'all' }, 'All accounts'));
-  select.value = acctScope;
-  select.addEventListener('change', () => { acctScope = select.value; saveAcctPrefs(); onChange(); });
-  scopeTitle(select);
-  return select;
-}
-// Hover text naming the role fields My Accounts checks and the BOATs My BOATs covers.
-function scopeTitle(select) {
-  if (!acctFilters) return;
-  const roles = acctFilters.mine.map((f) => f.role === f.label ? f.label : `${f.role} (${f.label})`);
-  select.title = `My Accounts: accounts where you're ${roles.join(', ') || '…'}` +
-    (acctFilters.missing.length ? `\nNot found on Account: ${acctFilters.missing.join(', ')}` : '') +
-    `\nMy BOATs: ${acctFilters.myBoats?.join(', ') || 'none found'}`;
-  const opt = select.querySelector('option[value=boats]');
-  if (opt && acctFilters.myBoats?.length === 1) opt.textContent = `My BOAT: ${acctFilters.myBoats[0]}`;
-  else if (opt && acctFilters.myBoats?.length) opt.textContent = `My BOATs (${acctFilters.myBoats.length})`;
-}
-
+// The filters are saved in SF Desk's local database, so they survive a restart.
 async function loadAcctPrefs() {
   try {
     const p = await api('/prefs/accounts');
-    if (['mine', 'boats', 'all'].includes(p.scope)) acctScope = p.scope;
-    else if (typeof p.mine === 'boolean') acctScope = p.mine ? 'mine' : 'all';
-    boatFilter = p.boat || ''; seFilter = p.se || ''; repFilter = p.rep || ''; savedRepName = p.repName || '';
+    if (p.team) {
+      boatFilter = p.boat || 'mine'; teamFilter = p.team;
+    } else if (p.scope || typeof p.mine === 'boolean') {
+      // Saved before the team filter: My Accounts / My BOATs / All accounts, and a BOAT ('' for all).
+      const scope = p.scope || (p.mine ? 'mine' : 'all');
+      teamFilter = scope === 'mine' ? 'mine' : 'all';
+      boatFilter = p.boat || (scope === 'boats' ? 'mine' : 'all');
+    }
+    repFilter = p.rep || ''; savedRepName = p.repName || '';
     sortRecent = !!p.sortRecent; groupByRep = !!p.groupByRep; showHiddenAccts = !!p.showHidden;
   } catch { /* first run or offline: keep the defaults */ }
 }
 function saveAcctPrefs() {
-  const repName = repFilter ? ([...acctOwners.values()].find((r) => r.id === repFilter)?.name
-    || boatPeople?.reps.find((r) => r.value === repFilter)?.label || savedRepName) : '';
-  api('/prefs/accounts', { method: 'PUT', body: { scope: acctScope, boat: boatFilter, se: seFilter, rep: repFilter, repName,
+  const repName = repFilter ? (repChoices?.reps.find((r) => r.value === repFilter)?.label
+    || [...acctOwners.values()].find((r) => r.id === repFilter)?.name || savedRepName) : '';
+  if (repName) savedRepName = repName;
+  api('/prefs/accounts', { method: 'PUT', body: { boat: boatFilter, team: teamFilter, rep: repFilter, repName,
     sortRecent, groupByRep, showHidden: showHiddenAccts } }).catch(() => {});
+}
+
+// Which fields My Accounts checks, the BOAT choices, my BOATs and my team; looked up once per session.
+let acctFiltersLoading = null;
+function ensureAcctFilters() {
+  if (acctFilters) return Promise.resolve(acctFilters);
+  acctFiltersLoading ??= api('/account-filters').then((f) => (acctFilters = f)).finally(() => { acctFiltersLoading = null; });
+  return acctFiltersLoading;
+}
+const filterQuery = () => ({ boat: boatFilter, team: teamFilter });
+
+// The three filter dropdowns, in order: SailPoint BOAT, team, sales rep. `time` makes the team
+// dropdown pick whose time (My Time / My Team / a member); otherwise it picks whose accounts.
+function filterSelects({ onBoat, onTeam, onRep, time = false }) {
+  const boat = el('select', { 'aria-label': 'SailPoint BOAT' }, el('option', { value: 'mine' }, 'My BOAT'), el('option', { value: 'all' }, 'All BOATs'));
+  const team = el('select', { 'aria-label': time ? 'Whose time' : 'Whose accounts' });
+  const rep = el('select', { 'aria-label': 'Sales rep' }, el('option', { value: '' }, 'All sales reps'));
+  boat.addEventListener('change', () => { boatFilter = boat.value; saveAcctPrefs(); onBoat(); });
+  team.addEventListener('change', () => {
+    if (time) saveTimePrefs('who', team.value, 'me'); else { teamFilter = team.value; saveAcctPrefs(); }
+    onTeam();
+  });
+  rep.addEventListener('change', () => { repFilter = rep.value; saveAcctPrefs(); onRep(); });
+  const f = { boat, team, rep, time };
+  fillBoatSelect(f); fillTeamSelect(f);
+  return f;
+}
+
+// BOAT choices: My BOAT, All BOATs, then every BOAT A–Z (and accounts with none).
+function fillBoatSelect(f) {
+  const b = acctFilters?.boat, mine = acctFilters?.myBoats || [];
+  if (acctFilters && !b) {
+    f.boat.replaceChildren(el('option', { value: 'all' }, 'BOAT: not found'));
+    f.boat.disabled = true;
+    f.boat.title = 'No "SailPoint BOAT" field found on Account. Set SF_BOAT_FIELD in .env to its API name.';
+    return;
+  }
+  f.boat.replaceChildren(
+    el('option', { value: 'mine' }, mine.length === 1 ? `My BOAT: ${mine[0]}` : mine.length ? `My BOATs (${mine.length})` : 'My BOAT'),
+    el('option', { value: 'all' }, 'All BOATs'),
+    ...(b?.options || []).map((o) => el('option', { value: o.value }, o.label)),
+    b ? el('option', { value: '__blank__' }, '(No BOAT)') : null);
+  if (acctFilters && ![...f.boat.options].some((o) => o.value === boatFilter)) boatFilter = 'mine';
+  f.boat.value = boatFilter;
+  f.boat.title = b ? `${b.label} (${b.name})\nMy BOAT: the BOAT of your accounts (${mine.join(', ') || 'none found, so all BOATs'})` : '';
+}
+
+// Team choices: My Accounts (or My Time), My Team, each team member A–Z, and All accounts.
+function fillTeamSelect(f) {
+  const members = [...(f.time ? time.data?.team?.members : acctFilters?.team) || []].sort((a, b) => a.name.localeCompare(b.name));
+  const value = f.time ? (time.data?.who || timePrefs().who || 'me') : teamFilter;
+  f.team.replaceChildren(
+    el('option', { value: f.time ? 'me' : 'mine' }, f.time ? 'My Time' : 'My Accounts'),
+    el('option', { value: 'team' }, 'My Team'),
+    ...members.map((m) => el('option', { value: m.id }, m.name)),
+    f.time ? null : el('option', { value: 'all' }, 'All accounts'));
+  if (!f.time && acctFilters && ![...f.team.options].some((o) => o.value === teamFilter)) teamFilter = 'mine';
+  f.team.value = f.time ? value : teamFilter;
+  if (f.time || !acctFilters) return;
+  const roles = acctFilters.mine.map((m) => m.role === m.label ? m.label : `${m.role} (${m.label})`);
+  f.team.title = `Accounts where you (My Accounts), you or anyone on your team (My Team), or that person is ` +
+    `${roles.join(', ') || '…'}` + (acctFilters.missing.length ? `\nNot found on Account: ${acctFilters.missing.join(', ')}` : '');
+}
+
+// Sales rep choices, A–Z; a picked rep who isn't among them goes back to All sales reps.
+function fillRepSelect(f, reps) {
+  const list = [...reps].sort((a, b) => a.label.localeCompare(b.label));
+  if (repFilter && !list.some((r) => r.value === repFilter)) repFilter = '';
+  f.rep.replaceChildren(el('option', { value: '' }, 'All sales reps'), ...list.map((r) => el('option', { value: r.value }, r.label)));
+  f.rep.value = repFilter;
+}
+
+// The sales reps of the accounts the BOAT and team filters cover (Accounts and Deals tabs).
+async function loadRepChoices() {
+  const key = JSON.stringify(filterQuery());
+  if (repChoices?.key === key) return repChoices;
+  const { reps } = await api('/account-filters/people?' + new URLSearchParams(filterQuery()));
+  repChoices = { key, reps };
+  return repChoices;
+}
+
+// "My Accounts · My BOAT: X · Sales rep: Y", for the lines under the headings.
+function filterText(f) {
+  const t = (s) => s.options[s.selectedIndex]?.textContent || '';
+  return [t(f.team), t(f.boat), repFilter ? `Sales rep: ${t(f.rep)}` : ''].filter(Boolean).join(' · ');
 }
 const acctOwners = new Map(); // account Id -> { id, name } of its owner, for every account loaded this session
 
@@ -586,34 +659,24 @@ function showMain() {
   current = null;
   const app = document.getElementById('app');
   const search = el('input', { type: 'search', placeholder: 'Search accounts…' });
-  const mine = scopeSelect(() => loadAccounts());
-  mine.id = 'mineSelect';
-  const boat = el('select', { 'aria-label': 'SailPoint BOAT', id: 'boatSelect', disabled: true },
-    el('option', { value: '' }, 'SailPoint BOAT: All'));
-  const se = el('select', { 'aria-label': 'SE', id: 'seSelect', disabled: true }, el('option', { value: '' }, 'All SEs'));
-  const rep = el('select', { 'aria-label': 'Sales rep', id: 'repSelect' });
+  // BOAT and team narrow the sales reps, then the list; a rep change only reloads the list.
+  const refilter = () => { loadAccounts(); renderReps(true); };
+  const filters = filterSelects({ onBoat: refilter, onTeam: refilter, onRep: () => loadAccounts() });
+  acctFilterSelects = filters;
   const group = el('input', { type: 'checkbox', checked: groupByRep });
   const sort = el('select', { 'aria-label': 'Sort accounts' },
     el('option', { value: 'name' }, 'Sort: Name A–Z'), el('option', { value: 'recent' }, 'Sort: Recently modified'));
   sort.value = sortRecent ? 'recent' : 'name';
   sort.addEventListener('change', () => { sortRecent = sort.value === 'recent'; saveAcctPrefs(); loadAccounts(); });
   let timer;
-  rep.addEventListener('change', () => { repFilter = rep.value; saveAcctPrefs(); loadAccounts(); });
   group.addEventListener('change', () => { groupByRep = group.checked; saveAcctPrefs(); renderList(); });
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(loadAccounts, 300); });
-  boat.addEventListener('change', async () => {
-    boatFilter = boat.value;
-    await loadBoatPeople();
-    saveAcctPrefs();
-    loadAccounts();
-  });
-  se.addEventListener('change', () => { seFilter = se.value; saveAcctPrefs(); loadAccounts(); });
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
   showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; saveAcctPrefs(); renderList(); });
 
   app.replaceChildren(el('main', {},
     el('div', { id: 'list' },
-      el('div', { class: 'controls' }, search, mine, boat, se, rep, sort,
+      el('div', { class: 'controls' }, search, filters.boat, filters.team, filters.rep, sort,
         el('label', {}, group, 'Group by sales rep'),
         el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden')),
         el('div', { class: 'selbar', id: 'acctSelbar', hidden: true })),
@@ -623,74 +686,37 @@ function showMain() {
   ));
 
   async function loadAccounts() {
-    const params = new URLSearchParams({ q: search.value.trim(), scope: acctScope });
-    if (boatFilter) params.set('boat', boatFilter);
-    if (seFilter) params.set('se', seFilter);
+    const params = new URLSearchParams({ q: search.value.trim(), ...filterQuery() });
     if (repFilter) params.set('owner', repFilter);
     if (sortRecent) params.set('sort', 'recent');
+    const seq = ++acctLoads;
     try {
-      accounts = await api('/accounts?' + params);
+      const list = await api('/accounts?' + params);
+      if (seq !== acctLoads) return; // a newer filter choice is loading
+      accounts = list;
       acctPage = 0;
       for (const a of accounts) if (a.OwnerId) acctOwners.set(a.Id, { id: a.OwnerId, name: a.Owner?.Name || a.OwnerId });
       renderList();
     } catch (e) { toast(e.message, 'err'); }
   }
-  renderReps();
+  filters.reload = loadAccounts;
   renderAcctFilters();
   loadAccounts();
 }
 
-// SE choices: everyone who is Lead SE on some account, or only those with accounts in the picked BOAT.
-function renderSes() {
-  const select = document.getElementById('seSelect');
-  const s = acctFilters?.se;
-  if (!select || !acctFilters) return;
-  if (!s) { select.title = 'No "Lead SE" field found on Account.'; return; }
-  const options = boatPeople ? boatPeople.se : s.options;
-  select.title = `${s.label} (${s.name})`;
-  select.replaceChildren(el('option', { value: '' }, 'All SEs'), ...options.map((o) => el('option', { value: o.value }, o.label)));
-  if (seFilter && !options.some((o) => o.value === seFilter)) seFilter = '';
-  select.value = seFilter;
-  select.disabled = false;
-}
+// The Accounts tab's filter dropdowns, while it's shown, and a count of list loads (the latest wins).
+let acctFilterSelects = null, acctLoads = 0;
 
-// Look up who has accounts in the picked BOAT (or forget it when the BOAT is cleared), then redraw
-// the SE and sales rep dropdowns; a picked SE or rep with no accounts there goes back to All.
-async function loadBoatPeople() {
-  boatPeople = null;
-  if (boatFilter) {
-    try { boatPeople = await api('/account-filters/people?' + new URLSearchParams({ boat: boatFilter })); }
-    catch (e) { toast(e.message, 'err'); }
-  }
-  renderSes();
-  renderReps();
-}
-
-// Fill the SailPoint BOAT choices and say which fields My Accounts checks, once per session.
+// Fill the BOAT and team choices once the filter fields are known, then the sales reps.
 async function renderAcctFilters() {
-  if (!acctFilters) {
-    try { acctFilters = await api('/account-filters'); } catch (e) { return toast(e.message, 'err'); }
-  }
-  const boat = document.getElementById('boatSelect');
-  const mine = document.getElementById('mineSelect');
-  const se = document.getElementById('seSelect');
-  if (!boat || !mine || !se) return;
-  renderSes();
-  scopeTitle(mine);
-  const b = acctFilters.boat;
-  if (!b) {
-    boat.title = 'No "SailPoint BOAT" field found on Account. Set SF_BOAT_FIELD in .env to its API name.';
-    boat.firstChild.textContent = 'SailPoint BOAT: not found';
-    return;
-  }
-  boat.title = `${b.label} (${b.name})`;
-  boat.replaceChildren(el('option', { value: '' }, 'SailPoint BOAT: All'),
-    ...b.options.map((o) => el('option', { value: o.value }, `SailPoint BOAT: ${o.label}`)),
-    el('option', { value: '__blank__' }, 'SailPoint BOAT: (blank)'));
-  if (boatFilter && ![...boat.options].some((o) => o.value === boatFilter)) boatFilter = '';
-  boat.value = boatFilter;
-  boat.disabled = false;
-  if (boatFilter && !boatPeople) loadBoatPeople();
+  try { await ensureAcctFilters(); } catch (e) { return toast(e.message, 'err'); }
+  const f = acctFilterSelects;
+  if (!f || !f.boat.isConnected) return;
+  const before = JSON.stringify(filterQuery());
+  fillBoatSelect(f); fillTeamSelect(f);
+  // A saved BOAT or team member that's gone went back to the default, so the list needs reloading.
+  if (JSON.stringify(filterQuery()) !== before) f.reload?.();
+  renderReps(true);
 }
 
 function renderList() {
@@ -744,23 +770,26 @@ function renderList() {
   box.replaceChildren(...[pager(), ...out, pager()].filter(Boolean));
 }
 
-// Sales rep choices: owners of the accounts seen this session that aren't hidden (all of them while
-// "Show hidden" is ticked). Remembering every account seen means picking a rep doesn't shrink the list.
-function renderReps() {
-  const select = document.getElementById('repSelect');
-  if (!select) return;
-  const byId = new Map();
-  if (boatPeople) {
-    // A BOAT is picked: only reps with accounts in it, and drop a rep who has none there.
-    for (const r of boatPeople.reps) byId.set(r.value, r.label);
-    if (repFilter && !byId.has(repFilter)) repFilter = '';
-  } else {
-    for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
+// Sales rep choices: the owners of the accounts the BOAT and team filters cover (looked up with
+// `reload`). Until they load, or if they can't be, the owners of the accounts seen this session.
+async function renderReps(reload = false) {
+  const f = acctFilterSelects;
+  if (!f || !f.rep.isConnected) return;
+  if (reload) {
+    const key = JSON.stringify(filterQuery());
+    try { await loadRepChoices(); } catch (e) { if (!repChoices || repChoices.key !== key) repChoices = null; }
+    if (JSON.stringify(filterQuery()) !== key || !f.rep.isConnected) return;
+    const before = repFilter;
+    if (repChoices) fillRepSelect(f, repChoices.reps);
+    // The picked rep has no accounts here any more: list them all again.
+    if (repFilter !== before) { saveAcctPrefs(); f.reload?.(); }
+    if (repChoices) return;
   }
-  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || savedRepName || repFilter);
-  select.replaceChildren(el('option', { value: '' }, 'All sales reps'),
-    ...[...byId].sort((x, y) => x[1].localeCompare(y[1])).map(([id, name]) => el('option', { value: id }, name)));
-  select.value = repFilter;
+  if (repChoices?.key === JSON.stringify(filterQuery())) return;
+  const byId = new Map();
+  for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
+  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, savedRepName || repFilter);
+  fillRepSelect(f, [...byId].map(([value, label]) => ({ value, label })));
 }
 
 // The "N selected · Hide · Unhide" bar shown above a list while rows are ticked.
@@ -1579,19 +1608,25 @@ const weighted = (list) => list.reduce((s, o) => s + amt(o) * (Number(o.Probabil
 const compact = (n) => n.toLocaleString(undefined, { style: 'currency', currency: 'USD', notation: 'compact', maximumFractionDigits: n >= 1e6 ? 1 : 0 });
 const plural = (n, one, many = one + 's') => `${n} ${n === 1 ? one : many}`;
 
-const dash = { all: [], view: 'month', fy: null, pick: null };
+const dash = { all: [], view: 'month', fy: null, pick: null, filters: null, loads: 0 };
 
 async function showDashboard() {
   setNav('dash');
   current = null;
-  // The same My Accounts / All accounts choice as the Accounts tab (and saved with it).
-  const mine = scopeSelect(loadDashboard);
-  // The hover text needs the filter fields, which the Accounts tab may not have loaded yet.
-  if (!acctFilters) api('/account-filters').then((f) => { acctFilters = f; scopeTitle(mine); }).catch(() => {});
+  // The same BOAT, team and sales rep filters as the Accounts tab (and saved with them). The rep
+  // filter is applied here, to each opportunity's account owner.
+  const refilter = () => { loadDashboard(); dashReps(); };
+  const filters = dash.filters = filterSelects({ onBoat: refilter, onTeam: refilter, onRep: () => renderDashboard() });
+  ensureAcctFilters().then(() => {
+    const before = JSON.stringify(filterQuery());
+    fillBoatSelect(filters); fillTeamSelect(filters);
+    if (JSON.stringify(filterQuery()) !== before) loadDashboard();
+    dashReps();
+  }).catch(() => {});
   document.getElementById('app').replaceChildren(el('div', { class: 'dash' },
     el('div', { class: 'dash-head' },
       el('h2', {}, 'Pipeline'),
-      mine,
+      el('span', { class: 'picks' }, filters.boat, filters.team, filters.rep),
       el('span', { class: 'spacer', style: 'flex:1' }),
       el('button', { onclick: loadDashboard }, 'Reload'),
     ),
@@ -1601,9 +1636,26 @@ async function showDashboard() {
   loadDashboard();
 }
 
+// The Deals tab's sales rep choices: the owners of the accounts the BOAT and team filters cover,
+// else (offline, or until they load) the account owners of the opportunities loaded.
+async function dashReps() {
+  const f = dash.filters, key = JSON.stringify(filterQuery());
+  try { await loadRepChoices(); } catch { /* use the opportunities' owners */ }
+  if (!f?.rep.isConnected || JSON.stringify(filterQuery()) !== key) return;
+  const before = repFilter;
+  if (repChoices?.key === key) fillRepSelect(f, repChoices.reps);
+  else {
+    const byId = new Map(dash.all.filter((o) => o.Account?.OwnerId).map((o) => [o.Account.OwnerId, o.Account.Owner?.Name || o.Account.OwnerId]));
+    fillRepSelect(f, [...byId].map(([value, label]) => ({ value, label })));
+  }
+  if (repFilter !== before) { saveAcctPrefs(); if (document.getElementById('dashBody')) renderDashboard(); }
+}
+
 async function loadDashboard() {
+  const seq = ++dash.loads;
   try {
-    const { opportunities } = await api('/pipeline?scope=' + acctScope);
+    const { opportunities } = await api('/pipeline?' + new URLSearchParams(filterQuery()));
+    if (seq !== dash.loads) return; // a newer filter choice is loading
     dash.all = opportunities.filter((o) => o.CloseDate);
     if (document.getElementById('dashBody')) renderDashboard();
   } catch (e) {
@@ -1614,12 +1666,13 @@ async function loadDashboard() {
 
 function renderDashboard() {
   document.getElementById('tip').style.display = 'none';
-  const opps = dash.all.filter((o) => !isHidden(o.Id) && !isHidden(o.AccountId));
-  const hiddenCount = dash.all.length - opps.length;
+  const inRep = dash.all.filter((o) => !repFilter || o.Account?.OwnerId === repFilter);
+  const opps = inRep.filter((o) => !isHidden(o.Id) && !isHidden(o.AccountId));
+  const hiddenCount = inRep.length - opps.length;
   const today = todayStr(), now = fiscal(today);
   dash.fy ??= now.fy;
   document.getElementById('dashSub').textContent =
-    `${plural(opps.length, 'open opportunity', 'open opportunities')}${acctScope === 'mine' ? ' on your accounts' : acctScope === 'boats' ? ` in ${acctFilters?.myBoats?.length === 1 ? acctFilters.myBoats[0] : 'your BOATs'}` : ''}` +
+    `${plural(opps.length, 'open opportunity', 'open opportunities')} · ${filterText(dash.filters)}` +
     (hiddenCount ? `, not counting ${hiddenCount} hidden` : '') +
     ` · Fiscal years start Feb 1 and are named for the year they end in (${fyName(now.fy)} = Feb ${now.fy - 1} – Jan ${now.fy})`;
 
@@ -1930,9 +1983,23 @@ function timeEntries() {
       oppName: opp?.Name || (r[d.oppField] ? 'Opportunity' : 'No opportunity'),
       accountId: opp?.AccountId || null,
       accountName: opp?.Account?.Name || '',
+      // The account's SailPoint BOAT and owner, for the BOAT and sales rep filters.
+      boat: d.boatField ? opp?.Account?.[d.boatField] ?? null : null,
+      ownerId: opp?.Account?.OwnerId || null,
+      ownerName: opp?.Account?.Owner?.Name || opp?.Account?.OwnerId || '',
       role: d.roleField ? r[d.roleField] || '' : '',
     };
   });
+}
+
+// Whether a time entry's account is in the picked BOAT (see boatFilter). Without a BOAT field, or
+// with no BOAT on any of my accounts for My BOAT, every entry is.
+function inBoat(e) {
+  if (!time.data.boatField || boatFilter === 'all') return true;
+  const has = (v) => String(e.boat ?? '').toLowerCase().split(';').includes(String(v).toLowerCase());
+  if (boatFilter === '__blank__') return e.boat == null || e.boat === '';
+  if (boatFilter === 'mine') { const mine = acctFilters?.myBoats || []; return !mine.length || mine.some(has); }
+  return has(boatFilter);
 }
 
 // The periods on the tiles, plus "all time" and any week picked on the chart.
@@ -1978,7 +2045,9 @@ async function loadTime() {
     const { by, who } = timePrefs();
     const q = new URLSearchParams({ ...(by ? { by } : {}), ...(who ? { who } : {}) }).toString();
     [time.data] = await Promise.all([api('/my-time' + (q ? '?' + q : '')),
-      dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {})]);
+      dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {}),
+      // The BOAT choices and my BOATs, for the BOAT filter.
+      ensureAcctFilters().catch(() => {})]);
     if (document.getElementById('timeBody')) renderTime();
   } catch (e) {
     const sub = document.getElementById('timeSub');
@@ -2009,21 +2078,30 @@ function renderTime() {
     s.addEventListener('change', () => onPick(s.value));
     return el('label', {}, labelText, s);
   };
-  document.getElementById('timePicks').replaceChildren(
-    members.length ? pick('Show', [['me', 'My Time'], ['team', 'My Team'], ...members.map((m) => [m.id, m.name])], d.who,
-      (v) => { saveTimePrefs('who', v, 'me'); time.opp = null; document.getElementById('timeSub').textContent = 'Loading…'; loadTime(); }) : null,
+  // The same BOAT and sales rep filters as the Accounts and Deals tabs (saved with them); the team
+  // filter picks whose time. BOAT and rep are applied here, to each entry's account.
+  const filters = filterSelects({ time: true, onBoat: renderTime, onRep: renderTime,
+    onTeam: () => { time.opp = null; document.getElementById('timeSub').textContent = 'Loading…'; loadTime(); } });
+  const inTeam = timeEntries(), boatEntries = inTeam.filter(inBoat);
+  const repsHere = new Map(boatEntries.filter((e) => e.ownerId).map((e) => [e.ownerId, e.ownerName]));
+  const before = repFilter;
+  fillRepSelect(filters, [...repsHere].map(([value, label]) => ({ value, label })));
+  if (repFilter !== before) saveAcctPrefs();
+  document.getElementById('timePicks').replaceChildren(...[filters.boat, filters.team, filters.rep,
     pick('Mine by', d.userFields.map((f) => [f.name, f.label + counted(f)]), by.name,
       (v) => { saveTimePrefs('by', v, d.userFields[0].name); loadTime(); }),
     pick('Hours from', hoursOpts.map((o) => [o.key, unitLabel(o) + counted(o)]), hours.key,
       (v) => { saveTimePrefs('hours', v, hoursOpts[0].key); renderTime(); }),
     d.dateFields.length > 1 ? pick('Date', d.dateFields.map((f) => [f.name, f.label]), date.name,
       (v) => { saveTimePrefs('date', v, d.dateFields[0].name); renderTime(); }) : null,
-  );
+  ].filter(Boolean));
 
-  const all = timeEntries();
+  const all = boatEntries.filter((e) => !repFilter || e.ownerId === repFilter);
+  const left = inTeam.length - all.length;
   const undated = all.filter((e) => !e.date).length;
   document.getElementById('timeSub').textContent =
-    `${plural(all.length, d.label, d.labelPlural)} where ${by.label} is ${whoName} · hours from ${hours.label}` +
+    `${plural(all.length, d.label, d.labelPlural)} where ${by.label} is ${whoName} · ${filterText(filters).replace(/^[^·]*· /, '')}` +
+    (left ? ` (${left.toLocaleString()} more outside these filters)` : '') + ` · hours from ${hours.label}` +
     `, dated by ${date.label}${undated ? ` (${undated} undated, counted only in All time)` : ''}` +
     ` · Weeks start Monday · ${fyName(now.fy)} = Feb ${now.fy - 1} – Jan ${now.fy}`;
 

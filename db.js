@@ -150,30 +150,15 @@ export function openDb(file) {
     }),
 
     // `mine`, when given, keeps only accounts where any of those { field, value } pairs holds (the
-    // My Accounts filter); field names come from the org's describe, and are compared like SOQL does
-    // (case-insensitively). Each of `match` (the SailPoint BOAT and SE filters) keeps accounts whose
+    // My Accounts filter); `groups` is a list of such lists, each of which must hold (the team and
+    // My BOAT filters). Field names come from the org's describe, and are compared like SOQL does
+    // (case-insensitively). Each of `match` (a picked SailPoint BOAT) keeps accounts whose
     // { field } has that value (one of the values for a multi-select picklist), or none with `blank`.
     // `ownerId`, when given, keeps only accounts owned by that user (the sales rep filter).
     // Sorted A–Z by name, or most recently modified first with `recent`.
-    listAccounts(orgId, { q = '', ownerId = '', recent = false, mine = null, match = [], limit = 200 } = {}) {
+    listAccounts(orgId, { q = '', ownerId = '', recent = false, mine = null, groups = [], match = [], limit = 200 } = {}) {
       const params = { orgId, q, ownerId, limit };
-      const where = [];
-      if (mine) {
-        where.push('(' + (mine.length ? mine.map((m, i) => {
-          params['minePath' + i] = '$.' + m.field;
-          params['mineValue' + i] = m.value;
-          return `lower(json_extract(a.data, @minePath${i})) = lower(@mineValue${i})`;
-        }).join(' OR ') : '0') + ')');
-      }
-      match.forEach((m, i) => {
-        const path = '@matchPath' + i, value = '@matchValue' + i;
-        params['matchPath' + i] = '$.' + m.field;
-        params['matchValue' + i] = m.type === 'boolean' ? (m.value === 'true' ? 1 : 0) : m.value;
-        where.push(m.blank ? `coalesce(json_extract(a.data, ${path}), '') = ''`
-          : m.type === 'multipicklist'
-            ? `instr(';' || lower(json_extract(a.data, ${path})) || ';', ';' || lower(${value}) || ';') > 0`
-            : `lower(json_extract(a.data, ${path})) = lower(${value})`);
-      });
+      const where = accountWhere(params, { groups: mine ? [mine, ...groups] : groups, match });
       const rows = db.prepare(`
         SELECT data, synced_at FROM accounts a
         WHERE org_id = @orgId
@@ -199,27 +184,31 @@ export function openDb(file) {
       };
     },
 
-    // Open opportunities for the Deals tab. `mine`, when given, keeps those whose saved account has any
-    // of those { field, value } pairs (the My Accounts rule), compared case-insensitively like SOQL.
-    listOpenOpportunities(orgId, { mine = null } = {}) {
+    // Open opportunities for the Deals tab, kept to those whose saved account passes the same
+    // `mine` / `groups` / `match` rules as listAccounts.
+    listOpenOpportunities(orgId, { mine = null, groups = [], match = [] } = {}) {
       const params = { orgId };
-      const where = mine ? '(' + (mine.length ? mine.map((m, i) => {
-        params['minePath' + i] = '$.' + m.field;
-        params['mineValue' + i] = m.value;
-        return `lower(json_extract(a.data, @minePath${i})) = lower(@mineValue${i})`;
-      }).join(' OR ') : '0') + ')' : '1';
+      const where = accountWhere(params, { groups: mine ? [mine, ...groups] : groups, match });
       const rows = db.prepare(`
-        SELECT o.data, o.synced_at, a.name AS account_name FROM opportunities o
+        SELECT o.data, o.synced_at, a.name AS account_name, json_extract(a.data, '$.OwnerId') AS account_owner,
+          json_extract(a.data, '$.Owner.Name') AS account_owner_name FROM opportunities o
         LEFT JOIN accounts a ON a.org_id = o.org_id AND a.id = o.account_id
         WHERE o.org_id = @orgId
           AND NOT coalesce(json_extract(o.data, '$.IsClosed'), 0)
-          AND ${where}
+          ${where.map((w) => 'AND ' + w).join('\n          ')}
         ORDER BY json_extract(o.data, '$.CloseDate') ASC
       `).all(params);
       return {
         records: rows.map((r) => {
           const rec = JSON.parse(r.data);
-          return rec.Account?.Name || !r.account_name ? rec : { ...rec, Account: { Name: r.account_name } };
+          // The sales rep filter needs the account's owner, which older saved copies lack.
+          const Account = { ...(rec.Account || {}) };
+          if (!Account.Name && r.account_name) Account.Name = r.account_name;
+          if (!Account.OwnerId && r.account_owner) {
+            Account.OwnerId = r.account_owner;
+            Account.Owner = { Name: r.account_owner_name || r.account_owner };
+          }
+          return { ...rec, Account };
         }),
         syncedAt: oldest(rows),
       };
@@ -288,6 +277,29 @@ export function openDb(file) {
       return row ? JSON.parse(row.data) : null;
     },
   };
+}
+
+// SQL conditions on a saved account (alias a) for the account filters: each of `groups` is a list of
+// { field, value } pairs of which one must hold; each of `match` is one field's value (see listAccounts).
+function accountWhere(params, { groups = [], match = [] }) {
+  const where = [];
+  groups.forEach((g, gi) => {
+    where.push('(' + (g.length ? g.map((m, i) => {
+      params[`gPath${gi}_${i}`] = '$.' + m.field;
+      params[`gValue${gi}_${i}`] = m.value;
+      return `lower(json_extract(a.data, @gPath${gi}_${i})) = lower(@gValue${gi}_${i})`;
+    }).join(' OR ') : '0') + ')');
+  });
+  match.forEach((m, i) => {
+    const path = '@matchPath' + i, value = '@matchValue' + i;
+    params['matchPath' + i] = '$.' + m.field;
+    params['matchValue' + i] = m.type === 'boolean' ? (m.value === 'true' ? 1 : 0) : m.value;
+    where.push(m.blank ? `coalesce(json_extract(a.data, ${path}), '') = ''`
+      : m.type === 'multipicklist'
+        ? `instr(';' || lower(json_extract(a.data, ${path})) || ';', ';' || lower(${value}) || ';') > 0`
+        : `lower(json_extract(a.data, ${path})) = lower(${value})`);
+  });
+  return where;
 }
 
 const oldest = (rows) => rows.reduce((min, r) => (!min || r.synced_at < min ? r.synced_at : min), null);
