@@ -148,12 +148,10 @@ The **SE** dropdown (All SEs by default) narrows the list to one Account Lead SE
 who is Lead SE on some account. While a SailPoint BOAT is picked, the SE and sales rep dropdowns
 only list people with accounts in that BOAT.
 
-## Lead SE filter
+## Deals tab
 
-The Deals tab only shows opportunities where you are the **Lead SE**. The app finds the field by
-its label "Lead SE" on Account and Opportunity. If yours is labelled differently, set
-`SF_LEAD_SE_FIELD` in `.env` to its API name (e.g. `Lead_SE__c`). A user lookup field is matched
-against your Salesforce user; a text or picklist field is matched against your full name.
+The Deals tab uses the same **My Accounts / All accounts** choice as the Accounts tab: with My
+Accounts it shows the open opportunities on accounts where you are in any of the role fields above.
 
 ## Changing which fields appear
 

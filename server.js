@@ -999,18 +999,23 @@ api.post('/deal-supports/move', wrap(async (req, res) => {
 
 // ---------- Pipeline dashboard ----------
 
-// Every open opportunity in the Lead SE view (or all you can see with leadse=0), for the dashboard.
-// Matches the account view: where I'm Lead SE on the opportunity, or, if only Account has a Lead SE
-// field, on its account. The page leaves out hidden records and does the totals.
+// Every open opportunity on My Accounts (or all you can see with mine=0), for the Deals tab: the
+// opportunities whose account has me in any of its role fields, like the Accounts tab's My Accounts.
+// The page leaves out hidden records and does the totals.
 const PIPELINE_READ = ['Id', 'Name', 'AccountId', 'Account.Name', 'StageName', 'Amount', 'CloseDate', 'Probability',
   'ForecastCategoryName', 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
 
 api.get('/pipeline', wrap(async (req, res) => {
   const known = await knownLeadSeFields(req);
-  const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
+  const af = await accountFilters(req);
+  const mine = req.query.mine === '1';
+  if (mine) {
+    if (af.offline) throw new HttpError(503, "Can't reach Salesforce to find the My Accounts fields. Pick All accounts to browse your saved copy.");
+    if (!af.mine.length) throw new HttpError(400, 'None of the My Accounts fields were found on Account. Set SF_MY_ACCOUNT_FIELDS in .env to their API names and restart.');
+  }
+  const meValue = (f) => (f.isUser ? req.session.sf.user.id : String(req.session.sf.user.name));
   const where = ['IsClosed = false'];
-  if (lse?.Opportunity) where.push(leadSeIsMe(req, lse.Opportunity));
-  else if (lse?.Account) where.push(leadSeIsMe(req, { ...lse.Account, name: 'Account.' + lse.Account.name }));
+  if (mine) where.push(`(${af.mine.map((f) => `Account.${f.name} = ${f.isUser ? `'${sfId(meValue(f))}'` : soqlStr(meValue(f))}`).join(' OR ')})`);
   const run = (fields) => query(req, `SELECT ${withField(fields, known.Opportunity).join(', ')} FROM Opportunity ` +
     `WHERE ${where.join(' AND ')} ORDER BY CloseDate ASC`, 5000);
   res.json(await withCacheFallback(req, res, async () => {
@@ -1023,11 +1028,10 @@ api.get('/pipeline', wrap(async (req, res) => {
       opportunities = await run(PIPELINE_READ.filter((f) => f !== 'ForecastCategoryName'));
     }
     store.saveOpportunities(orgOf(req), opportunities, { merge: true });
-    return { opportunities, leadSeFiltered: !!lse };
+    return { opportunities, mineFiltered: mine };
   }, () => {
-    const side = (f) => f && { field: f.name, value: leadSeValue(req, f) };
-    const saved = store.listOpenOpportunities(orgOf(req), lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) });
-    return { data: { opportunities: saved.records, leadSeFiltered: !!lse }, syncedAt: saved.syncedAt };
+    const saved = store.listOpenOpportunities(orgOf(req), { mine: mine ? af.mine.map((f) => ({ field: f.name, value: meValue(f) })) : null });
+    return { data: { opportunities: saved.records, mineFiltered: mine }, syncedAt: saved.syncedAt };
   }));
 }));
 

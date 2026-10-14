@@ -199,23 +199,23 @@ export function openDb(file) {
       };
     },
 
-    // Open opportunities for the dashboard, with the same Lead SE rule as the live query: on the
-    // opportunity when that side has a field, otherwise on its account.
-    listOpenOpportunities(orgId, leadSe = null) {
-      const opp = leadSe?.opportunity, acct = opp ? null : leadSe?.account;
+    // Open opportunities for the Deals tab. `mine`, when given, keeps those whose saved account has any
+    // of those { field, value } pairs (the My Accounts rule), compared case-insensitively like SOQL.
+    listOpenOpportunities(orgId, { mine = null } = {}) {
+      const params = { orgId };
+      const where = mine ? '(' + (mine.length ? mine.map((m, i) => {
+        params['minePath' + i] = '$.' + m.field;
+        params['mineValue' + i] = m.value;
+        return `lower(json_extract(a.data, @minePath${i})) = lower(@mineValue${i})`;
+      }).join(' OR ') : '0') + ')' : '1';
       const rows = db.prepare(`
         SELECT o.data, o.synced_at, a.name AS account_name FROM opportunities o
         LEFT JOIN accounts a ON a.org_id = o.org_id AND a.id = o.account_id
         WHERE o.org_id = @orgId
           AND NOT coalesce(json_extract(o.data, '$.IsClosed'), 0)
-          AND (@oppPath IS NULL OR lower(json_extract(o.data, @oppPath)) = lower(@oppValue))
-          AND (@acctPath IS NULL OR lower(json_extract(a.data, @acctPath)) = lower(@acctValue))
+          AND ${where}
         ORDER BY json_extract(o.data, '$.CloseDate') ASC
-      `).all({
-        orgId,
-        oppPath: opp ? '$.' + opp.field : null, oppValue: opp?.value ?? null,
-        acctPath: acct ? '$.' + acct.field : null, acctValue: acct?.value ?? null,
-      });
+      `).all(params);
       return {
         records: rows.map((r) => {
           const rec = JSON.parse(r.data);

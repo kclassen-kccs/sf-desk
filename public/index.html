@@ -109,12 +109,12 @@
   header nav button { border-color: transparent; background: none; color: var(--muted); }
   header nav .hdr-right button { border-color: var(--line); background: var(--panel); color: var(--ink); }
   header nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-  .dash { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #a3a29c; --grid: #eceef1;
+  .dash { --f1: #0b3d7a; --f2: #2a78d6; --f3: #7fb3ec; --f4: #c9dcf2; --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #a3a29c; --grid: #eceef1;
     max-width: 1720px; margin: 0 auto; padding: 18px clamp(12px, 2vw, 32px) 48px; height: calc(100vh - var(--chrome)); height: calc(100dvh - var(--chrome)); overflow: auto; }
   .dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 2px; }
   .dash-head h2 { margin: 0; font-size: 20px; }
   .dash-head label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
-  .dash-head input { width: auto; }
+  .dash-head input, .dash-head select { width: auto; }
   .tiles { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
   .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
   .tiles.even { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -342,7 +342,7 @@ const LABELS = { StageName: 'Stage', AnnualRevenue: 'Annual revenue', NumberOfEm
   Probability: 'Probability %' };
 const label = (f) => LABELS[f] || f;
 
-let me = null, meta = null, current = null, accounts = [], leadSeOnly = true, dsMeta = null;
+let me = null, meta = null, current = null, accounts = [], dsMeta = null;
 // Account list: filter to one sales rep (account owner) and/or group the list by rep.
 // Opportunities: closed ones are hidden unless showClosed is ticked.
 let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
@@ -1325,7 +1325,7 @@ const FY_START = 1; // month index (0 = January)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fyName = (fy) => 'FY' + String(fy % 100).padStart(2, '0');
 // Forecast categories, bottom of the stack first, with their series colors.
-const FORECAST = [['Commit', 'var(--s1)'], ['Best Case', 'var(--s2)'], ['Pipeline', 'var(--s3)'], ['Omitted', 'var(--s4)']];
+const FORECAST = [['Commit', 'var(--f1)'], ['Best Case', 'var(--f2)'], ['Pipeline', 'var(--f3)'], ['Omitted', 'var(--f4)']];
 
 function fiscal(date) { // 'YYYY-MM-DD' -> { y, m, fy, q }
   const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7)) - 1;
@@ -1346,12 +1346,15 @@ const dash = { all: [], view: 'month', fy: null, pick: null };
 async function showDashboard() {
   setNav('dash');
   current = null;
-  const mine = el('input', { type: 'checkbox', checked: leadSeOnly });
-  mine.addEventListener('change', () => { leadSeOnly = mine.checked; loadDashboard(); });
+  // The same My Accounts / All accounts choice as the Accounts tab (and saved with it).
+  const mine = el('select', { 'aria-label': 'Which accounts' },
+    el('option', { value: 'mine' }, 'My Accounts'), el('option', { value: 'all' }, 'All accounts'));
+  mine.value = myAcctsOnly ? 'mine' : 'all';
+  mine.addEventListener('change', () => { myAcctsOnly = mine.value === 'mine'; saveAcctPrefs(); loadDashboard(); });
   document.getElementById('app').replaceChildren(el('div', { class: 'dash' },
     el('div', { class: 'dash-head' },
       el('h2', {}, 'Pipeline'),
-      el('label', {}, mine, "Only where I'm Lead SE"),
+      mine,
       el('span', { class: 'spacer', style: 'flex:1' }),
       el('button', { onclick: loadDashboard }, 'Reload'),
     ),
@@ -1363,7 +1366,7 @@ async function showDashboard() {
 
 async function loadDashboard() {
   try {
-    const { opportunities } = await api('/pipeline?leadse=' + (leadSeOnly ? '1' : '0'));
+    const { opportunities } = await api('/pipeline?mine=' + (myAcctsOnly ? '1' : '0'));
     dash.all = opportunities.filter((o) => o.CloseDate);
     if (document.getElementById('dashBody')) renderDashboard();
   } catch (e) {
@@ -1379,7 +1382,7 @@ function renderDashboard() {
   const today = todayStr(), now = fiscal(today);
   dash.fy ??= now.fy;
   document.getElementById('dashSub').textContent =
-    `${plural(opps.length, 'open opportunity', 'open opportunities')}${leadSeOnly ? " where you're Lead SE" : ''}` +
+    `${plural(opps.length, 'open opportunity', 'open opportunities')}${myAcctsOnly ? ' on your accounts' : ''}` +
     (hiddenCount ? `, not counting ${hiddenCount} hidden` : '') +
     ` · Fiscal years start Feb 1 and are named for the year they end in (${fyName(now.fy)} = Feb ${now.fy - 1} – Jan ${now.fy})`;
 
@@ -1468,8 +1471,8 @@ function renderForecastChart(opps, now, today) {
 
   // Stack by forecast category when the org returns it, else one series.
   const useCats = opps.some((o) => o.ForecastCategoryName);
-  const cats = useCats ? FORECAST.filter(([c]) => opps.some((o) => o.ForecastCategoryName === c)) : [['Amount', 'var(--s1)']];
-  if (useCats && opps.some((o) => !FORECAST.some(([c]) => c === o.ForecastCategoryName))) cats.push(['Other', 'var(--s4)']);
+  const cats = useCats ? FORECAST.filter(([c]) => opps.some((o) => o.ForecastCategoryName === c)) : [['Amount', 'var(--f2)']];
+  if (useCats && opps.some((o) => !FORECAST.some(([c]) => c === o.ForecastCategoryName))) cats.push(['Other', 'var(--f4)']);
   const catOf = (o) => !useCats ? 'Amount' : FORECAST.some(([c]) => c === o.ForecastCategoryName) ? o.ForecastCategoryName : 'Other';
 
   const seg = el('div', { class: 'seg' }, [['month', 'Month'], ['quarter', 'Quarter'], ['year', 'Year']].map(([v, t]) =>
