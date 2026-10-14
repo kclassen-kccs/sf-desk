@@ -1500,7 +1500,7 @@ api.get('/my-time', wrap(async (req, res) => {
 // that copy's subject prefixed "[Backstory | ...]"); those are shown as one event.
 
 const EVENT_READ = ['Id', 'Subject', 'AccountId', 'StartDateTime', 'EndDateTime', 'IsAllDayEvent', 'ActivityDate', 'DurationInMinutes',
-  'Location', 'Description', 'WhatId', 'What.Name', 'What.Type', 'Who.Name', 'ShowAs'];
+  'Location', 'Description', 'WhatId', 'What.Name', 'What.Type', 'WhoId', 'Who.Name', 'Who.Type', 'ShowAs'];
 
 // Which Deal Support fields a new one from an event fills in: name, date, duration, details and
 // the person (Assigned SE). Picked from the fields on the create form; the person may be set by
@@ -1523,9 +1523,13 @@ async function calendarMeta(req) {
       : /activity|meeting|event/i.test(text(f)) && /date/i.test(text(f)) ? 8
       : /date/i.test(text(f)) && f.type === 'date' ? 3 : 0);
   const hoursField = best(form.filter((f) => ['double', 'int', 'picklist', 'string'].includes(f.type)), (f) =>
-    f.name === 'Meeting_Duration__c' ? 10
+    /customer facing/i.test(f.label) && ['double', 'int'].includes(f.type) ? 11
+      : f.name === 'Meeting_Duration__c' ? 10
       : /meeting|customer facing/i.test(text(f)) && /duration|time|hour|hrs/i.test(text(f)) ? 8
       : /duration/i.test(text(f)) ? 6 : 0);
+  // Internal time: a meeting with only my colleagues goes here, with 0 customer-facing time.
+  const internalField = form.find((f) => f.name !== hoursField?.name && ['double', 'int'].includes(f.type) && /internal time/i.test(f.label)) ||
+    form.find((f) => f.name !== hoursField?.name && f.name === 'Prep_Time__c' && ['double', 'int'].includes(f.type)) || null;
   const textareas = form.filter((f) => f.type === 'textarea');
   const descField = best(textareas, (f) =>
     (/description of (the )?request|request description/i.test(f.label) ? 20
@@ -1545,6 +1549,7 @@ async function calendarMeta(req) {
     dateField: dateField && { name: dateField.name, type: dateField.type },
     hoursField: hoursField && { name: hoursField.name, type: hoursField.type, picklist: hoursField.picklist,
       unit: ['double', 'int'].includes(hoursField.type) ? timeUnit(desc.get(hoursField.name) || hoursField) : 'text' },
+    internalField: internalField && { name: internalField.name, unit: timeUnit(desc.get(internalField.name) || internalField) },
     descField: descField && { name: descField.name, length: descField.length },
     userField: userField && { name: userField, label: userDesc.label.replace(/\s+ID$/, ''), onForm: form.some((f) => f.name === userField) },
     // Date and person fields used to find my existing Deal Supports for an event.
@@ -1646,6 +1651,18 @@ function titleNamesAccount(title, account) {
 const NOT_CUSTOMER = new Set(['sailpoint.com', 'gmail.com', 'googlemail.com', 'outlook.com', 'hotmail.com', 'live.com', 'msn.com',
   'yahoo.com', 'icloud.com', 'me.com', 'mac.com', 'aol.com', 'proton.me', 'protonmail.com', 'gmx.com', 'resource.calendar.google.com']);
 
+// Who a meeting is with, from its attendees' emails (mine left out): "external" when anyone is outside
+// sailpoint.com (and my own login's domain), "internal" when everyone is inside, null when nobody is known.
+// Room and resource calendars don't count.
+const INTERNAL_DOMAINS = ['sailpoint.com'];
+function audienceOf(emails, myDomain) {
+  const inside = (d) => d === myDomain || INTERNAL_DOMAINS.some((x) => d === x || d.endsWith('.' + x));
+  const room = (d) => d === 'resource.calendar.google.com' || d.endsWith('.onmicrosoft.com');
+  const domains = emails.map((m) => String(m || '').toLowerCase().trim().split('@')[1]).filter((d) => d && !room(d));
+  if (!domains.length) return null;
+  return domains.every(inside) ? 'internal' : 'external';
+}
+
 // The customer domains among a meeting's attendee emails: not mine, not free mail, not room calendars.
 function customerDomains(emails, myDomain) {
   const own = (d) => d === myDomain || NOT_CUSTOMER.has(d) || [...NOT_CUSTOMER].some((x) => d.endsWith('.' + x)) ||
@@ -1721,20 +1738,29 @@ async function salesforceEvents(req, { from, to, d0, d1, tz }) {
       what: e.WhatId ? { id: e.WhatId, name: e.What?.Name || '', type: whatType(e) } : null,
       oppId: isOpp(e) ? e.WhatId : null,
       accountIds: [...new Set(copies.flatMap((c) => [c.AccountId, whatType(c) === 'Account' && c.WhatId]).filter(Boolean))],
-      domains: [],
+      domains: [], audience: null,
+      // A contact or lead on the meeting means a customer is in it.
+      withContact: copies.some((c) => c.WhoId && ['Contact', 'Lead'].includes(c.Who?.Type || ({ '003': 'Contact', '00Q': 'Lead' })[String(c.WhoId).slice(0, 3)])),
     };
   });
-  // Events linked to nothing: their invitees' email domains help find the account.
-  const bare = list.filter((e) => !e.what && !e.accountIds.length);
-  if (bare.length) {
+  // Invitees' emails say who the meeting is with (customer-facing or internal time) and, for events
+  // linked to nothing, their domains help find the account.
+  if (list.length) {
     const myDomain = String(req.session.sf.user.username || '').split('@')[1]?.toLowerCase();
-    const rels = await query(req, `SELECT EventId, Relation.Email FROM EventRelation WHERE EventId IN (` +
-      bare.flatMap((e) => [e.id, ...e.copies]).map((id) => `'${sfId(id)}'`).join(', ') + ')', 2000).catch(() => []);
-    for (const e of bare) {
-      const ids = new Set([e.id, ...e.copies]);
-      e.domains = customerDomains(rels.filter((r) => ids.has(r.EventId)).map((r) => r.Relation?.Email), myDomain);
+    const ids = list.flatMap((e) => [e.id, ...e.copies]).map((id) => `'${sfId(id)}'`);
+    const rels = [];
+    for (let i = 0; i < ids.length; i += 200) {
+      rels.push(...await query(req, `SELECT EventId, Relation.Email FROM EventRelation WHERE EventId IN (${ids.slice(i, i + 200).join(', ')})`, 2000)
+        .catch(() => []));
+    }
+    for (const e of list) {
+      const mine = new Set([e.id, ...e.copies]);
+      const emails = rels.filter((r) => mine.has(r.EventId)).map((r) => r.Relation?.Email).filter(Boolean);
+      e.audience = e.withContact ? 'external' : audienceOf(emails, myDomain);
+      if (!e.what && !e.accountIds.length) e.domains = customerDomains(emails, myDomain);
     }
   }
+  for (const e of list) delete e.withContact;
   return list;
 }
 
@@ -1752,6 +1778,7 @@ async function localEvents(req, calendarId, { from, to }) {
       description: e.notes || '', who: others.map((a) => a.name || a.email).join(', '), showAs: e.free ? 'Free' : '',
       what: null, oppId: null, accountIds: [], calendar: e.calendar,
       domains: customerDomains(others.map((a) => a.email), myDomain),
+      audience: audienceOf((e.attendees || []).filter((a) => !a.me).map((a) => a.email), myDomain),
     };
   }).sort((a, b) => String(a.start).localeCompare(String(b.start)));
   list.note = events.note; // why there are none, when the reader says
@@ -1775,6 +1802,10 @@ async function borrowSalesforceLinks(req, events, range) {
     e.oppId = hit.oppId;
     e.what = hit.what;
     e.sfEventId = hit.id;
+    // The Salesforce copy's subject and notes name and describe the Deal Support, and its invitees
+    // count too: anyone outside the company on either copy makes it customer-facing.
+    e.sf = { title: hit.title, description: hit.description };
+    e.audience = e.audience === 'external' || hit.audience === 'external' ? 'external' : e.audience || hit.audience;
   }
 }
 
@@ -1901,6 +1932,7 @@ api.post('/outlook/event', wrap(async (req, res) => {
     allDay: !!b.allDay, date, minutes: null, location: str(b.location, 255),
     description: str(b.body, 32000), who: others.map((a) => a.name || a.email).join(', '), showAs: '',
     what: null, oppId: null, accountIds: [], domains: customerDomains(others.map((a) => a.email), myDomain),
+    audience: audienceOf(attendees.map((a) => a.email), myDomain), // I'm inside the company, so my own address doesn't change it
   };
   const ds = await dealSupportMeta(req);
   const cm = await calendarMeta(req);
