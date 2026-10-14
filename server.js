@@ -794,7 +794,13 @@ async function reassignFields(req, role) {
     return { label: 'Sales rep', Account: owner, Opportunity: owner };
   }
   if (role !== 'se') throw new HttpError(400, 'Unknown role');
-  const lse = await leadSeFields(req);
+  const lse = { ...(await leadSeFields(req)) };
+  // The account's Lead SE is often labelled "Account Lead SE" (Account_Lead_SE__c), which the Lead SE
+  // filter's exact "Lead SE" match misses; the My Accounts role lookup finds it.
+  if (!lse.Account) {
+    const f = (await accountFilters(req)).mine?.find((m) => m.role === 'Lead SE');
+    if (f) lse.Account = { name: f.name, isUser: f.isUser, rel: f.relationshipName };
+  }
   const side = (f) => f && {
     name: f.name, isUser: f.isUser,
     read: f.isUser ? `${f.rel || (f.name.endsWith('__c') ? f.name.slice(0, -3) + '__r' : f.name.replace(/Id$/, ''))}.Name` : f.name,
