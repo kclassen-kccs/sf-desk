@@ -26,6 +26,10 @@
   #navToggle { display: none; margin-left: auto; font-size: 18px; line-height: 1; padding: 6px 10px; }
   button, .btn { font: inherit; border: 1px solid var(--line); background: var(--panel); color: var(--ink); padding: 6px 12px; border-radius: 6px; cursor: pointer; text-decoration: none; display: inline-block; }
   button.primary, .btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+  .btn.busy { opacity: .8; cursor: progress; }
+  .spin { display: inline-block; width: .9em; height: .9em; margin-right: 8px; vertical-align: -.1em; border: 2px solid currentColor; border-right-color: transparent; border-radius: 50%; animation: spin .8s linear infinite; }
+  .spin.dark { color: var(--accent); }
+  @keyframes spin { to { transform: rotate(360deg); } }
   button:disabled { opacity: .45; cursor: default; }
   button.danger { color: #b42318; border-color: #f0b4ae; }
   button.danger:hover:not(:disabled) { background: #b42318; border-color: #b42318; color: #fff; }
@@ -547,8 +551,23 @@ function showConnect(message) {
   app.replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card' },
     el('h2', {}, 'Connect to Salesforce'),
     el('p', {}, message || 'Sign in with your Salesforce account. The app only sees what your user can see, and only saves when you click Save.'),
-    el('a', { class: 'btn primary', href: IN_OUTLOOK ? '/login?next=/outlook/pane' : '/login' }, 'Connect'),
+    el('a', { class: 'btn primary', href: IN_OUTLOOK ? '/login?next=/outlook/pane' : '/login', onclick: connecting }, 'Connect'),
   )));
+}
+
+// Connecting can take a while before anything comes back: show it was clicked, and don't start it twice.
+function connecting(e) {
+  const b = e.currentTarget;
+  if (b.classList.contains('busy')) return e.preventDefault();
+  b.classList.add('busy');
+  b.setAttribute('aria-disabled', 'true');
+  b.replaceChildren(el('span', { class: 'spin', 'aria-hidden': 'true' }), 'Connecting…');
+  b.after(el('p', { class: 'sub', role: 'status' }, 'Signing in to Salesforce. This can take a little while.'));
+}
+// Between connecting and the first screen: say what's happening instead of a blank page.
+function showLoading(text) {
+  document.getElementById('app').replaceChildren(el('div', { class: 'center' }, el('div', { class: 'card', role: 'status' },
+    el('h2', {}, el('span', { class: 'spin dark', 'aria-hidden': 'true' }), text))));
 }
 
 function setNav(which) {
@@ -1906,6 +1925,7 @@ function timeEntries() {
       name: r.Name,
       date: !dv ? null : String(dv).length > 10 ? ymd(new Date(String(dv).replace(/\+0000$/, 'Z'))) : String(dv).slice(0, 10),
       hours: raw == null || raw === '' ? 0 : hours.unit === 'text' ? parseDuration(raw) : hours.unit === 'minutes' ? Number(raw) / 60 : Number(raw) || 0,
+      person: (d.byRel ? r[d.byRel]?.Name : null) || '',
       oppId: r[d.oppField] || null,
       oppName: opp?.Name || (r[d.oppField] ? 'Opportunity' : 'No opportunity'),
       accountId: opp?.AccountId || null,
@@ -1942,7 +1962,7 @@ async function showTime() {
   current = null;
   document.getElementById('app').replaceChildren(el('div', { class: 'dash' },
     el('div', { class: 'dash-head' },
-      el('h2', {}, 'My Time'),
+      el('h2', { id: 'timeTitle' }, 'My Time'),
       el('span', { id: 'timePicks', class: 'picks' }),
       el('span', { class: 'spacer', style: 'flex:1' }),
       el('button', { onclick: loadTime }, 'Reload'),
@@ -1955,8 +1975,9 @@ async function showTime() {
 
 async function loadTime() {
   try {
-    const by = timePrefs().by;
-    [time.data] = await Promise.all([api('/my-time' + (by ? '?by=' + encodeURIComponent(by) : '')),
+    const { by, who } = timePrefs();
+    const q = new URLSearchParams({ ...(by ? { by } : {}), ...(who ? { who } : {}) }).toString();
+    [time.data] = await Promise.all([api('/my-time' + (q ? '?' + q : '')),
       dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {})]);
     if (document.getElementById('timeBody')) renderTime();
   } catch (e) {
@@ -1970,6 +1991,12 @@ function renderTime() {
   const d = time.data, today = todayStr(), now = fiscal(today);
   const { hoursOpts, hours, date } = timeChoice();
   const by = d.userFields.find((f) => f.name === d.by) || d.userFields[0];
+  // Whose time: mine, my whole team's, or one team member's.
+  const members = d.team?.members || [];
+  const whoName = d.who === 'me' ? 'you' : d.who === 'team' ? 'you or your team'
+    : members.find((m) => m.id === d.who)?.name || 'them';
+  document.getElementById('timeTitle').textContent = d.who === 'me' ? 'My Time' : d.who === 'team' ? 'My Team'
+    : `${members.find((m) => m.id === d.who)?.name || 'Team member'}'s Time`;
 
   // Which fields count: picked here, remembered on this machine. Each shows how many of your records fill it.
   // "Total Time (Hours)" needs no "(hours)"; only say the unit when the label doesn't, or when reading it the other way.
@@ -1983,6 +2010,8 @@ function renderTime() {
     return el('label', {}, labelText, s);
   };
   document.getElementById('timePicks').replaceChildren(
+    members.length ? pick('Show', [['me', 'My Time'], ['team', 'My Team'], ...members.map((m) => [m.id, m.name])], d.who,
+      (v) => { saveTimePrefs('who', v, 'me'); time.opp = null; document.getElementById('timeSub').textContent = 'Loading…'; loadTime(); }) : null,
     pick('Mine by', d.userFields.map((f) => [f.name, f.label + counted(f)]), by.name,
       (v) => { saveTimePrefs('by', v, d.userFields[0].name); loadTime(); }),
     pick('Hours from', hoursOpts.map((o) => [o.key, unitLabel(o) + counted(o)]), hours.key,
@@ -1994,7 +2023,7 @@ function renderTime() {
   const all = timeEntries();
   const undated = all.filter((e) => !e.date).length;
   document.getElementById('timeSub').textContent =
-    `${plural(all.length, d.label, d.labelPlural)} where ${by.label} is you · hours from ${hours.label}` +
+    `${plural(all.length, d.label, d.labelPlural)} where ${by.label} is ${whoName} · hours from ${hours.label}` +
     `, dated by ${date.label}${undated ? ` (${undated} undated, counted only in All time)` : ''}` +
     ` · Weeks start Monday · ${fyName(now.fy)} = Feb ${now.fy - 1} – Jan ${now.fy}`;
 
@@ -2095,15 +2124,16 @@ function renderOppTime(all, today) {
 }
 
 // The activity list as shown, with the hours as numbers and a link to each Deal Support.
-function exportTime(list, showRole, what) {
+function exportTime(list, showRole, what, showPerson) {
   const cols = [
-    { header: 'Date', type: 'date', width: 12 }, { header: 'Opportunity', width: 40 }, { header: 'Account', width: 28 },
+    { header: 'Date', type: 'date', width: 12 }, ...(showPerson ? [{ header: 'Person', width: 22 }] : []),
+    { header: 'Opportunity', width: 40 }, { header: 'Account', width: 28 },
     ...(showRole ? [{ header: 'Role', width: 16 }] : []), { header: time.data.label, width: 18 },
     { header: 'Hours', type: 'number', width: 9, sum: true }, { header: 'Salesforce link', width: 45 },
   ];
-  const rows = list.map((e) => [e.date, e.oppName, e.accountName, ...(showRole ? [e.role] : []), e.name, e.hours,
+  const rows = list.map((e) => [e.date, ...(showPerson ? [e.person] : []), e.oppName, e.accountName, ...(showRole ? [e.role] : []), e.name, e.hours,
     `${me.instanceUrl}/${e.id}`]);
-  downloadXlsx(`My Time - ${what} - ${todayStr()}.xlsx`, 'My Time', cols, rows, { totals: true })
+  downloadXlsx(`${document.getElementById('timeTitle')?.textContent || 'My Time'} - ${what} - ${todayStr()}.xlsx`, 'My Time', cols, rows, { totals: true })
     .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
 }
 
@@ -2115,6 +2145,7 @@ function renderTimeList(all, today) {
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
   const oppName = time.opp !== null ? list[0]?.oppName : null;
   const showRole = list.some((e) => e.role);
+  const showPerson = time.data.who === 'team';
   const canEdit = !!dsMeta?.canUpdate;
   const edit = (e) => editDealSupport(e.id, time, () => renderTimeList(all, today), loadTime);
   const tbody = el('tbody', {}, list.map((e) => el('tr', {
@@ -2122,22 +2153,23 @@ function renderTimeList(all, today) {
     class: time.editing?.id === e.id ? 'sel' : null },
     canEdit ? editPencil(e.name, () => edit(e)) : null,
     el('td', {}, e.date || '—'),
+    showPerson ? el('td', {}, e.person) : null,
     el('td', { class: 'wrap' }, e.oppName),
     el('td', { class: 'wrap' }, e.accountName),
     showRole ? el('td', {}, e.role) : null,
     dsNameCell(e.name),
     el('td', { class: 'n' }, fmtH(e.hours)),
   )));
-  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 7, class: 'empty' }, 'No activities here.')));
+  if (!list.length) tbody.append(el('tr', {}, el('td', { colspan: 8, class: 'empty' }, 'No activities here.')));
   sec.replaceChildren(
     el('h3', {}, `${range.label}${oppName ? ` · ${oppName}` : ''}: ${plural(list.length, 'activity', 'activities')}, ${fmtH(hoursOf(list))}`,
       el('span', { class: 'spacer' }),
       time.opp !== null ? el('button', { onclick: () => { time.opp = null; renderTime(); } }, 'All opportunities')
         : el('span', { class: 'sub', style: 'margin:0' }, 'Click a tile, week or opportunity to narrow this list'),
-      el('button', { disabled: !list.length, onclick: () => exportTime(list, showRole, range.label + (oppName ? ` - ${oppName}` : '')) }, 'Export to Excel')),
+      el('button', { disabled: !list.length, onclick: () => exportTime(list, showRole, range.label + (oppName ? ` - ${oppName}` : ''), showPerson) }, 'Export to Excel')),
     time.editing?.box || el('div'),
     el('div', { class: 'tablewrap' }, el('table', { class: 'deals' },
-      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, 'Date'), el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
+      el('thead', {}, el('tr', {}, canEdit ? el('th', { 'aria-label': 'Edit' }) : null, el('th', {}, 'Date'), showPerson ? el('th', {}, 'Person') : null, el('th', {}, 'Opportunity'), el('th', {}, 'Account'),
         showRole ? el('th', {}, 'Role') : null, el('th', {}, time.data.label), el('th', { class: 'n' }, 'Hours'))),
       tbody)),
   );
@@ -2939,6 +2971,7 @@ function renderOutlookPane(e, reload) {
     me = await api('/me');
     if (me.version) document.getElementById('ver').textContent = `SF Desk v${me.version}`;
     if (!me.connected) return showConnect();
+    showLoading('Loading your Salesforce data…');
     document.getElementById('who').textContent = me.user?.username || me.user?.name || '';
     document.getElementById('logout').hidden = false;
     meta = await api('/meta');

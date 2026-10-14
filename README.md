@@ -20,7 +20,8 @@ calendar permission and troubleshooting.
 - **My Time** totals the hours on your Deal Supports across all opportunities: this week, the previous week,
   the last 30 days, this fiscal quarter and this fiscal year, hours per week for the last 13 weeks, and hours
   per opportunity for any of those periods. Click a tile, week or opportunity to list its activities (the pencil
-  on a row edits that Deal Support). Weeks
+  on a row edits that Deal Support). **Show** switches between My Time, My Team (you and your team together, with
+  a Person column) and any one team member. Weeks
   start on Monday
 - **Export to Excel** on the Pipeline deal list and the My Time activity list downloads the rows shown (after
   filters, hidden records and any clicked bar, tile or opportunity) as an .xlsx with typed dates, amounts and
@@ -205,6 +206,10 @@ The dropdowns show how many of your records each field covers. A pick other than
 The page shows which fields it used and has a dropdown for each; your choice is remembered in this browser.
 To pin them for everyone, set `SF_TIME_USER_FIELD`, `SF_TIME_HOURS_FIELD` or `SF_TIME_DATE_FIELD` in `.env`
 to the field's API name.
+
+Your team is the active people on your Default Opportunity Team and Default Account Team (the Team in your
+Salesforce settings). When both are empty, it is the active people who share your manager. The **Show** dropdown
+appears when you have a team; team members' time is matched on the same Mine by field.
 
 ## Security notes
 

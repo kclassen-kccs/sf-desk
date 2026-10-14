@@ -1332,21 +1332,57 @@ async function timeMeta(req) {
   return meta;
 }
 
-// Every Deal Support where the chosen user field is me, across all opportunities, newest first.
-// The page does the totals by week, period and opportunity.
+// My team: the active people on my Default Opportunity Team and Default Account Team (the "Team" in my
+// Salesforce settings). When both are empty, the people who share my manager.
+async function myTeam(req) {
+  if (req.session.myTeam) return req.session.myTeam;
+  const me = sfId(req.session.sf.user.id);
+  const ids = async (soql) => (await query(req, soql).catch(() => [])).map((r) => r.UserId);
+  const listed = [...new Set([
+    ...await ids(`SELECT UserId FROM UserTeamMember WHERE OwnerId = '${me}'`),
+    ...await ids(`SELECT UserId FROM UserAccountTeamMember WHERE OwnerId = '${me}'`),
+  ])].filter((id) => id !== me);
+  let source = 'settings', members = [];
+  if (listed.length) {
+    members = await query(req, `SELECT Id, Name FROM User WHERE Id IN (${listed.map((id) => `'${sfId(id)}'`).join(', ')}) ` +
+      'AND IsActive = true ORDER BY Name');
+  }
+  if (!members.length) {
+    source = 'manager';
+    const [mine] = await query(req, `SELECT ManagerId, Manager.Name FROM User WHERE Id = '${me}'`);
+    if (mine?.ManagerId) {
+      members = await query(req, `SELECT Id, Name FROM User WHERE ManagerId = '${sfId(mine.ManagerId)}' ` +
+        `AND IsActive = true AND Id != '${me}' ORDER BY Name`);
+    }
+  }
+  const team = { source, members: members.map((u) => ({ id: u.Id, name: u.Name })) };
+  req.session.myTeam = team;
+  return team;
+}
+
+// Every Deal Support where the chosen user field is me (or my team, or one of them), across all
+// opportunities, newest first. The page does the totals by week, period and opportunity.
 api.get('/my-time', wrap(async (req, res) => {
   const userId = sfId(req.session.sf.user.id);
-  // Saved per user field, so the last copy can be shown when Salesforce can't be reached.
-  const kind = 'myTime:' + String(req.query.by || 'default').slice(0, 80);
+  const who = String(req.query.who || 'me').slice(0, 20);
+  // Saved per user field and person, so the last copy can be shown when Salesforce can't be reached.
+  const kind = 'myTime:' + String(req.query.by || 'default').slice(0, 80) + (who === 'me' ? '' : ':' + who);
   res.json(await withCacheFallback(req, res, async () => {
     const tm = await timeMeta(req);
     const by = tm.userFields.find((f) => f.name === req.query.by) || tm.userFields[0];
+    const team = await myTeam(req).catch(() => ({ source: null, members: [] }));
+    const people = who === 'me' ? [userId]
+      : who === 'team' ? [userId, ...team.members.map((m) => m.id)]
+      : team.members.some((m) => m.id === who) ? [who] : [userId];
     const fields = ['Id', 'Name', ...tm.dateFields.map((f) => f.name), ...tm.hoursFields.map((f) => f.name), tm.oppField,
       ...(tm.oppRel ? [`${tm.oppRel}.Name`, `${tm.oppRel}.AccountId`, `${tm.oppRel}.Account.Name`, `${tm.oppRel}.StageName`] : []),
-      ...(tm.roleField ? [tm.roleField] : [])].filter((f, i, all) => all.indexOf(f) === i);
+      ...(tm.roleField ? [tm.roleField] : []), by.name, ...(by.rel ? [`${by.rel}.Name`] : [])]
+      .filter((f, i, all) => all.indexOf(f) === i);
     const records = await query(req, `SELECT ${fields.join(', ')} FROM ${tm.object} ` +
-      `WHERE ${by.name} = '${userId}' ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`, 10000);
-    const out = { ...tm, by: by.name, records };
+      `WHERE ${by.name} IN (${people.map((id) => `'${sfId(id)}'`).join(', ')}) ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`,
+      10000 * people.length);
+    const out = { ...tm, by: by.name, byRel: by.rel, who: people.length > 1 ? 'team' : people[0] === userId ? 'me' : people[0],
+      team, records };
     store.saveSetting(orgOf(req), kind, out);
     return out;
   }, () => {
