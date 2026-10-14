@@ -877,12 +877,41 @@ async function changeRole(a, role) {
     d.accountField ? `Account: ${d.account.Name} (now ${d.account.current || 'nobody'})` : null,
     ...opps.map((o) => `${o.Name} (now ${o.current || 'nobody'})`),
   ].filter(Boolean);
+  const plural = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+  // What picking `u` would do: which records change and which already have them.
+  const has = (value, isUser, u) => value != null && (isUser ? String(value).slice(0, 15) === u.Id.slice(0, 15)
+    : String(value).toLowerCase() === u.Name.toLowerCase());
+  const plan = (u) => {
+    const acctChanges = d.accountField && !has(d.account.value, d.accountIsUser, u);
+    const oppChanges = opps.filter((o) => !has(o.value, d.oppIsUser, u));
+    const already = (d.accountField && !acctChanges ? 1 : 0) + (opps.length - oppChanges.length);
+    const change = [acctChanges ? '1 account' : null,
+      oppChanges.length ? plural(oppChanges.length, 'open opportunity', 'open opportunities') : null].filter(Boolean).join(' and ');
+    const ignored = [already ? `${plural(already, 'record already has', 'records already have')} ${u.Name} and will be skipped.` : null,
+      d.closedCount ? `${plural(d.closedCount, 'closed opportunity', 'closed opportunities')} will be left alone.` : null].filter(Boolean).join(' ');
+    const changing = [acctChanges ? `Account: ${d.account.Name} (now ${d.account.current || 'nobody'})` : null,
+      ...oppChanges.map((o) => `${o.Name} (now ${o.current || 'nobody'})`)].filter(Boolean);
+    return { count: (acctChanges ? 1 : 0) + oppChanges.length, change, ignored, changing };
+  };
+  const summary = el('div', { class: 'sub', style: 'margin:8px 0 0' });
+  const showPlan = () => {
+    if (!picked) return summary.replaceChildren();
+    const p = plan(picked);
+    summary.replaceChildren(el('b', {}, p.count ? `This will change ${p.change}.` : `Nothing to change: everything already has ${picked.Name}.`),
+      p.ignored ? ' ' + p.ignored : '');
+    go.disabled = !p.count;
+  };
+  search.addEventListener('input', showPlan);
+  results.addEventListener('mousedown', () => setTimeout(showPlan));
+  search.addEventListener('keydown', (e) => { if (e.key === 'Enter') setTimeout(showPlan); });
   go.addEventListener('click', async () => {
     const u = picked;
     if (!u) return;
-    const shown = lines.length > 15 ? [...lines.slice(0, 15), `…and ${lines.length - 15} more`] : lines;
-    if (!confirm(`Make ${u.Name} the ${who} on ${d.accountField ? 'this account and ' : ''}${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}?\n\n` +
-      shown.join('\n'))) return;
+    const p = plan(u);
+    if (!p.count) return;
+    const shown = p.changing.length > 15 ? [...p.changing.slice(0, 15), `…and ${p.changing.length - 15} more`] : p.changing;
+    if (!confirm(`Make ${u.Name} the ${who}?\n\nThis will change ${p.change}.` + (p.ignored ? `\n${p.ignored}` : '') +
+      `\n\nChanging:\n${shown.join('\n')}`)) return;
     go.disabled = search.disabled = cancel.disabled = true;
     try {
       const r = await api(`/accounts/${a.Id}/reassign`, { method: 'POST', body: { role, userId: u.Id, oppIds: opps.map((o) => o.Id) } });
@@ -902,6 +931,7 @@ async function changeRole(a, role) {
     el('div', { class: 'sub' }, `Pick the new ${who} for ${d.account.Name}` +
       (d.oppField ? ` and its ${opps.length} open ${opps.length === 1 ? 'opportunity' : 'opportunities'}` : '') + '. ' + notes.join(' ')),
     el('div', { class: 'pick' }, search, results),
+    summary,
     el('ul', { class: 'reassign-list' }, lines.map((l) => el('li', {}, l))),
     el('div', { class: 'form-actions' }, cancel, go),
   ));

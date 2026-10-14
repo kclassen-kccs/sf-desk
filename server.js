@@ -816,14 +816,22 @@ api.get('/accounts/:id/reassign', wrap(async (req, res) => {
   const id = sfId(req.params.id);
   const f = await reassignFields(req, req.query.role);
   const { account, opps } = await reassignTargets(req, id, f);
+  const [closed] = await query(req, `SELECT COUNT(Id) n FROM Opportunity WHERE AccountId = '${id}' AND IsClosed = true`);
+  // `value` is what the field holds now (a User Id, or a name for a text field), so the page can tell
+  // which records already have the person picked.
   res.json({
     label: f.label,
-    account: { Id: account.Id, Name: account.Name, current: f.Account ? readName(account, f.Account) : null },
+    account: { Id: account.Id, Name: account.Name, current: f.Account ? readName(account, f.Account) : null,
+      value: f.Account ? account[f.Account.name] ?? null : null },
     accountField: !!f.Account,
+    accountIsUser: !!f.Account?.isUser,
     opportunities: f.Opportunity
-      ? opps.map((o) => ({ Id: o.Id, Name: o.Name, StageName: o.StageName, CloseDate: o.CloseDate, current: readName(o, f.Opportunity) }))
+      ? opps.map((o) => ({ Id: o.Id, Name: o.Name, StageName: o.StageName, CloseDate: o.CloseDate,
+        current: readName(o, f.Opportunity), value: o[f.Opportunity.name] ?? null }))
       : [],
     oppField: !!f.Opportunity,
+    oppIsUser: !!f.Opportunity?.isUser,
+    closedCount: Number(closed?.n ?? closed?.expr0 ?? 0),
   });
 }));
 
