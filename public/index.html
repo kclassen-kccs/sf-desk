@@ -387,19 +387,14 @@ const ACCT_PAGE = 200, ACCT_MAX = 5000;
 let acctPage = 0;
 let savedRepName = ''; // the picked rep's name from the saved filters, until the rep choices load
 
-// The filters are saved in SF Desk's local database, so they survive a restart.
+// Each launch starts on My BOAT, My Accounts and All sales reps (and My Time on the My Time tab); the
+// picks then carry across the tabs. The sort, grouping and "Show hidden" are kept in SF Desk's local
+// database, so they survive a restart.
 async function loadAcctPrefs() {
+  boatFilter = 'mine'; teamFilter = 'mine'; repFilter = ''; savedRepName = '';
+  saveTimePrefs('who', 'me', 'me');
   try {
     const p = await api('/prefs/accounts');
-    if (p.team) {
-      boatFilter = p.boat || 'mine'; teamFilter = p.team;
-    } else if (p.scope || typeof p.mine === 'boolean') {
-      // Saved before the team filter: My Accounts / My BOATs / All accounts, and a BOAT ('' for all).
-      const scope = p.scope || (p.mine ? 'mine' : 'all');
-      teamFilter = scope === 'mine' ? 'mine' : 'all';
-      boatFilter = p.boat || (scope === 'boats' ? 'mine' : 'all');
-    }
-    repFilter = p.rep || ''; savedRepName = p.repName || '';
     sortRecent = !!p.sortRecent; groupByRep = !!p.groupByRep; showHiddenAccts = !!p.showHidden;
   } catch { /* first run or offline: keep the defaults */ }
 }
