@@ -479,6 +479,45 @@ const filterFieldNames = (af) => [...(af.mine || []).map((f) => f.name), ...(af.
 const soqlStr = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 const BLANK = '__blank__';
 
+// The signed-in user as a role field holds them: User Id for a lookup, else full name.
+const meIn = (req, f) => (f.isUser ? req.session.sf.user.id : String(req.session.sf.user.name));
+const mineSoql = (req, af, prefix = '') =>
+  `(${af.mine.map((f) => `${prefix}${f.name} = ${f.isUser ? `'${sfId(meIn(req, f))}'` : soqlStr(meIn(req, f))}`).join(' OR ')})`;
+
+// My BOATs: the SailPoint BOATs of my accounts, looked up once per session (saved for offline use).
+async function myBoats(req, af) {
+  if (!af.boat || !af.mine.length) return [];
+  if (!req.session.myBoats) {
+    try {
+      const rows = await query(req, `SELECT ${af.boat.name} v FROM Account WHERE ${mineSoql(req, af)} AND ${af.boat.name} != null ` +
+        `GROUP BY ${af.boat.name}`);
+      req.session.myBoats = rows.map((r) => String(r.v)).sort();
+      store.saveSetting(orgOf(req), 'myBoats', req.session.myBoats);
+    } catch (err) {
+      if (!(err.status >= 502)) throw err;
+      return store.getSetting(orgOf(req), 'myBoats') || [];
+    }
+  }
+  return req.session.myBoats;
+}
+
+// Which accounts a list covers: scope=mine (I'm in a role field), boats (in my BOATs) or all; mine=1
+// is the older spelling of scope=mine. Returns the SOQL condition (fields on Account, or through
+// `prefix`, e.g. "Account.") and the same rule as { field, value } pairs for the saved copy, or null for all.
+async function accountScope(req, af, prefix = '') {
+  const scope = req.query.scope || (req.query.mine === '1' ? 'mine' : 'all');
+  if (scope !== 'mine' && scope !== 'boats') return null;
+  if (af.offline) throw new HttpError(503, "Can't reach Salesforce to find the My Accounts fields. Pick All accounts to browse your saved copy.");
+  if (!af.mine.length) throw new HttpError(400, 'None of the My Accounts fields were found on Account. Set SF_MY_ACCOUNT_FIELDS in .env to their API names and restart.');
+  if (scope === 'mine') {
+    return { soql: mineSoql(req, af, prefix), saved: af.mine.map((f) => ({ field: f.name, value: meIn(req, f) })) };
+  }
+  const boats = await myBoats(req, af);
+  if (!af.boat || !boats.length) throw new HttpError(400, 'None of your accounts has a SailPoint BOAT. Pick My Accounts or All accounts.');
+  return { soql: `${prefix}${af.boat.name} IN (${boats.map(soqlStr).join(', ')})`,
+    saved: boats.map((v) => ({ field: af.boat.name, value: v })) };
+}
+
 // SOQL condition for a BOAT choice: a value, or BLANK for accounts without one.
 function boatSoql(f, value) {
   if (value === BLANK) return `${f.name} = null`;
@@ -560,13 +599,9 @@ api.get('/accounts', wrap(async (req, res) => {
   // A–Z by name unless sort=recent asks for most recently modified first.
   const recent = req.query.sort === 'recent';
   const af = await accountFilters(req);
-  // My Accounts: I'm in any of the account's role fields.
-  const mine = req.query.mine === '1';
-  if (mine) {
-    if (af.offline) throw new HttpError(503, "Can't reach Salesforce to find the My Accounts fields. Pick All accounts to browse your saved copy.");
-    if (!af.mine.length) throw new HttpError(400, 'None of the My Accounts fields were found on Account. Set SF_MY_ACCOUNT_FIELDS in .env to their API names and restart.');
-    where.push(`(${af.mine.map((f) => `${f.name} = ${f.isUser ? `'${sfId(req.session.sf.user.id)}'` : soqlStr(req.session.sf.user.name)}`).join(' OR ')})`);
-  }
+  // My Accounts (I'm in any of the account's role fields) or My BOATs.
+  const scope = await accountScope(req, af);
+  if (scope) where.push(scope.soql);
   const boatValue = String(req.query.boat || '').slice(0, 255);
   const boat = boatValue && af.boat ? { field: af.boat, value: boatValue } : null;
   if (boat) where.push(boatSoql(boat.field, boat.value));
@@ -589,7 +624,7 @@ api.get('/accounts', wrap(async (req, res) => {
       q,
       ownerId: owner,
       recent,
-      mine: mine ? af.mine.map((f) => ({ field: f.name, value: f.isUser ? req.session.sf.user.id : String(req.session.sf.user.name) })) : null,
+      mine: scope?.saved || null,
       match: [
         boat && { field: boat.field.name, value: boat.value, type: boat.field.type, blank: boat.value === BLANK },
         se && { field: se.field.name, value: se.value },
@@ -640,7 +675,8 @@ api.get('/account-filters', wrap(async (req, res) => {
   const af = await accountFilters(req);
   res.json({ mine: af.mine.map(({ role, name, label }) => ({ role, name, label })), missing: af.missing,
     boat: af.boat && { name: af.boat.name, label: af.boat.label, options: af.boat.options },
-    se: af.se && { name: af.se.name, label: af.se.label, options: af.se.options }, offline: !!af.offline });
+    se: af.se && { name: af.se.name, label: af.se.label, options: af.se.options },
+    myBoats: af.offline ? (store.getSetting(orgOf(req), 'myBoats') || []) : await myBoats(req, af), offline: !!af.offline });
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {
@@ -999,8 +1035,8 @@ api.post('/deal-supports/move', wrap(async (req, res) => {
 
 // ---------- Pipeline dashboard ----------
 
-// Every open opportunity on My Accounts (or all you can see with mine=0), for the Deals tab: the
-// opportunities whose account has me in any of its role fields, like the Accounts tab's My Accounts.
+// Every open opportunity on My Accounts, in My BOATs, or all you can see (see accountScope), for the
+// Deals tab, the same choice as the Accounts tab.
 // The page leaves out hidden records and does the totals.
 const PIPELINE_READ = ['Id', 'Name', 'AccountId', 'Account.Name', 'StageName', 'Amount', 'CloseDate', 'Probability',
   'ForecastCategoryName', 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
@@ -1008,14 +1044,9 @@ const PIPELINE_READ = ['Id', 'Name', 'AccountId', 'Account.Name', 'StageName', '
 api.get('/pipeline', wrap(async (req, res) => {
   const known = await knownLeadSeFields(req);
   const af = await accountFilters(req);
-  const mine = req.query.mine === '1';
-  if (mine) {
-    if (af.offline) throw new HttpError(503, "Can't reach Salesforce to find the My Accounts fields. Pick All accounts to browse your saved copy.");
-    if (!af.mine.length) throw new HttpError(400, 'None of the My Accounts fields were found on Account. Set SF_MY_ACCOUNT_FIELDS in .env to their API names and restart.');
-  }
-  const meValue = (f) => (f.isUser ? req.session.sf.user.id : String(req.session.sf.user.name));
+  const scope = await accountScope(req, af, 'Account.');
   const where = ['IsClosed = false'];
-  if (mine) where.push(`(${af.mine.map((f) => `Account.${f.name} = ${f.isUser ? `'${sfId(meValue(f))}'` : soqlStr(meValue(f))}`).join(' OR ')})`);
+  if (scope) where.push(scope.soql);
   const run = (fields) => query(req, `SELECT ${withField(fields, known.Opportunity).join(', ')} FROM Opportunity ` +
     `WHERE ${where.join(' AND ')} ORDER BY CloseDate ASC`, 5000);
   res.json(await withCacheFallback(req, res, async () => {
@@ -1028,10 +1059,10 @@ api.get('/pipeline', wrap(async (req, res) => {
       opportunities = await run(PIPELINE_READ.filter((f) => f !== 'ForecastCategoryName'));
     }
     store.saveOpportunities(orgOf(req), opportunities, { merge: true });
-    return { opportunities, mineFiltered: mine };
+    return { opportunities };
   }, () => {
-    const saved = store.listOpenOpportunities(orgOf(req), { mine: mine ? af.mine.map((f) => ({ field: f.name, value: meValue(f) })) : null });
-    return { data: { opportunities: saved.records, mineFiltered: mine }, syncedAt: saved.syncedAt };
+    const saved = store.listOpenOpportunities(orgOf(req), { mine: scope?.saved || null });
+    return { data: { opportunities: saved.records }, syncedAt: saved.syncedAt };
   }));
 }));
 
@@ -1687,9 +1718,9 @@ api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
 // lists with these ids and can show them again with "Show hidden".
 api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
 
-// The Accounts tab's filters (My Accounts, SailPoint BOAT, SE, sales rep, sort, grouping), kept in the
+// The Accounts tab's filters (My Accounts / My BOATs / All, SailPoint BOAT, SE, sales rep, sort, grouping), kept in the
 // local database so they come back when SF Desk restarts.
-const ACCT_PREF_KEYS = { mine: 'boolean', boat: 'string', se: 'string', rep: 'string', repName: 'string',
+const ACCT_PREF_KEYS = { scope: 'string', mine: 'boolean', boat: 'string', se: 'string', rep: 'string', repName: 'string',
   sortRecent: 'boolean', groupByRep: 'boolean', showHidden: 'boolean' };
 api.get('/prefs/accounts', (req, res) => res.json(store.getSetting(orgOf(req), 'acctPrefs') || {}));
 api.put('/prefs/accounts', (req, res) => {
