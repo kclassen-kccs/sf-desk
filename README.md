@@ -65,6 +65,8 @@ calendar permission and troubleshooting.
   its fields), and create new ones with a form built from your org's Deal Support fields
 - Hide accounts and opportunities you don't want to see: tick them and click **Hide**. Tick **Show hidden**
   to see them again and **Unhide** them. Hiding is stored only in the local database, never in Salesforce
+- In the Accounts list, tick one account or **All**, then use the icons above the list to hide or unhide them,
+  or to change the SE or sales rep on all of them and their open opportunities (one summary to confirm first)
 - Picklists (Type, Industry, Stage) come from your org; fields you can't edit are greyed out
 - If someone else changed a record after you loaded it, the save is refused rather than overwriting their work
 - Keeps a local SQLite copy of every account and opportunity you load, so if Salesforce can't be reached
