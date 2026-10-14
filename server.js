@@ -517,30 +517,64 @@ async function myBoats(req, af) {
   return req.session.myBoats;
 }
 
-// Which accounts a list covers: scope=mine (I'm in a role field), boats (in my BOATs) or all; mine=1
-// is the older spelling of scope=mine. Returns the SOQL condition (fields on Account, or through
-// `prefix`, e.g. "Account.") and the same rule as { field, value } pairs for the saved copy, or null for all.
-async function accountScope(req, af, prefix = '') {
-  const scope = req.query.scope || (req.query.mine === '1' ? 'mine' : 'all');
-  if (scope !== 'mine' && scope !== 'boats') return null;
-  if (af.offline) throw new HttpError(503, "Can't reach Salesforce to find the My Accounts fields. Pick All accounts to browse your saved copy.");
-  if (!af.mine.length) throw new HttpError(400, 'None of the My Accounts fields were found on Account. Set SF_MY_ACCOUNT_FIELDS in .env to their API names and restart.');
-  if (scope === 'mine') {
-    return { soql: mineSoql(req, af, prefix), saved: af.mine.map((f) => ({ field: f.name, value: meIn(req, f) })) };
+// Which accounts a list covers, from two filters (the Accounts, Deals and My Time tabs share them):
+//   boat = mine (the BOATs of my accounts; the default), all, a SailPoint BOAT value, or BLANK;
+//   team = mine (I'm in any of the account's role fields; the default), team (me or anyone on my team
+//          is), a team member's User Id (they are), or all.
+// The older scope=mine|boats|all still works. Returns the SOQL conditions (fields on Account, or
+// through `prefix`, e.g. "Account.") and the same rules for the saved copy: `groups` of { field, value }
+// pairs (one of each must hold) and `match` (a picked BOAT).
+async function accountFilter(req, af, prefix = '') {
+  let { boat, team } = req.query;
+  if (!boat && !team && req.query.scope) {
+    ({ boat, team } = { mine: { boat: 'all', team: 'mine' }, boats: { boat: 'mine', team: 'all' } }[req.query.scope] || {});
   }
-  const boats = await myBoats(req, af);
-  if (!af.boat || !boats.length) throw new HttpError(400, 'None of your accounts has a SailPoint BOAT. Pick My Accounts or All accounts.');
-  return { soql: `${prefix}${af.boat.name} IN (${boats.map(soqlStr).join(', ')})`,
-    saved: boats.map((v) => ({ field: af.boat.name, value: v })) };
+  boat = String(boat || 'all').slice(0, 255);
+  team = String(team || 'all').slice(0, 20);
+  const out = { soql: [], groups: [], match: [], boat, team };
+  if (team !== 'all') {
+    if (af.offline) throw new HttpError(503, "Can't reach Salesforce to find the My Accounts fields. Pick All accounts to browse your saved copy.");
+    if (!af.mine.length) throw new HttpError(400, 'None of the My Accounts fields were found on Account. Set SF_MY_ACCOUNT_FIELDS in .env to their API names and restart.');
+    const self = { id: req.session.sf.user.id, name: String(req.session.sf.user.name) };
+    let people = [self];
+    if (team !== 'mine') {
+      const { members } = await myTeam(req).catch(() => ({ members: [] }));
+      people = team === 'team' ? [self, ...members] : members.filter((m) => m.id === team);
+      if (!people.length) throw new HttpError(400, "That person isn't on your team any more. Pick another.");
+    }
+    const conds = [], pairs = [];
+    for (const f of af.mine) {
+      const values = [...new Set(people.map((u) => (f.isUser ? sfId(u.id) : u.name)))];
+      conds.push(`${prefix}${f.name} IN (${values.map(soqlStr).join(', ')})`);
+      for (const v of values) pairs.push({ field: f.name, value: v });
+    }
+    out.soql.push(`(${conds.join(' OR ')})`);
+    out.groups.push(pairs);
+  }
+  if (boat !== 'all' && af.boat) {
+    if (boat === 'mine') {
+      // No BOAT on any of my accounts: My BOAT can't narrow anything, so it covers every BOAT.
+      const boats = await myBoats(req, af);
+      if (boats.length) {
+        out.soql.push(`${prefix}${af.boat.name} IN (${boats.map(soqlStr).join(', ')})`);
+        out.groups.push(boats.map((v) => ({ field: af.boat.name, value: v })));
+      }
+    } else {
+      out.soql.push(boatSoql(af.boat, boat, prefix));
+      out.match.push({ field: af.boat.name, value: boat, type: af.boat.type, blank: boat === BLANK });
+    }
+  }
+  return out;
 }
 
 // SOQL condition for a BOAT choice: a value, or BLANK for accounts without one.
-function boatSoql(f, value) {
-  if (value === BLANK) return `${f.name} = null`;
-  if (f.type === 'boolean') return `${f.name} = ${value === 'true'}`;
-  if (f.type === 'multipicklist') return `${f.name} INCLUDES (${soqlStr(value)})`;
-  if (['double', 'currency', 'percent', 'int'].includes(f.type) && /^-?\d+(\.\d+)?$/.test(value)) return `${f.name} = ${value}`;
-  return `${f.name} = ${soqlStr(value)}`;
+function boatSoql(f, value, prefix = '') {
+  const n = prefix + f.name;
+  if (value === BLANK) return `${n} = null`;
+  if (f.type === 'boolean') return `${n} = ${value === 'true'}`;
+  if (f.type === 'multipicklist') return `${n} INCLUDES (${soqlStr(value)})`;
+  if (['double', 'currency', 'percent', 'int'].includes(f.type) && /^-?\d+(\.\d+)?$/.test(value)) return `${n} = ${value}`;
+  return `${n} = ${soqlStr(value)}`;
 }
 
 // ---------- JSON API used by the page ----------
@@ -618,16 +652,9 @@ api.get('/accounts', wrap(async (req, res) => {
   // A–Z by name unless sort=recent asks for most recently modified first.
   const recent = req.query.sort === 'recent';
   const af = await accountFilters(req);
-  // My Accounts (I'm in any of the account's role fields) or My BOATs.
-  const scope = await accountScope(req, af);
-  if (scope) where.push(scope.soql);
-  const boatValue = String(req.query.boat || '').slice(0, 255);
-  const boat = boatValue && af.boat ? { field: af.boat, value: boatValue } : null;
-  if (boat) where.push(boatSoql(boat.field, boat.value));
-  // SE filter: one Lead SE (a User Id for a lookup, else the name the field holds).
-  const seValue = String(req.query.se || '').slice(0, 255);
-  const se = seValue && af.se ? { field: af.se, value: af.se.isUser ? sfId(seValue) : seValue } : null;
-  if (se) where.push(`${se.field.name} = ${soqlStr(se.value)}`);
+  // The BOAT and team filters (see accountFilter).
+  const filter = await accountFilter(req, af);
+  where.push(...filter.soql);
   // Read the filter fields too, so the saved copy can apply the same filters offline.
   const fields = [...new Set(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate',
     ...filterFieldNames(af)])];
@@ -643,50 +670,30 @@ api.get('/accounts', wrap(async (req, res) => {
       q,
       ownerId: owner,
       recent,
-      mine: scope?.saved || null,
+      groups: filter.groups,
+      match: filter.match,
       limit: ACCOUNT_LIST_MAX,
-      match: [
-        boat && { field: boat.field.name, value: boat.value, type: boat.field.type, blank: boat.value === BLANK },
-        se && { field: se.field.name, value: se.value },
-      ].filter(Boolean),
     });
     return { data: saved.records, syncedAt: saved.syncedAt };
   }));
 }));
 
-// The SEs and sales reps (account owners) with accounts in one SailPoint BOAT, so the page can narrow
-// those dropdowns to that BOAT.
+// The sales reps (account owners) of the accounts the BOAT and team filters cover, A–Z, so the page
+// can narrow the sales rep dropdown to them.
 api.get('/account-filters/people', wrap(async (req, res) => {
   const af = await accountFilters(req);
-  const value = String(req.query.boat || '').slice(0, 255);
-  if (!af.boat || !value) throw new HttpError(400, 'Pick a SailPoint BOAT');
-  const where = boatSoql(af.boat, value);
+  const filter = await accountFilter(req, af);
   const byLabel = (a, b) => a.label.localeCompare(b.label);
-  const seNames = new Map((af.se?.options || []).map((o) => [o.value, o.label]));
   res.json(await withCacheFallback(req, res, async () => {
-    const se = af.se;
-    const seName = se?.isUser && se.relationshipName ? `${se.relationshipName}.Name` : null;
-    const [ses, reps] = await Promise.all([
-      se ? query(req, `SELECT ${se.name} v${seName ? `, ${seName} n` : ''} FROM Account WHERE ${where} AND ${se.name} != null ` +
-        `GROUP BY ${se.name}${seName ? `, ${seName}` : ''} LIMIT 500`) : [],
-      query(req, `SELECT OwnerId v, Owner.Name n FROM Account WHERE ${where} GROUP BY OwnerId, Owner.Name LIMIT 2000`),
-    ]);
-    return {
-      se: ses.map((r) => ({ value: String(r.v), label: String(r.n ?? seNames.get(String(r.v)) ?? r.v) })).sort(byLabel),
-      reps: reps.map((r) => ({ value: String(r.v), label: String(r.n ?? r.v) })).sort(byLabel),
-    };
+    const reps = await query(req, `SELECT OwnerId v, Owner.Name n FROM Account ${filter.soql.length ? 'WHERE ' + filter.soql.join(' AND ') : ''} ` +
+      'GROUP BY OwnerId, Owner.Name LIMIT 2000');
+    return { reps: reps.map((r) => ({ value: String(r.v), label: String(r.n ?? r.v) })).sort(byLabel) };
   }, () => {
-    // Offline: the people on the saved accounts in that BOAT.
-    const saved = store.listAccounts(orgOf(req), {
-      match: [{ field: af.boat.name, value, type: af.boat.type, blank: value === BLANK }], limit: 100000 });
-    const se = new Map(), reps = new Map();
-    for (const a of saved.records) {
-      const v = af.se && a[af.se.name];
-      if (v) se.set(String(v), seNames.get(String(v)) || String(v));
-      if (a.OwnerId) reps.set(a.OwnerId, a.Owner?.Name || a.OwnerId);
-    }
-    const list = (m) => [...m].map(([v, label]) => ({ value: v, label })).sort(byLabel);
-    return { data: { se: list(se), reps: list(reps) }, syncedAt: saved.syncedAt };
+    // Offline: the owners of the saved accounts the filters cover.
+    const saved = store.listAccounts(orgOf(req), { groups: filter.groups, match: filter.match, limit: 100000 });
+    const reps = new Map();
+    for (const a of saved.records) if (a.OwnerId) reps.set(a.OwnerId, a.Owner?.Name || a.OwnerId);
+    return { data: { reps: [...reps].map(([value, label]) => ({ value, label })).sort(byLabel) }, syncedAt: saved.syncedAt };
   }));
 }));
 
@@ -694,9 +701,10 @@ api.get('/account-filters/people', wrap(async (req, res) => {
 api.get('/account-filters', wrap(async (req, res) => {
   const af = await accountFilters(req);
   res.json({ mine: af.mine.map(({ role, name, label }) => ({ role, name, label })), missing: af.missing,
-    boat: af.boat && { name: af.boat.name, label: af.boat.label, options: af.boat.options },
-    se: af.se && { name: af.se.name, label: af.se.label, options: af.se.options },
-    myBoats: af.offline ? (store.getSetting(orgOf(req), 'myBoats') || []) : await myBoats(req, af), offline: !!af.offline });
+    boat: af.boat && { name: af.boat.name, label: af.boat.label,
+      options: [...af.boat.options].sort((a, b) => a.label.localeCompare(b.label)) },
+    myBoats: af.offline ? (store.getSetting(orgOf(req), 'myBoats') || []) : await myBoats(req, af), offline: !!af.offline,
+    team: (await myTeam(req).catch(() => ({ members: [] }))).members });
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {
@@ -1196,18 +1204,17 @@ api.post('/deal-supports/move', wrap(async (req, res) => {
 
 // ---------- Pipeline dashboard ----------
 
-// Every open opportunity on My Accounts, in My BOATs, or all you can see (see accountScope), for the
-// Deals tab, the same choice as the Accounts tab.
+// Every open opportunity on the accounts the BOAT and team filters cover (see accountFilter), for the
+// Deals tab, the same choice as the Accounts tab. The page applies the sales rep filter (the account owner).
 // The page leaves out hidden records and does the totals.
 const PIPELINE_READ = ['Id', 'Name', 'AccountId', 'Account.Name', 'StageName', 'Amount', 'CloseDate', 'Probability',
-  'ForecastCategoryName', 'IsClosed', 'Owner.Name', 'LastModifiedDate'];
+  'ForecastCategoryName', 'IsClosed', 'Owner.Name', 'Account.OwnerId', 'Account.Owner.Name', 'LastModifiedDate'];
 
 api.get('/pipeline', wrap(async (req, res) => {
   const known = await knownLeadSeFields(req);
   const af = await accountFilters(req);
-  const scope = await accountScope(req, af, 'Account.');
-  const where = ['IsClosed = false'];
-  if (scope) where.push(scope.soql);
+  const filter = await accountFilter(req, af, 'Account.');
+  const where = ['IsClosed = false', ...filter.soql];
   const run = (fields) => query(req, `SELECT ${withField(fields, known.Opportunity).join(', ')} FROM Opportunity ` +
     `WHERE ${where.join(' AND ')} ORDER BY CloseDate ASC`, 5000);
   res.json(await withCacheFallback(req, res, async () => {
@@ -1222,7 +1229,7 @@ api.get('/pipeline', wrap(async (req, res) => {
     store.saveOpportunities(orgOf(req), opportunities, { merge: true });
     return { opportunities };
   }, () => {
-    const saved = store.listOpenOpportunities(orgOf(req), { mine: scope?.saved || null });
+    const saved = store.listOpenOpportunities(orgOf(req), { groups: filter.groups, match: filter.match });
     return { data: { opportunities: saved.records }, syncedAt: saved.syncedAt };
   }));
 }));
@@ -1336,6 +1343,13 @@ async function timeMeta(req) {
 // Salesforce settings). When both are empty, the people who share my manager.
 async function myTeam(req) {
   if (req.session.myTeam) return req.session.myTeam;
+  try { return await findMyTeam(req); } catch (err) {
+    // Offline: the team as last looked up.
+    if (!(err.status >= 502)) throw err;
+    return store.getSetting(orgOf(req), 'myTeam') || { source: null, members: [] };
+  }
+}
+async function findMyTeam(req) {
   const me = sfId(req.session.sf.user.id);
   const ids = async (soql) => (await query(req, soql).catch(() => [])).map((r) => r.UserId);
   const listed = [...new Set([
@@ -1355,8 +1369,9 @@ async function myTeam(req) {
         `AND IsActive = true AND Id != '${me}' ORDER BY Name`);
     }
   }
-  const team = { source, members: members.map((u) => ({ id: u.Id, name: u.Name })) };
+  const team = { source, members: members.map((u) => ({ id: u.Id, name: u.Name })).sort((a, b) => a.name.localeCompare(b.name)) };
   req.session.myTeam = team;
+  store.saveSetting(orgOf(req), 'myTeam', team);
   return team;
 }
 
@@ -1371,17 +1386,20 @@ api.get('/my-time', wrap(async (req, res) => {
     const tm = await timeMeta(req);
     const by = tm.userFields.find((f) => f.name === req.query.by) || tm.userFields[0];
     const team = await myTeam(req).catch(() => ({ source: null, members: [] }));
+    const af = await accountFilters(req).catch(() => null);
     const people = who === 'me' ? [userId]
       : who === 'team' ? [userId, ...team.members.map((m) => m.id)]
       : team.members.some((m) => m.id === who) ? [who] : [userId];
     const fields = ['Id', 'Name', ...tm.dateFields.map((f) => f.name), ...tm.hoursFields.map((f) => f.name), tm.oppField,
-      ...(tm.oppRel ? [`${tm.oppRel}.Name`, `${tm.oppRel}.AccountId`, `${tm.oppRel}.Account.Name`, `${tm.oppRel}.StageName`] : []),
+      ...(tm.oppRel ? [`${tm.oppRel}.Name`, `${tm.oppRel}.AccountId`, `${tm.oppRel}.Account.Name`, `${tm.oppRel}.StageName`,
+        // For the page's BOAT and sales rep filters.
+        `${tm.oppRel}.Account.OwnerId`, `${tm.oppRel}.Account.Owner.Name`, ...(af?.boat ? [`${tm.oppRel}.Account.${af.boat.name}`] : [])] : []),
       ...(tm.roleField ? [tm.roleField] : []), by.name, ...(by.rel ? [`${by.rel}.Name`] : [])]
       .filter((f, i, all) => all.indexOf(f) === i);
     const records = await query(req, `SELECT ${fields.join(', ')} FROM ${tm.object} ` +
       `WHERE ${by.name} IN (${people.map((id) => `'${sfId(id)}'`).join(', ')}) ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`,
       10000 * people.length);
-    const out = { ...tm, by: by.name, byRel: by.rel, who: people.length > 1 ? 'team' : people[0] === userId ? 'me' : people[0],
+    const out = { ...tm, by: by.name, byRel: by.rel, boatField: af?.boat?.name || null, who: people.length > 1 ? 'team' : people[0] === userId ? 'me' : people[0],
       team, records };
     store.saveSetting(orgOf(req), kind, out);
     return out;
@@ -1935,9 +1953,9 @@ api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
 // lists with these ids and can show them again with "Show hidden".
 api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
 
-// The Accounts tab's filters (My Accounts / My BOATs / All, SailPoint BOAT, SE, sales rep, sort, grouping), kept in the
+// The Accounts, Deals and My Time filters (BOAT, team, sales rep) and the Accounts sort and grouping, kept in the
 // local database so they come back when SF Desk restarts.
-const ACCT_PREF_KEYS = { scope: 'string', mine: 'boolean', boat: 'string', se: 'string', rep: 'string', repName: 'string',
+const ACCT_PREF_KEYS = { boat: 'string', team: 'string', scope: 'string', mine: 'boolean', rep: 'string', repName: 'string',
   sortRecent: 'boolean', groupByRep: 'boolean', showHidden: 'boolean' };
 api.get('/prefs/accounts', (req, res) => res.json(store.getSetting(orgOf(req), 'acctPrefs') || {}));
 api.put('/prefs/accounts', (req, res) => {
