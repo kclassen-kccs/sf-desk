@@ -589,6 +589,9 @@ async function loadMeta(req) {
   return meta;
 }
 
+// The account list returns up to this many matches; the page shows them 200 at a time.
+const ACCOUNT_LIST_MAX = 5000;
+
 api.get('/accounts', wrap(async (req, res) => {
   const where = [];
   const q = String(req.query.q || '').trim().slice(0, 80);
@@ -613,10 +616,10 @@ api.get('/accounts', wrap(async (req, res) => {
   const fields = [...new Set(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate',
     ...filterFieldNames(af)])];
   const soql = `SELECT ${fields.join(', ')} ` +
-    `FROM Account ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${recent ? 'LastModifiedDate DESC' : 'Name ASC'} LIMIT 200`;
+    `FROM Account ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${recent ? 'LastModifiedDate DESC' : 'Name ASC'} LIMIT ${ACCOUNT_LIST_MAX}`;
 
   res.json(await withCacheFallback(req, res, async () => {
-    const accounts = await query(req, soql);
+    const accounts = await query(req, soql, ACCOUNT_LIST_MAX);
     store.saveAccounts(orgOf(req), accounts);
     return accounts;
   }, () => {
@@ -625,6 +628,7 @@ api.get('/accounts', wrap(async (req, res) => {
       ownerId: owner,
       recent,
       mine: scope?.saved || null,
+      limit: ACCOUNT_LIST_MAX,
       match: [
         boat && { field: boat.field.name, value: boat.value, type: boat.field.type, blank: boat.value === BLANK },
         se && { field: se.field.name, value: se.value },

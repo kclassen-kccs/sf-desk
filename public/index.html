@@ -39,6 +39,11 @@
   #list .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
   #list .controls input[type=checkbox] { width: auto; }
   #accounts { overflow: auto; flex: 1; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px;
+    color: var(--muted); font-size: 13px; border-bottom: 1px solid var(--line); }
+  .pager button { width: auto; padding: 4px 10px; white-space: nowrap; }
+  .pager span { white-space: nowrap; }
+  .pager:last-child { border-bottom: 0; border-top: 1px solid var(--line); }
   .acct { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .acct:hover { background: var(--bg); }
   .acct.sel { background: var(--accent-soft); }
@@ -351,6 +356,9 @@ let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
 let acctScope = 'mine', boatFilter = '', seFilter = '', acctFilters = null;
 // While a BOAT is picked: the SEs and sales reps with accounts in it ({ se, reps }), which the dropdowns then list.
 let boatPeople = null;
+// The account list shows ACCT_PAGE accounts at a time, with paging controls above and below when there are more.
+const ACCT_PAGE = 200, ACCT_MAX = 5000;
+let acctPage = 0;
 let savedRepName = ''; // the picked rep's name from the saved filters, until accounts load
 
 // The Accounts filters are saved in SF Desk's local database, so they survive a restart.
@@ -591,6 +599,7 @@ function showMain() {
     if (sortRecent) params.set('sort', 'recent');
     try {
       accounts = await api('/accounts?' + params);
+      acctPage = 0;
       for (const a of accounts) if (a.OwnerId) acctOwners.set(a.Id, { id: a.OwnerId, name: a.Owner?.Name || a.OwnerId });
       renderList();
     } catch (e) { toast(e.message, 'err'); }
@@ -680,16 +689,28 @@ function renderList() {
       ),
     );
   };
-  if (!groupByRep) return box.replaceChildren(...shown.map(row));
-  // Group by sales rep (account owner), reps A–Z, each group keeping the list's order.
-  const groups = new Map();
-  for (const a of shown) {
-    const rep = a.Owner?.Name || 'No owner';
-    if (!groups.has(rep)) groups.set(rep, []);
-    groups.get(rep).push(a);
-  }
-  box.replaceChildren(...[...groups].sort((x, y) => x[0].localeCompare(y[0])).flatMap(([rep, list]) =>
-    [el('div', { class: 'group' }, `${rep} (${list.length})`), ...list.map(row)]));
+  // Page through long lists: Previous / Next above and below this page's rows.
+  // Grouped by sales rep: reps A–Z across the whole list (each keeping the list's order), then paged.
+  const repOf = (a) => a.Owner?.Name || 'No owner';
+  const ordered = groupByRep ? [...shown].sort((x, y) => repOf(x).localeCompare(repOf(y))) : shown;
+  const pages = Math.ceil(ordered.length / ACCT_PAGE);
+  acctPage = Math.min(acctPage, pages - 1);
+  const pageRows = ordered.slice(acctPage * ACCT_PAGE, (acctPage + 1) * ACCT_PAGE);
+  const pager = () => pages > 1 ? el('div', { class: 'pager' },
+    el('button', { disabled: acctPage === 0, onclick: () => { acctPage--; renderList(); box.scrollTop = 0; } }, '‹ Prev'),
+    el('span', {}, `${(acctPage * ACCT_PAGE + 1).toLocaleString()}–${(acctPage * ACCT_PAGE + pageRows.length).toLocaleString()} of ` +
+      `${shown.length.toLocaleString()}${accounts.length >= ACCT_MAX ? '+' : ''}`),
+    el('button', { disabled: acctPage >= pages - 1, onclick: () => { acctPage++; renderList(); box.scrollTop = 0; } }, 'Next ›')) : null;
+  if (!groupByRep) return box.replaceChildren(...[pager(), ...pageRows.map(row), pager()].filter(Boolean));
+  // A heading before each rep's rows on this page, with the rep's count across all pages.
+  const total = new Map();
+  for (const a of shown) total.set(repOf(a), (total.get(repOf(a)) || 0) + 1);
+  const out = [];
+  pageRows.forEach((a, i) => {
+    if (i === 0 || repOf(pageRows[i - 1]) !== repOf(a)) out.push(el('div', { class: 'group' }, `${repOf(a)} (${total.get(repOf(a))})`));
+    out.push(row(a));
+  });
+  box.replaceChildren(...[pager(), ...out, pager()].filter(Boolean));
 }
 
 // Sales rep choices: owners of the accounts seen this session that aren't hidden (all of them while
