@@ -599,6 +599,42 @@ api.get('/accounts', wrap(async (req, res) => {
   }));
 }));
 
+// The SEs and sales reps (account owners) with accounts in one SailPoint BOAT, so the page can narrow
+// those dropdowns to that BOAT.
+api.get('/account-filters/people', wrap(async (req, res) => {
+  const af = await accountFilters(req);
+  const value = String(req.query.boat || '').slice(0, 255);
+  if (!af.boat || !value) throw new HttpError(400, 'Pick a SailPoint BOAT');
+  const where = boatSoql(af.boat, value);
+  const byLabel = (a, b) => a.label.localeCompare(b.label);
+  const seNames = new Map((af.se?.options || []).map((o) => [o.value, o.label]));
+  res.json(await withCacheFallback(req, res, async () => {
+    const se = af.se;
+    const seName = se?.isUser && se.relationshipName ? `${se.relationshipName}.Name` : null;
+    const [ses, reps] = await Promise.all([
+      se ? query(req, `SELECT ${se.name} v${seName ? `, ${seName} n` : ''} FROM Account WHERE ${where} AND ${se.name} != null ` +
+        `GROUP BY ${se.name}${seName ? `, ${seName}` : ''} LIMIT 500`) : [],
+      query(req, `SELECT OwnerId v, Owner.Name n FROM Account WHERE ${where} GROUP BY OwnerId, Owner.Name LIMIT 2000`),
+    ]);
+    return {
+      se: ses.map((r) => ({ value: String(r.v), label: String(r.n ?? seNames.get(String(r.v)) ?? r.v) })).sort(byLabel),
+      reps: reps.map((r) => ({ value: String(r.v), label: String(r.n ?? r.v) })).sort(byLabel),
+    };
+  }, () => {
+    // Offline: the people on the saved accounts in that BOAT.
+    const saved = store.listAccounts(orgOf(req), {
+      match: [{ field: af.boat.name, value, type: af.boat.type, blank: value === BLANK }], limit: 100000 });
+    const se = new Map(), reps = new Map();
+    for (const a of saved.records) {
+      const v = af.se && a[af.se.name];
+      if (v) se.set(String(v), seNames.get(String(v)) || String(v));
+      if (a.OwnerId) reps.set(a.OwnerId, a.Owner?.Name || a.OwnerId);
+    }
+    const list = (m) => [...m].map(([v, label]) => ({ value: v, label })).sort(byLabel);
+    return { data: { se: list(se), reps: list(reps) }, syncedAt: saved.syncedAt };
+  }));
+}));
+
 // Which fields the Accounts filters use, and the SailPoint BOAT choices, for the page.
 api.get('/account-filters', wrap(async (req, res) => {
   const af = await accountFilters(req);

@@ -145,7 +145,8 @@ The **SailPoint BOAT** dropdown filters on the Account field labelled "SailPoint
 `SF_BOAT_FIELD` to its API name if it isn't found).
 
 The **SE** dropdown (All SEs by default) narrows the list to one Account Lead SE. It offers everyone
-who is Lead SE on some account.
+who is Lead SE on some account. While a SailPoint BOAT is picked, the SE and sales rep dropdowns
+only list people with accounts in that BOAT.
 
 ## Lead SE filter
 
