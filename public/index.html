@@ -2815,28 +2815,37 @@ CAL_WIDE.addEventListener('change', () => { if (cal.data && document.getElementB
 const CAL_NARROW = window.matchMedia('(max-width: 640px)');
 CAL_NARROW.addEventListener('change', () => { if (cal.data && document.getElementById('calBody')) renderCalendar(); });
 
-// Values for the new Deal Support form, taken from the event.
+// Values for the new Deal Support form, taken from the event. When a Mac or Outlook event has a
+// Salesforce copy (e.g. synced by Outreach), the name and description come from that copy.
+// The meeting's time goes to customer-facing time when anyone outside the company attends; when only
+// colleagues do, it goes to internal time and customer-facing time is 0 (Salesforce needs a value).
 function eventPrefill(e) {
   const p = cal.data.prefill, v = {};
-  if (p.nameField) v[p.nameField.name] = (e.title || e.subject).slice(0, p.nameField.length || 80);
+  if (p.nameField) v[p.nameField.name] = dsTitle(e).slice(0, p.nameField.length || 80);
   if (p.dateField) {
     v[p.dateField.name] = p.dateField.type === 'datetime' && !e.allDay
       ? `${e.date}T${hhmm24(evTime(e.start))}` : e.date;
   }
   const mins = e.minutes ?? (e.allDay ? null : (evTime(e.end) - evTime(e.start)) / 60000);
-  if (p.hoursField && mins != null && !e.allDay) {
-    const hours = Math.round(mins / 60 * 100) / 100;
-    if (p.hoursField.unit === 'minutes') v[p.hoursField.name] = Math.round(mins);
-    else if (p.hoursField.unit === 'hours') v[p.hoursField.name] = hours;
-    else if (p.hoursField.picklist) {
-      const opt = p.hoursField.picklist.find((o) => Math.abs(parseDuration(o) - hours) < 0.01);
-      if (opt) v[p.hoursField.name] = opt;
-    } else v[p.hoursField.name] = String(hours);
+  const setTime = (f, m) => {
+    const hours = Math.round(m / 60 * 100) / 100;
+    if (f.unit === 'minutes') v[f.name] = Math.round(m);
+    else if (f.unit === 'hours') v[f.name] = hours;
+    else if (f.picklist) {
+      const opt = f.picklist.find((o) => Math.abs(parseDuration(o) - hours) < 0.01);
+      if (opt) v[f.name] = opt;
+    } else v[f.name] = String(hours);
+  };
+  const internal = e.audience === 'internal' && p.internalField && p.hoursField;
+  if (internal) setTime(p.hoursField, 0);
+  if (mins != null && !e.allDay) {
+    if (internal) setTime(p.internalField, mins);
+    else if (p.hoursField) setTime(p.hoursField, mins);
   }
-  const desc = meetingNotes(e.description);
+  const desc = dsNotes(e);
   // The details start with the meeting's subject, then what was written about it.
   // (The server copies the description into Meeting Overview.)
-  if (p.descField) v[p.descField.name] = [meetingSubject(e), desc].filter(Boolean).join('\n').slice(0, p.descField.length || 32000);
+  if (p.descField) v[p.descField.name] = [dsTitle(e), desc].filter(Boolean).join('\n').slice(0, p.descField.length || 32000);
   if (p.userField?.onForm) v[p.userField.name] = me.user.id;
   return v;
 }
@@ -2947,13 +2956,16 @@ function descSources(descName) {
 }
 function descDefault(e) {
   const p = cal.data.prefill;
-  if (!p.descField || meetingNotes(e.description)) return null;
+  if (!p.descField || dsNotes(e)) return null;
   const from = descSources(p.descField.name).map((f) => f.name);
-  const subject = meetingSubject(e);
+  const subject = dsTitle(e);
   return from.length ? { field: p.descField.name, from, value: (vals) => [subject, vals.filter(Boolean).join(' - ')].filter(Boolean).join('\n') } : null;
 }
 // An event's subject without an Outreach "[Backstory | ...]" prefix.
 const meetingSubject = (e) => String(e.title || e.subject || '').replace(/^\s*\[backstory\b[^\]]*\]\s*/i, '').trim();
+// A new Deal Support's name and notes: from the event's Salesforce copy when it has one, else the event's own.
+const dsTitle = (e) => meetingSubject(e.sf?.title ? { title: e.sf.title } : e);
+const dsNotes = (e) => meetingNotes(e.sf?.description) || meetingNotes(e.description);
 
 // onCreated(rec, opp) runs after the save; by default the Time Entry calendar reloads.
 function createFromEvent(e, close, onCreated = () => loadCalendar()) {
