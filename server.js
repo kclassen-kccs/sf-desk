@@ -730,6 +730,52 @@ api.post('/opportunities', wrap(async (req, res) => {
   res.status(201).json(rec);
 }));
 
+// ---------- Account team (Lead SE, CSM, ATS, DSR, Services Manager) ----------
+
+// The people shown in the Account block and on an opportunity. Account fields are the My Accounts role
+// fields; an opportunity uses its own field with the same label when it has one, else the account's.
+const TEAM_ROLES = ['Lead SE', 'CSM', 'ATS', 'DSR', 'Services Manager'];
+const teamKey = (s) => roleKey(s).replace(/^opportunity /, '').replace(/^opp /, '');
+const teamRead = (f) => (f.isUser && f.relationshipName ? `${f.relationshipName}.Name` : f.name);
+const teamName = (rec, f) => {
+  const v = teamRead(f).split('.').reduce((x, k) => x?.[k], rec);
+  return v == null || v === '' ? null : String(v);
+};
+
+async function teamFields(req) {
+  if (!req.session.teamFields) {
+    const af = await accountFilters(req);
+    const account = Object.fromEntries(TEAM_ROLES.map((r) => [r, (af.mine || []).find((m) => m.role === r) || null]));
+    const describe = await sf(req, 'GET', `/services/data/${API}/sobjects/Opportunity/describe`);
+    const opportunity = Object.fromEntries(TEAM_ROLES.map((r) => {
+      const f = describe.fields.filter((x) => (teamKey(x.label) === teamKey(r) || teamKey(x.name) === teamKey(r)) && (isUserRef(x) || x.type === 'string'))
+        .sort((a, b) => isUserRef(b) - isUserRef(a))[0];
+      return [r, f ? asFilterField(f, r) : null];
+    }));
+    req.session.teamFields = { account, opportunity };
+  }
+  return req.session.teamFields;
+}
+
+api.get('/accounts/:id/team', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const tf = await teamFields(req);
+  const cols = (side) => [...new Set(Object.values(side).filter(Boolean).map(teamRead))];
+  const acctCols = cols(tf.account), oppCols = cols(tf.opportunity);
+  const [acct] = acctCols.length ? await query(req, `SELECT Id, ${acctCols.join(', ')} FROM Account WHERE Id = '${id}'`) : [{}];
+  const opps = oppCols.length ? await query(req, `SELECT Id, ${oppCols.join(', ')} FROM Opportunity WHERE AccountId = '${id}'`) : [];
+  const account = Object.fromEntries(TEAM_ROLES.map((r) => [r, tf.account[r] && acct ? teamName(acct, tf.account[r]) : null]));
+  res.json({
+    roles: TEAM_ROLES,
+    account,
+    accountFields: Object.fromEntries(TEAM_ROLES.map((r) => [r, tf.account[r]?.name || null])),
+    // Per opportunity: its own value where it has the field, else the account's (marked fromAccount).
+    opportunities: Object.fromEntries(opps.map((o) => [o.Id, Object.fromEntries(TEAM_ROLES.map((r) => [r,
+      tf.opportunity[r] ? { name: teamName(o, tf.opportunity[r]) } : { name: account[r], fromAccount: true }]))])),
+    opportunityFields: Object.fromEntries(TEAM_ROLES.map((r) => [r, tf.opportunity[r]?.name || null])),
+  });
+}));
+
 // ---------- Change Rep / Change SE ----------
 
 // Active Salesforce users whose name matches, for the Change Rep and Change SE pickers.

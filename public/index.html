@@ -98,6 +98,10 @@
   .grid input[type=checkbox] { width: auto; }
   details.optional summary { cursor: pointer; color: var(--accent); margin: 12px 0 8px; }
   .form-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 12px; }
+  .opp-row1 { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 10px 14px; }
+  @media (max-width: 1000px) { .opp-row1 { grid-template-columns: repeat(3, minmax(0, 1fr)); } }
+  .team-row { grid-column: 1 / -1; display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 10px 14px; }
+  @media (max-width: 760px) { .team-row { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
   .pick { position: relative; max-width: 360px; }
   .pick-list { position: absolute; z-index: 20; left: 0; right: 0; top: calc(100% + 2px); margin: 0; padding: 4px 0; list-style: none;
     background: var(--panel); border: 1px solid var(--line); border-radius: 6px; box-shadow: 0 6px 18px rgba(0,0,0,.12); max-height: 220px; overflow: auto; }
@@ -773,9 +777,10 @@ async function openAccount(id) {
   detail.replaceChildren(el('div', { class: 'empty' }, 'Loading…'));
   try {
     // The SailPoint BOAT field (shown in the Account block) comes from the account filters.
-    const [detail_] = await Promise.all([api('/accounts/' + id),
+    const [detail_, team] = await Promise.all([api('/accounts/' + id),
+      api(`/accounts/${id}/team`).catch(() => null),
       acctFilters ? null : api('/account-filters').then((f) => { acctFilters = f; }, () => {})]);
-    current = detail_;
+    current = { ...detail_, team };
     renderList();
     renderDetail();
     document.querySelector('main')?.classList.add('has-detail');
@@ -1031,6 +1036,7 @@ function renderAccountForm() {
   const onChange = () => { const dirty = Object.keys(changes(form, a)).length > 0; save.disabled = revert.disabled = !dirty; };
 
   for (const def of ACCOUNT_UI) {
+    if (def[0] === 'Description' && current.team) form.append(teamRow(current.team.roles, (r) => ({ name: current.team.account[r] })));
     form.append(el('label', { class: def[1] === 'textarea' ? 'wide' : null },
       el('span', {}, label(def[0])), field(def, a[def[0]], meta.editable.Account.includes(def[0]), onChange)));
     // SailPoint BOAT (read-only) right after Billing state.
@@ -1175,13 +1181,34 @@ function openOpportunity(id) {
   loadDealSupports(o);
 }
 
+// One full-width row of read-only people: Lead SE, CSM, ATS, DSR, Services Manager.
+// value(role) gives { name, fromAccount }; values taken from the account say so in their tooltip.
+function teamRow(roles, value) {
+  return el('div', { class: 'wide team-row' }, roles.map((r) => {
+    const v = value(r) || {};
+    return el('label', { title: v.fromAccount ? `${r} from the account (the opportunity has no ${r} field)` : null },
+      el('span', {}, r), el('input', { type: 'text', disabled: true, 'aria-label': r, value: v.name || '' }));
+  }));
+}
+
 function renderFocusOpp(o) {
   const sec = document.getElementById('focusOpp');
   const form = el('div', { class: 'grid' });
   const save = el('button', { class: 'primary', disabled: true }, 'Save opportunity');
   const revert = el('button', { disabled: true }, 'Revert');
   const onChange = () => { const dirty = Object.keys(changes(form, o)).length > 0; save.disabled = revert.disabled = !dirty; };
+  // The opportunity's own fields make one row, so the team row below it is the second row.
+  const first = el('div', { class: 'wide opp-row1' });
+  form.append(first);
   for (const def of OPP_FOCUS_UI) {
+    if (def[1] !== 'textarea') {
+      first.append(el('label', {}, el('span', {}, label(def[0])), field(def, o[def[0]], meta.editable.Opportunity.includes(def[0]), onChange)));
+      continue;
+    }
+    if (def[0] === 'Description' && current.team) {
+      const own = current.team.opportunities[o.Id];
+      form.append(teamRow(current.team.roles, (r) => own?.[r] || { name: current.team.account[r], fromAccount: true }));
+    }
     form.append(el('label', { class: def[1] === 'textarea' ? 'wide' : null },
       el('span', {}, label(def[0])), field(def, o[def[0]], meta.editable.Opportunity.includes(def[0]), onChange)));
   }
