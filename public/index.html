@@ -109,7 +109,7 @@
   header nav button { border-color: transparent; background: none; color: var(--muted); }
   header nav .hdr-right button { border-color: var(--line); background: var(--panel); color: var(--ink); }
   header nav button.on { background: var(--accent-soft); color: var(--accent); font-weight: 600; }
-  .dash { --f1: #0b3d7a; --f2: #2a78d6; --f3: #7fb3ec; --f4: #c9dcf2; --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #a3a29c; --grid: #eceef1;
+  .dash { --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a; --s4: #a3a29c; --grid: #eceef1;
     max-width: 1720px; margin: 0 auto; padding: 18px clamp(12px, 2vw, 32px) 48px; height: calc(100vh - var(--chrome)); height: calc(100dvh - var(--chrome)); overflow: auto; }
   .dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 2px; }
   .dash-head h2 { margin: 0; font-size: 20px; }
@@ -1325,7 +1325,7 @@ const FY_START = 1; // month index (0 = January)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fyName = (fy) => 'FY' + String(fy % 100).padStart(2, '0');
 // Forecast categories, bottom of the stack first, with their series colors.
-const FORECAST = [['Commit', 'var(--f1)'], ['Best Case', 'var(--f2)'], ['Pipeline', 'var(--f3)'], ['Omitted', 'var(--f4)']];
+const FORECAST = [['Commit'], ['Best Case'], ['Pipeline'], ['Omitted']];
 
 function fiscal(date) { // 'YYYY-MM-DD' -> { y, m, fy, q }
   const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7)) - 1;
@@ -1469,11 +1469,12 @@ function renderForecastChart(opps, now, today) {
   for (const o of opps) byKey.get(periodKey(view, fiscal(o.CloseDate)))?.push(o);
   const nowKey = periodKey(view, now);
 
-  // Stack by forecast category when the org returns it, else one series.
-  const useCats = opps.some((o) => o.ForecastCategoryName);
-  const cats = useCats ? FORECAST.filter(([c]) => opps.some((o) => o.ForecastCategoryName === c)) : [['Amount', 'var(--f2)']];
-  if (useCats && opps.some((o) => !FORECAST.some(([c]) => c === o.ForecastCategoryName))) cats.push(['Other', 'var(--f4)']);
-  const catOf = (o) => !useCats ? 'Amount' : FORECAST.some(([c]) => c === o.ForecastCategoryName) ? o.ForecastCategoryName : 'Other';
+  // One series in the same blue as the other charts; the tooltip still splits it by forecast category.
+  const cats = [['Amount', 'var(--s1)']];
+  const catOf = () => 'Amount';
+  const byCat = (list) => [...FORECAST.map(([c]) => c), 'Other'].map((c) => [c,
+    sum(list.filter((o) => (FORECAST.some(([f]) => f === o.ForecastCategoryName) ? o.ForecastCategoryName : 'Other') === c))])
+    .filter(([c, v]) => v > 0 && (c !== 'Other' || list.some((o) => o.ForecastCategoryName)));
 
   const seg = el('div', { class: 'seg' }, [['month', 'Month'], ['quarter', 'Quarter'], ['year', 'Year']].map(([v, t]) =>
     el('button', { class: view === v ? 'on' : null, onclick: () => { dash.view = v; dash.pick = null; renderDashboard(); } }, t)));
@@ -1524,7 +1525,7 @@ function renderForecastChart(opps, now, today) {
       renderDashboard();
     });
     hover(hit, () => tipHtml(p.long + (p.key === nowKey ? ' · now' : ''), [
-      ...(cats.length > 1 ? parts.map(([c, color, v]) => [c, money(v), color]) : []),
+      ...(list.some((o) => o.ForecastCategoryName) ? byCat(list).map(([c, v]) => [c, money(v)]) : []),
       ['Total', money(totals[i])], ['Weighted', money(weighted(list))], ['Opportunities', list.length]]));
     g.append(hit);
   });
