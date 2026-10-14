@@ -144,6 +144,9 @@ a text field is matched against your full name. Pick **All accounts** to see eve
 The **SailPoint BOAT** dropdown filters on the Account field labelled "SailPoint BOAT" (set
 `SF_BOAT_FIELD` to its API name if it isn't found).
 
+The **SE** dropdown (All SEs by default) narrows the list to one Account Lead SE. It offers everyone
+who is Lead SE on some account.
+
 ## Lead SE filter
 
 The Deals tab only shows opportunities where you are the **Lead SE**. The app finds the field by

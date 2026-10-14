@@ -409,7 +409,8 @@ function leadSeMatches(req, field, rec) {
 const MY_ACCOUNT_ROLES = ['Account Owner', 'Lead SE', 'Lead SE Manager', 'ATS', 'DSR', 'CSM', 'CSM Manager', 'Services Manager'];
 const roleKey = (s) => String(s).toLowerCase().replace(/__c$/, '').replace(/[_\s]+/g, ' ').trim().replace(/^account /, '');
 const isUserRef = (f) => f.type === 'reference' && (f.referenceTo || []).includes('User');
-const asFilterField = (f, role) => ({ role, name: f.name, label: f.label, type: f.type, isUser: isUserRef(f) });
+const asFilterField = (f, role) => ({ role, name: f.name, label: f.label, type: f.type, isUser: isUserRef(f),
+  relationshipName: f.relationshipName || null });
 
 function findAccountFilters(describe) {
   const fields = describe.fields;
@@ -435,12 +436,16 @@ function findAccountFilters(describe) {
     options: boatF.type === 'boolean' ? [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }]
       : (boatF.picklistValues || []).filter((v) => v.active).map((v) => ({ value: v.value, label: v.label || v.value })),
   };
-  return { mine, missing: MY_ACCOUNT_FIELDS.length ? [] : MY_ACCOUNT_ROLES.filter((r) => !mine.some((m) => m.role === r)), boat };
+  // The SE filter picks one Lead SE: the role field found for Lead SE (else one labelled "Lead SE").
+  const seF = mine.find((m) => m.role === 'Lead SE')
+    || (() => { const f = fields.find((x) => roleKey(x.label) === 'lead se' && (isUserRef(x) || x.type === 'string')); return f && asFilterField(f, 'Lead SE'); })();
+  const se = seF ? { ...seF, options: [] } : null;
+  return { v: 2, mine, missing: MY_ACCOUNT_FIELDS.length ? [] : MY_ACCOUNT_ROLES.filter((r) => !mine.some((m) => m.role === r)), boat, se };
 }
 
 // Looked up once per session (saved for offline use), like the Lead SE fields.
 async function accountFilters(req) {
-  if (!req.session.acctFilters) {
+  if (req.session.acctFilters?.v !== 2) {
     try {
       const describe = await sf(req, 'GET', `/services/data/${API}/sobjects/Account/describe`);
       const found = findAccountFilters(describe);
@@ -450,17 +455,27 @@ async function accountFilters(req) {
           `GROUP BY ${found.boat.name} ORDER BY ${found.boat.name} LIMIT 200`).catch(() => []);
         found.boat.options = rows.map((r) => ({ value: String(r.v), label: String(r.v) }));
       }
+      // The SE choices: everyone who is Lead SE on some account, A–Z.
+      if (found.se) {
+        const se = found.se;
+        const nameCol = se.isUser && se.relationshipName ? `${se.relationshipName}.Name` : null;
+        const rows = await query(req, `SELECT ${se.name} v${nameCol ? `, ${nameCol} n` : ''} FROM Account WHERE ${se.name} != null ` +
+          `GROUP BY ${se.name}${nameCol ? `, ${nameCol}` : ''} LIMIT 500`).catch(() => []);
+        se.options = rows.map((r) => ({ value: String(r.v), label: String(r.n ?? r.v) }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+      }
       req.session.acctFilters = found;
       store.saveSetting(orgOf(req), 'acctFilters', found);
     } catch (err) {
       if (!(err.status >= 502)) throw err;
-      return store.getSetting(orgOf(req), 'acctFilters') || { offline: true, mine: [], missing: [], boat: null };
+      return store.getSetting(orgOf(req), 'acctFilters') || { offline: true, mine: [], missing: [], boat: null, se: null };
     }
   }
   return req.session.acctFilters;
 }
 
-const filterFieldNames = (af) => [...(af.mine || []).map((f) => f.name), ...(af.boat ? [af.boat.name] : [])];
+const filterFieldNames = (af) => [...(af.mine || []).map((f) => f.name), ...(af.boat ? [af.boat.name] : []),
+  ...(af.se ? [af.se.name] : [])];
 const soqlStr = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
 const BLANK = '__blank__';
 
@@ -555,6 +570,10 @@ api.get('/accounts', wrap(async (req, res) => {
   const boatValue = String(req.query.boat || '').slice(0, 255);
   const boat = boatValue && af.boat ? { field: af.boat, value: boatValue } : null;
   if (boat) where.push(boatSoql(boat.field, boat.value));
+  // SE filter: one Lead SE (a User Id for a lookup, else the name the field holds).
+  const seValue = String(req.query.se || '').slice(0, 255);
+  const se = seValue && af.se ? { field: af.se, value: af.se.isUser ? sfId(seValue) : seValue } : null;
+  if (se) where.push(`${se.field.name} = ${soqlStr(se.value)}`);
   // Read the filter fields too, so the saved copy can apply the same filters offline.
   const fields = [...new Set(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate',
     ...filterFieldNames(af)])];
@@ -571,7 +590,10 @@ api.get('/accounts', wrap(async (req, res) => {
       ownerId: owner,
       recent,
       mine: mine ? af.mine.map((f) => ({ field: f.name, value: f.isUser ? req.session.sf.user.id : String(req.session.sf.user.name) })) : null,
-      boat: boat && { field: boat.field.name, value: boat.value, type: boat.field.type, blank: boat.value === BLANK },
+      match: [
+        boat && { field: boat.field.name, value: boat.value, type: boat.field.type, blank: boat.value === BLANK },
+        se && { field: se.field.name, value: se.value },
+      ].filter(Boolean),
     });
     return { data: saved.records, syncedAt: saved.syncedAt };
   }));
@@ -581,7 +603,8 @@ api.get('/accounts', wrap(async (req, res) => {
 api.get('/account-filters', wrap(async (req, res) => {
   const af = await accountFilters(req);
   res.json({ mine: af.mine.map(({ role, name, label }) => ({ role, name, label })), missing: af.missing,
-    boat: af.boat && { name: af.boat.name, label: af.boat.label, options: af.boat.options }, offline: !!af.offline });
+    boat: af.boat && { name: af.boat.name, label: af.boat.label, options: af.boat.options },
+    se: af.se && { name: af.se.name, label: af.se.label, options: af.se.options }, offline: !!af.offline });
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {

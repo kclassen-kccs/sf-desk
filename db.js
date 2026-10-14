@@ -151,11 +151,11 @@ export function openDb(file) {
 
     // `mine`, when given, keeps only accounts where any of those { field, value } pairs holds (the
     // My Accounts filter); field names come from the org's describe, and are compared like SOQL does
-    // (case-insensitively). `boat`, when given, keeps accounts whose { field } has that value (one of
-    // the values for a multi-select picklist), or none with `blank`.
+    // (case-insensitively). Each of `match` (the SailPoint BOAT and SE filters) keeps accounts whose
+    // { field } has that value (one of the values for a multi-select picklist), or none with `blank`.
     // `ownerId`, when given, keeps only accounts owned by that user (the sales rep filter).
     // Sorted A–Z by name, or most recently modified first with `recent`.
-    listAccounts(orgId, { q = '', ownerId = '', recent = false, mine = null, boat = null, limit = 200 } = {}) {
+    listAccounts(orgId, { q = '', ownerId = '', recent = false, mine = null, match = [], limit = 200 } = {}) {
       const params = { orgId, q, ownerId, limit };
       const where = [];
       if (mine) {
@@ -165,14 +165,15 @@ export function openDb(file) {
           return `lower(json_extract(a.data, @minePath${i})) = lower(@mineValue${i})`;
         }).join(' OR ') : '0') + ')');
       }
-      if (boat) {
-        params.boatPath = '$.' + boat.field;
-        params.boatValue = boat.type === 'boolean' ? (boat.value === 'true' ? 1 : 0) : boat.value;
-        where.push(boat.blank ? `coalesce(json_extract(a.data, @boatPath), '') = ''`
-          : boat.type === 'multipicklist'
-            ? `instr(';' || lower(json_extract(a.data, @boatPath)) || ';', ';' || lower(@boatValue) || ';') > 0`
-            : `lower(json_extract(a.data, @boatPath)) = lower(@boatValue)`);
-      }
+      match.forEach((m, i) => {
+        const path = '@matchPath' + i, value = '@matchValue' + i;
+        params['matchPath' + i] = '$.' + m.field;
+        params['matchValue' + i] = m.type === 'boolean' ? (m.value === 'true' ? 1 : 0) : m.value;
+        where.push(m.blank ? `coalesce(json_extract(a.data, ${path}), '') = ''`
+          : m.type === 'multipicklist'
+            ? `instr(';' || lower(json_extract(a.data, ${path})) || ';', ';' || lower(${value}) || ';') > 0`
+            : `lower(json_extract(a.data, ${path})) = lower(${value})`);
+      });
       const rows = db.prepare(`
         SELECT data, synced_at FROM accounts a
         WHERE org_id = @orgId

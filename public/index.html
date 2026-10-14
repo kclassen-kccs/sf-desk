@@ -347,7 +347,7 @@ let me = null, meta = null, current = null, accounts = [], leadSeOnly = true, ds
 // Opportunities: closed ones are hidden unless showClosed is ticked.
 let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
 // Account list: My Accounts (I'm in one of the account's role fields) or all, and the SailPoint BOAT filter.
-let myAcctsOnly = true, boatFilter = '', acctFilters = null;
+let myAcctsOnly = true, boatFilter = '', seFilter = '', acctFilters = null;
 const acctOwners = new Map(); // account Id -> { id, name } of its owner, for every account loaded this session
 
 // Hidden records live in the local database (never in Salesforce). Lists leave them out
@@ -509,6 +509,7 @@ function showMain() {
   mine.value = myAcctsOnly ? 'mine' : 'all';
   const boat = el('select', { 'aria-label': 'SailPoint BOAT', id: 'boatSelect', disabled: true },
     el('option', { value: '' }, 'SailPoint BOAT: All'));
+  const se = el('select', { 'aria-label': 'SE', id: 'seSelect', disabled: true }, el('option', { value: '' }, 'All SEs'));
   const rep = el('select', { 'aria-label': 'Sales rep', id: 'repSelect' });
   const group = el('input', { type: 'checkbox', checked: groupByRep });
   const sort = el('select', { 'aria-label': 'Sort accounts' },
@@ -521,12 +522,13 @@ function showMain() {
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(loadAccounts, 300); });
   mine.addEventListener('change', () => { myAcctsOnly = mine.value === 'mine'; loadAccounts(); });
   boat.addEventListener('change', () => { boatFilter = boat.value; loadAccounts(); });
+  se.addEventListener('change', () => { seFilter = se.value; loadAccounts(); });
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
   showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; renderList(); });
 
   app.replaceChildren(el('main', {},
     el('div', { id: 'list' },
-      el('div', { class: 'controls' }, search, mine, boat, rep, sort,
+      el('div', { class: 'controls' }, search, mine, boat, se, rep, sort,
         el('label', {}, group, 'Group by sales rep'),
         el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden')),
         el('div', { class: 'selbar', id: 'acctSelbar', hidden: true })),
@@ -538,6 +540,7 @@ function showMain() {
   async function loadAccounts() {
     const params = new URLSearchParams({ q: search.value.trim(), mine: myAcctsOnly ? '1' : '0' });
     if (boatFilter) params.set('boat', boatFilter);
+    if (seFilter) params.set('se', seFilter);
     if (repFilter) params.set('owner', repFilter);
     if (sortRecent) params.set('sort', 'recent');
     try {
@@ -558,7 +561,18 @@ async function renderAcctFilters() {
   }
   const boat = document.getElementById('boatSelect');
   const mine = document.getElementById('mineSelect');
-  if (!boat || !mine) return;
+  const se = document.getElementById('seSelect');
+  if (!boat || !mine || !se) return;
+  const s = acctFilters.se;
+  if (s) {
+    se.title = `${s.label} (${s.name})`;
+    se.replaceChildren(el('option', { value: '' }, 'All SEs'), ...s.options.map((o) => el('option', { value: o.value }, o.label)));
+    if (seFilter && !s.options.some((o) => o.value === seFilter)) seFilter = '';
+    se.value = seFilter;
+    se.disabled = false;
+  } else {
+    se.title = 'No "Lead SE" field found on Account.';
+  }
   const roles = acctFilters.mine.map((f) => f.role === f.label ? f.label : `${f.role} (${f.label})`);
   mine.title = `My Accounts: accounts where you're ${roles.join(', ') || '…'}` +
     (acctFilters.missing.length ? `\nNot found on Account: ${acctFilters.missing.join(', ')}` : '');
