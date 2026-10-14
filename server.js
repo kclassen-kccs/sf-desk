@@ -63,6 +63,10 @@ const DS_TYPES = new Set(['string', 'textarea', 'email', 'phone', 'url', 'pickli
 // The "Lead SE" field used for the "only where I'm Lead SE" filter. Set SF_LEAD_SE_FIELD to its API
 // name (e.g. Lead_SE__c) if auto-detection by its label "Lead SE" doesn't find it.
 const LEAD_SE_FIELD = process.env.SF_LEAD_SE_FIELD || '';
+// The Account fields behind the "My Accounts" filter, comma-separated API names. Default: found by label
+// (see MY_ACCOUNT_ROLES). SF_BOAT_FIELD names the "SailPoint BOAT" field if its label doesn't find it.
+const MY_ACCOUNT_FIELDS = (process.env.SF_MY_ACCOUNT_FIELDS || '').split(',').map((f) => f.trim()).filter(Boolean);
+const BOAT_FIELD = process.env.SF_BOAT_FIELD || '';
 
 class HttpError extends Error {
   constructor(status, message) { super(message); this.status = status; }
@@ -398,6 +402,92 @@ function leadSeMatches(req, field, rec) {
   return v != null && String(v).toLowerCase() === leadSeValue(req, field).toLowerCase();
 }
 
+// ---------- My Accounts and SailPoint BOAT filters ----------
+
+// An account is "mine" when I'm in any of these roles on it. Each is the Account field with that label
+// (an "Account " prefix is optional either way) or API name; Account Owner is always OwnerId.
+const MY_ACCOUNT_ROLES = ['Account Owner', 'Lead SE', 'Lead SE Manager', 'ATS', 'DSR', 'CSM', 'CSM Manager', 'Services Manager'];
+const roleKey = (s) => String(s).toLowerCase().replace(/__c$/, '').replace(/[_\s]+/g, ' ').trim().replace(/^account /, '');
+const isUserRef = (f) => f.type === 'reference' && (f.referenceTo || []).includes('User');
+const asFilterField = (f, role) => ({ role, name: f.name, label: f.label, type: f.type, isUser: isUserRef(f),
+  relationshipName: f.relationshipName || null });
+
+function findAccountFilters(describe) {
+  const fields = describe.fields;
+  let mine;
+  if (MY_ACCOUNT_FIELDS.length) {
+    mine = MY_ACCOUNT_FIELDS.map((n) => fields.find((f) => f.name.toLowerCase() === n.toLowerCase()))
+      .filter(Boolean).map((f) => asFilterField(f, f.label));
+  } else {
+    mine = [];
+    for (const role of MY_ACCOUNT_ROLES) {
+      const key = roleKey(role);
+      // A User lookup beats a text field holding a name; other lookups (e.g. to Contact) can't be me.
+      const f = key === 'owner' ? fields.find((x) => x.name === 'OwnerId')
+        : fields.filter((x) => (roleKey(x.label) === key || roleKey(x.name) === key) && (isUserRef(x) || x.type === 'string'))
+          .sort((a, b) => isUserRef(b) - isUserRef(a))[0];
+      if (f && !mine.some((m) => m.name === f.name)) mine.push(asFilterField(f, role));
+    }
+  }
+  const boatF = fields.find((f) => (BOAT_FIELD ? f.name.toLowerCase() === BOAT_FIELD.toLowerCase()
+    : /^(sailpoint\s*)?boat$/i.test(f.label.trim()) || /^(sailpoint_?)?boat(__c)?$/i.test(f.name)));
+  const boat = boatF && {
+    ...asFilterField(boatF, 'SailPoint BOAT'),
+    options: boatF.type === 'boolean' ? [{ value: 'true', label: 'Yes' }, { value: 'false', label: 'No' }]
+      : (boatF.picklistValues || []).filter((v) => v.active).map((v) => ({ value: v.value, label: v.label || v.value })),
+  };
+  // The SE filter picks one Lead SE: the role field found for Lead SE (else one labelled "Lead SE").
+  const seF = mine.find((m) => m.role === 'Lead SE')
+    || (() => { const f = fields.find((x) => roleKey(x.label) === 'lead se' && (isUserRef(x) || x.type === 'string')); return f && asFilterField(f, 'Lead SE'); })();
+  const se = seF ? { ...seF, options: [] } : null;
+  return { v: 2, mine, missing: MY_ACCOUNT_FIELDS.length ? [] : MY_ACCOUNT_ROLES.filter((r) => !mine.some((m) => m.role === r)), boat, se };
+}
+
+// Looked up once per session (saved for offline use), like the Lead SE fields.
+async function accountFilters(req) {
+  if (req.session.acctFilters?.v !== 2) {
+    try {
+      const describe = await sf(req, 'GET', `/services/data/${API}/sobjects/Account/describe`);
+      const found = findAccountFilters(describe);
+      // A text BOAT field has no picklist; offer the values accounts actually have.
+      if (found.boat && !found.boat.options.length && found.boat.type !== 'textarea') {
+        const rows = await query(req, `SELECT ${found.boat.name} v FROM Account WHERE ${found.boat.name} != null ` +
+          `GROUP BY ${found.boat.name} ORDER BY ${found.boat.name} LIMIT 200`).catch(() => []);
+        found.boat.options = rows.map((r) => ({ value: String(r.v), label: String(r.v) }));
+      }
+      // The SE choices: everyone who is Lead SE on some account, A–Z.
+      if (found.se) {
+        const se = found.se;
+        const nameCol = se.isUser && se.relationshipName ? `${se.relationshipName}.Name` : null;
+        const rows = await query(req, `SELECT ${se.name} v${nameCol ? `, ${nameCol} n` : ''} FROM Account WHERE ${se.name} != null ` +
+          `GROUP BY ${se.name}${nameCol ? `, ${nameCol}` : ''} LIMIT 500`).catch(() => []);
+        se.options = rows.map((r) => ({ value: String(r.v), label: String(r.n ?? r.v) }))
+          .sort((a, b) => a.label.localeCompare(b.label));
+      }
+      req.session.acctFilters = found;
+      store.saveSetting(orgOf(req), 'acctFilters', found);
+    } catch (err) {
+      if (!(err.status >= 502)) throw err;
+      return store.getSetting(orgOf(req), 'acctFilters') || { offline: true, mine: [], missing: [], boat: null, se: null };
+    }
+  }
+  return req.session.acctFilters;
+}
+
+const filterFieldNames = (af) => [...(af.mine || []).map((f) => f.name), ...(af.boat ? [af.boat.name] : []),
+  ...(af.se ? [af.se.name] : [])];
+const soqlStr = (v) => `'${String(v).replace(/\\/g, '\\\\').replace(/'/g, "\\'")}'`;
+const BLANK = '__blank__';
+
+// SOQL condition for a BOAT choice: a value, or BLANK for accounts without one.
+function boatSoql(f, value) {
+  if (value === BLANK) return `${f.name} = null`;
+  if (f.type === 'boolean') return `${f.name} = ${value === 'true'}`;
+  if (f.type === 'multipicklist') return `${f.name} INCLUDES (${soqlStr(value)})`;
+  if (['double', 'currency', 'percent', 'int'].includes(f.type) && /^-?\d+(\.\d+)?$/.test(value)) return `${f.name} = ${value}`;
+  return `${f.name} = ${soqlStr(value)}`;
+}
+
 // ---------- JSON API used by the page ----------
 
 const api = express.Router();
@@ -469,48 +559,88 @@ api.get('/accounts', wrap(async (req, res) => {
   if (owner) where.push(`OwnerId = '${owner}'`);
   // A–Z by name unless sort=recent asks for most recently modified first.
   const recent = req.query.sort === 'recent';
-  // Read the Lead SE fields too, so the saved copy can apply the same filter offline.
-  const lse = req.query.leadse === '1' ? await leadSeFields(req) : null;
-  const fields = withField(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate'],
-    (await knownLeadSeFields(req)).Account);
-  const soql = (extra = []) => {
-    const w = [...where, ...extra];
-    return `SELECT ${fields.join(', ')} ` +
-      `FROM Account ${w.length ? 'WHERE ' + w.join(' AND ') : ''} ORDER BY ${recent ? 'LastModifiedDate DESC' : 'Name ASC'} LIMIT 200`;
-  };
+  const af = await accountFilters(req);
+  // My Accounts: I'm in any of the account's role fields.
+  const mine = req.query.mine === '1';
+  if (mine) {
+    if (af.offline) throw new HttpError(503, "Can't reach Salesforce to find the My Accounts fields. Pick All accounts to browse your saved copy.");
+    if (!af.mine.length) throw new HttpError(400, 'None of the My Accounts fields were found on Account. Set SF_MY_ACCOUNT_FIELDS in .env to their API names and restart.');
+    where.push(`(${af.mine.map((f) => `${f.name} = ${f.isUser ? `'${sfId(req.session.sf.user.id)}'` : soqlStr(req.session.sf.user.name)}`).join(' OR ')})`);
+  }
+  const boatValue = String(req.query.boat || '').slice(0, 255);
+  const boat = boatValue && af.boat ? { field: af.boat, value: boatValue } : null;
+  if (boat) where.push(boatSoql(boat.field, boat.value));
+  // SE filter: one Lead SE (a User Id for a lookup, else the name the field holds).
+  const seValue = String(req.query.se || '').slice(0, 255);
+  const se = seValue && af.se ? { field: af.se, value: af.se.isUser ? sfId(seValue) : seValue } : null;
+  if (se) where.push(`${se.field.name} = ${soqlStr(se.value)}`);
+  // Read the filter fields too, so the saved copy can apply the same filters offline.
+  const fields = [...new Set(['Id', 'Name', 'Type', 'Industry', 'BillingCity', 'BillingState', 'OwnerId', 'Owner.Name', 'LastModifiedDate',
+    ...filterFieldNames(af)])];
+  const soql = `SELECT ${fields.join(', ')} ` +
+    `FROM Account ${where.length ? 'WHERE ' + where.join(' AND ') : ''} ORDER BY ${recent ? 'LastModifiedDate DESC' : 'Name ASC'} LIMIT 200`;
 
   res.json(await withCacheFallback(req, res, async () => {
-    let accounts;
-    if (!lse) {
-      accounts = await query(req, soql());
-    } else {
-      // An account is "mine" if I'm its Lead SE, or Lead SE on any of its opportunities.
-      // SOQL can't OR a sub-select, so run one query per field and merge.
-      const queries = [];
-      if (lse.Account) queries.push(query(req, soql([leadSeIsMe(req, lse.Account)])));
-      if (lse.Opportunity) {
-        queries.push(query(req, soql([`Id IN (SELECT AccountId FROM Opportunity WHERE ${leadSeIsMe(req, lse.Opportunity)})`])));
-      }
-      const byId = new Map();
-      for (const rec of (await Promise.all(queries)).flat()) byId.set(rec.Id, rec);
-      accounts = [...byId.values()]
-        .sort(recent
-          ? (a, b) => String(b.LastModifiedDate).localeCompare(String(a.LastModifiedDate))
-          : (a, b) => String(a.Name).localeCompare(String(b.Name)))
-        .slice(0, 200);
-    }
+    const accounts = await query(req, soql);
     store.saveAccounts(orgOf(req), accounts);
     return accounts;
   }, () => {
-    const side = (f) => f && { field: f.name, value: leadSeValue(req, f) };
     const saved = store.listAccounts(orgOf(req), {
       q,
       ownerId: owner,
       recent,
-      leadSe: lse && { account: side(lse.Account), opportunity: side(lse.Opportunity) },
+      mine: mine ? af.mine.map((f) => ({ field: f.name, value: f.isUser ? req.session.sf.user.id : String(req.session.sf.user.name) })) : null,
+      match: [
+        boat && { field: boat.field.name, value: boat.value, type: boat.field.type, blank: boat.value === BLANK },
+        se && { field: se.field.name, value: se.value },
+      ].filter(Boolean),
     });
     return { data: saved.records, syncedAt: saved.syncedAt };
   }));
+}));
+
+// The SEs and sales reps (account owners) with accounts in one SailPoint BOAT, so the page can narrow
+// those dropdowns to that BOAT.
+api.get('/account-filters/people', wrap(async (req, res) => {
+  const af = await accountFilters(req);
+  const value = String(req.query.boat || '').slice(0, 255);
+  if (!af.boat || !value) throw new HttpError(400, 'Pick a SailPoint BOAT');
+  const where = boatSoql(af.boat, value);
+  const byLabel = (a, b) => a.label.localeCompare(b.label);
+  const seNames = new Map((af.se?.options || []).map((o) => [o.value, o.label]));
+  res.json(await withCacheFallback(req, res, async () => {
+    const se = af.se;
+    const seName = se?.isUser && se.relationshipName ? `${se.relationshipName}.Name` : null;
+    const [ses, reps] = await Promise.all([
+      se ? query(req, `SELECT ${se.name} v${seName ? `, ${seName} n` : ''} FROM Account WHERE ${where} AND ${se.name} != null ` +
+        `GROUP BY ${se.name}${seName ? `, ${seName}` : ''} LIMIT 500`) : [],
+      query(req, `SELECT OwnerId v, Owner.Name n FROM Account WHERE ${where} GROUP BY OwnerId, Owner.Name LIMIT 2000`),
+    ]);
+    return {
+      se: ses.map((r) => ({ value: String(r.v), label: String(r.n ?? seNames.get(String(r.v)) ?? r.v) })).sort(byLabel),
+      reps: reps.map((r) => ({ value: String(r.v), label: String(r.n ?? r.v) })).sort(byLabel),
+    };
+  }, () => {
+    // Offline: the people on the saved accounts in that BOAT.
+    const saved = store.listAccounts(orgOf(req), {
+      match: [{ field: af.boat.name, value, type: af.boat.type, blank: value === BLANK }], limit: 100000 });
+    const se = new Map(), reps = new Map();
+    for (const a of saved.records) {
+      const v = af.se && a[af.se.name];
+      if (v) se.set(String(v), seNames.get(String(v)) || String(v));
+      if (a.OwnerId) reps.set(a.OwnerId, a.Owner?.Name || a.OwnerId);
+    }
+    const list = (m) => [...m].map(([v, label]) => ({ value: v, label })).sort(byLabel);
+    return { data: { se: list(se), reps: list(reps) }, syncedAt: saved.syncedAt };
+  }));
+}));
+
+// Which fields the Accounts filters use, and the SailPoint BOAT choices, for the page.
+api.get('/account-filters', wrap(async (req, res) => {
+  const af = await accountFilters(req);
+  res.json({ mine: af.mine.map(({ role, name, label }) => ({ role, name, label })), missing: af.missing,
+    boat: af.boat && { name: af.boat.name, label: af.boat.label, options: af.boat.options },
+    se: af.se && { name: af.se.name, label: af.se.label, options: af.se.options }, offline: !!af.offline });
 }));
 
 api.get('/accounts/:id', wrap(async (req, res) => {
@@ -523,7 +653,8 @@ api.get('/accounts/:id', wrap(async (req, res) => {
     ? { ...detail, opportunities: detail.opportunities.filter((o) => leadSeMatches(req, lse.Opportunity, o)) }
     : detail);
   res.json(await withCacheFallback(req, res, async () => {
-    const [account] = await query(req, `SELECT ${accountRead(known).join(', ')} FROM Account WHERE Id = '${id}'`);
+    const fields = [...new Set([...accountRead(known), ...filterFieldNames(await accountFilters(req))])];
+    const [account] = await query(req, `SELECT ${fields.join(', ')} FROM Account WHERE Id = '${id}'`);
     if (!account) throw new HttpError(404, 'Account not found');
     const opportunities = await query(req,
       `SELECT ${oppRead(known).join(', ')} FROM Opportunity WHERE AccountId = '${id}' ORDER BY IsClosed ASC, CloseDate ASC`);
@@ -536,7 +667,8 @@ api.get('/accounts/:id', wrap(async (req, res) => {
 }));
 
 api.patch('/accounts/:id', wrap(async (req, res) => {
-  const rec = await updateRecord(req, 'Account', ACCOUNT_FIELDS, accountRead(await knownLeadSeFields(req)));
+  const rec = await updateRecord(req, 'Account', ACCOUNT_FIELDS,
+    [...new Set([...accountRead(await knownLeadSeFields(req)), ...filterFieldNames(await accountFilters(req))])]);
   store.saveAccounts(orgOf(req), [rec], { replace: true });
   res.json(rec);
 }));
@@ -1631,6 +1763,21 @@ api.get('/accounts/:id/deal-supports', wrap(async (req, res) => {
 // Hidden records: local to this machine, never written to Salesforce. The page filters its
 // lists with these ids and can show them again with "Show hidden".
 api.get('/hidden', (req, res) => res.json(store.listHidden(orgOf(req))));
+
+// The Accounts tab's filters (My Accounts, SailPoint BOAT, SE, sales rep, sort, grouping), kept in the
+// local database so they come back when SF Desk restarts.
+const ACCT_PREF_KEYS = { mine: 'boolean', boat: 'string', se: 'string', rep: 'string', repName: 'string',
+  sortRecent: 'boolean', groupByRep: 'boolean', showHidden: 'boolean' };
+api.get('/prefs/accounts', (req, res) => res.json(store.getSetting(orgOf(req), 'acctPrefs') || {}));
+api.put('/prefs/accounts', (req, res) => {
+  const prefs = {};
+  for (const [k, type] of Object.entries(ACCT_PREF_KEYS)) {
+    const v = req.body?.[k];
+    if (typeof v === type) prefs[k] = type === 'string' ? v.slice(0, 255) : v;
+  }
+  store.saveSetting(orgOf(req), 'acctPrefs', prefs);
+  res.json(prefs);
+});
 
 function hiddenIds(body) {
   const ids = Array.isArray(body?.ids) ? body.ids : [];

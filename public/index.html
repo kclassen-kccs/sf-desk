@@ -347,6 +347,27 @@ let me = null, meta = null, current = null, accounts = [], leadSeOnly = true, ds
 // Account list: filter to one sales rep (account owner) and/or group the list by rep.
 // Opportunities: closed ones are hidden unless showClosed is ticked.
 let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
+// Account list: My Accounts (I'm in one of the account's role fields) or all, and the SailPoint BOAT filter.
+let myAcctsOnly = true, boatFilter = '', seFilter = '', acctFilters = null;
+// While a BOAT is picked: the SEs and sales reps with accounts in it ({ se, reps }), which the dropdowns then list.
+let boatPeople = null;
+let savedRepName = ''; // the picked rep's name from the saved filters, until accounts load
+
+// The Accounts filters are saved in SF Desk's local database, so they survive a restart.
+async function loadAcctPrefs() {
+  try {
+    const p = await api('/prefs/accounts');
+    if (typeof p.mine === 'boolean') myAcctsOnly = p.mine;
+    boatFilter = p.boat || ''; seFilter = p.se || ''; repFilter = p.rep || ''; savedRepName = p.repName || '';
+    sortRecent = !!p.sortRecent; groupByRep = !!p.groupByRep; showHiddenAccts = !!p.showHidden;
+  } catch { /* first run or offline: keep the defaults */ }
+}
+function saveAcctPrefs() {
+  const repName = repFilter ? ([...acctOwners.values()].find((r) => r.id === repFilter)?.name
+    || boatPeople?.reps.find((r) => r.value === repFilter)?.label || savedRepName) : '';
+  api('/prefs/accounts', { method: 'PUT', body: { mine: myAcctsOnly, boat: boatFilter, se: seFilter, rep: repFilter, repName,
+    sortRecent, groupByRep, showHidden: showHiddenAccts } }).catch(() => {});
+}
 const acctOwners = new Map(); // account Id -> { id, name } of its owner, for every account loaded this session
 
 // Hidden records live in the local database (never in Salesforce). Lists leave them out
@@ -503,29 +524,36 @@ function showMain() {
   current = null;
   const app = document.getElementById('app');
   const search = el('input', { type: 'search', placeholder: 'Search accounts…' });
-  const mine = el('input', { type: 'checkbox', checked: leadSeOnly });
+  const mine = el('select', { 'aria-label': 'Which accounts', id: 'mineSelect' },
+    el('option', { value: 'mine' }, 'My Accounts'), el('option', { value: 'all' }, 'All accounts'));
+  mine.value = myAcctsOnly ? 'mine' : 'all';
+  const boat = el('select', { 'aria-label': 'SailPoint BOAT', id: 'boatSelect', disabled: true },
+    el('option', { value: '' }, 'SailPoint BOAT: All'));
+  const se = el('select', { 'aria-label': 'SE', id: 'seSelect', disabled: true }, el('option', { value: '' }, 'All SEs'));
   const rep = el('select', { 'aria-label': 'Sales rep', id: 'repSelect' });
   const group = el('input', { type: 'checkbox', checked: groupByRep });
   const sort = el('select', { 'aria-label': 'Sort accounts' },
     el('option', { value: 'name' }, 'Sort: Name A–Z'), el('option', { value: 'recent' }, 'Sort: Recently modified'));
   sort.value = sortRecent ? 'recent' : 'name';
-  sort.addEventListener('change', () => { sortRecent = sort.value === 'recent'; loadAccounts(); });
+  sort.addEventListener('change', () => { sortRecent = sort.value === 'recent'; saveAcctPrefs(); loadAccounts(); });
   let timer;
-  rep.addEventListener('change', () => { repFilter = rep.value; loadAccounts(); });
-  group.addEventListener('change', () => { groupByRep = group.checked; renderList(); });
+  rep.addEventListener('change', () => { repFilter = rep.value; saveAcctPrefs(); loadAccounts(); });
+  group.addEventListener('change', () => { groupByRep = group.checked; saveAcctPrefs(); renderList(); });
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(loadAccounts, 300); });
-  mine.addEventListener('change', () => {
-    leadSeOnly = mine.checked;
+  mine.addEventListener('change', () => { myAcctsOnly = mine.value === 'mine'; saveAcctPrefs(); loadAccounts(); });
+  boat.addEventListener('change', async () => {
+    boatFilter = boat.value;
+    await loadBoatPeople();
+    saveAcctPrefs();
     loadAccounts();
-    if (current) openAccount(current.account.Id);
   });
+  se.addEventListener('change', () => { seFilter = se.value; saveAcctPrefs(); loadAccounts(); });
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
-  showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; renderList(); });
+  showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; saveAcctPrefs(); renderList(); });
 
   app.replaceChildren(el('main', {},
     el('div', { id: 'list' },
-      el('div', { class: 'controls' }, search, rep, sort,
-        el('label', {}, mine, "Only where I'm Lead SE"),
+      el('div', { class: 'controls' }, search, mine, boat, se, rep, sort,
         el('label', {}, group, 'Group by sales rep'),
         el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden')),
         el('div', { class: 'selbar', id: 'acctSelbar', hidden: true })),
@@ -535,7 +563,9 @@ function showMain() {
   ));
 
   async function loadAccounts() {
-    const params = new URLSearchParams({ q: search.value.trim(), leadse: leadSeOnly ? '1' : '0' });
+    const params = new URLSearchParams({ q: search.value.trim(), mine: myAcctsOnly ? '1' : '0' });
+    if (boatFilter) params.set('boat', boatFilter);
+    if (seFilter) params.set('se', seFilter);
     if (repFilter) params.set('owner', repFilter);
     if (sortRecent) params.set('sort', 'recent');
     try {
@@ -545,7 +575,63 @@ function showMain() {
     } catch (e) { toast(e.message, 'err'); }
   }
   renderReps();
+  renderAcctFilters();
   loadAccounts();
+}
+
+// SE choices: everyone who is Lead SE on some account, or only those with accounts in the picked BOAT.
+function renderSes() {
+  const select = document.getElementById('seSelect');
+  const s = acctFilters?.se;
+  if (!select || !acctFilters) return;
+  if (!s) { select.title = 'No "Lead SE" field found on Account.'; return; }
+  const options = boatPeople ? boatPeople.se : s.options;
+  select.title = `${s.label} (${s.name})`;
+  select.replaceChildren(el('option', { value: '' }, 'All SEs'), ...options.map((o) => el('option', { value: o.value }, o.label)));
+  if (seFilter && !options.some((o) => o.value === seFilter)) seFilter = '';
+  select.value = seFilter;
+  select.disabled = false;
+}
+
+// Look up who has accounts in the picked BOAT (or forget it when the BOAT is cleared), then redraw
+// the SE and sales rep dropdowns; a picked SE or rep with no accounts there goes back to All.
+async function loadBoatPeople() {
+  boatPeople = null;
+  if (boatFilter) {
+    try { boatPeople = await api('/account-filters/people?' + new URLSearchParams({ boat: boatFilter })); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+  renderSes();
+  renderReps();
+}
+
+// Fill the SailPoint BOAT choices and say which fields My Accounts checks, once per session.
+async function renderAcctFilters() {
+  if (!acctFilters) {
+    try { acctFilters = await api('/account-filters'); } catch (e) { return toast(e.message, 'err'); }
+  }
+  const boat = document.getElementById('boatSelect');
+  const mine = document.getElementById('mineSelect');
+  const se = document.getElementById('seSelect');
+  if (!boat || !mine || !se) return;
+  renderSes();
+  const roles = acctFilters.mine.map((f) => f.role === f.label ? f.label : `${f.role} (${f.label})`);
+  mine.title = `My Accounts: accounts where you're ${roles.join(', ') || '…'}` +
+    (acctFilters.missing.length ? `\nNot found on Account: ${acctFilters.missing.join(', ')}` : '');
+  const b = acctFilters.boat;
+  if (!b) {
+    boat.title = 'No "SailPoint BOAT" field found on Account. Set SF_BOAT_FIELD in .env to its API name.';
+    boat.firstChild.textContent = 'SailPoint BOAT: not found';
+    return;
+  }
+  boat.title = `${b.label} (${b.name})`;
+  boat.replaceChildren(el('option', { value: '' }, 'SailPoint BOAT: All'),
+    ...b.options.map((o) => el('option', { value: o.value }, `SailPoint BOAT: ${o.label}`)),
+    el('option', { value: '__blank__' }, 'SailPoint BOAT: (blank)'));
+  if (boatFilter && ![...boat.options].some((o) => o.value === boatFilter)) boatFilter = '';
+  boat.value = boatFilter;
+  boat.disabled = false;
+  if (boatFilter && !boatPeople) loadBoatPeople();
 }
 
 function renderList() {
@@ -593,8 +679,14 @@ function renderReps() {
   const select = document.getElementById('repSelect');
   if (!select) return;
   const byId = new Map();
-  for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
-  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || repFilter);
+  if (boatPeople) {
+    // A BOAT is picked: only reps with accounts in it, and drop a rep who has none there.
+    for (const r of boatPeople.reps) byId.set(r.value, r.label);
+    if (repFilter && !byId.has(repFilter)) repFilter = '';
+  } else {
+    for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
+  }
+  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || savedRepName || repFilter);
   select.replaceChildren(el('option', { value: '' }, 'All sales reps'),
     ...[...byId].sort((x, y) => x[1].localeCompare(y[1])).map(([id, name]) => el('option', { value: id }, name)));
   select.value = repFilter;
@@ -632,7 +724,7 @@ async function openAccount(id) {
   const detail = document.getElementById('detail');
   detail.replaceChildren(el('div', { class: 'empty' }, 'Loading…'));
   try {
-    current = await api('/accounts/' + id + (leadSeOnly ? '?leadse=1' : ''));
+    current = await api('/accounts/' + id);
     renderList();
     renderDetail();
     document.querySelector('main')?.classList.add('has-detail');
@@ -2648,6 +2740,7 @@ function renderOutlookPane(e, reload) {
     document.getElementById('logout').hidden = false;
     meta = await api('/meta');
     await loadHidden();
+    await loadAcctPrefs();
     showDashboard();
   } catch (e) {
     if (e.status !== 401) toast(e.message, 'err');
