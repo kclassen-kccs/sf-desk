@@ -39,6 +39,11 @@
   #list .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
   #list .controls input[type=checkbox] { width: auto; }
   #accounts { overflow: auto; flex: 1; }
+  .pager { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 10px;
+    color: var(--muted); font-size: 13px; border-bottom: 1px solid var(--line); }
+  .pager button { width: auto; padding: 4px 10px; white-space: nowrap; }
+  .pager span { white-space: nowrap; }
+  .pager:last-child { border-bottom: 0; border-top: 1px solid var(--line); }
   .acct { padding: 9px 12px; border-bottom: 1px solid var(--line); cursor: pointer; }
   .acct:hover { background: var(--bg); }
   .acct.sel { background: var(--accent-soft); }
@@ -114,7 +119,7 @@
   .dash-head { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; margin-bottom: 2px; }
   .dash-head h2 { margin: 0; font-size: 20px; }
   .dash-head label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
-  .dash-head input { width: auto; }
+  .dash-head input, .dash-head select { width: auto; }
   .tiles { display: grid; grid-template-columns: 1.4fr repeat(4, 1fr); gap: 12px; margin-bottom: 18px; }
   .tile { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 14px 16px; min-width: 0; }
   .tiles.even { grid-template-columns: repeat(5, minmax(0, 1fr)); }
@@ -342,10 +347,58 @@ const LABELS = { StageName: 'Stage', AnnualRevenue: 'Annual revenue', NumberOfEm
   Probability: 'Probability %' };
 const label = (f) => LABELS[f] || f;
 
-let me = null, meta = null, current = null, accounts = [], leadSeOnly = true, dsMeta = null;
+let me = null, meta = null, current = null, accounts = [], dsMeta = null;
 // Account list: filter to one sales rep (account owner) and/or group the list by rep.
 // Opportunities: closed ones are hidden unless showClosed is ticked.
 let repFilter = '', groupByRep = false, showClosed = false, sortRecent = false;
+// Account list: My Accounts (I'm in one of the account's role fields) or all, and the SailPoint BOAT filter.
+// acctScope: 'mine' (My Accounts), 'boats' (My BOATs: accounts in the BOATs of my accounts) or 'all'.
+let acctScope = 'mine', boatFilter = '', seFilter = '', acctFilters = null;
+// While a BOAT is picked: the SEs and sales reps with accounts in it ({ se, reps }), which the dropdowns then list.
+let boatPeople = null;
+// The account list shows ACCT_PAGE accounts at a time, with paging controls above and below when there are more.
+const ACCT_PAGE = 200, ACCT_MAX = 5000;
+let acctPage = 0;
+let savedRepName = ''; // the picked rep's name from the saved filters, until accounts load
+
+// The Accounts filters are saved in SF Desk's local database, so they survive a restart.
+// The My Accounts / My BOATs / All accounts dropdown, shared by the Accounts and Deals tabs.
+function scopeSelect(onChange) {
+  const select = el('select', { 'aria-label': 'Which accounts', class: 'scopeSelect' },
+    el('option', { value: 'mine' }, 'My Accounts'), el('option', { value: 'boats' }, 'My BOATs'),
+    el('option', { value: 'all' }, 'All accounts'));
+  select.value = acctScope;
+  select.addEventListener('change', () => { acctScope = select.value; saveAcctPrefs(); onChange(); });
+  scopeTitle(select);
+  return select;
+}
+// Hover text naming the role fields My Accounts checks and the BOATs My BOATs covers.
+function scopeTitle(select) {
+  if (!acctFilters) return;
+  const roles = acctFilters.mine.map((f) => f.role === f.label ? f.label : `${f.role} (${f.label})`);
+  select.title = `My Accounts: accounts where you're ${roles.join(', ') || '…'}` +
+    (acctFilters.missing.length ? `\nNot found on Account: ${acctFilters.missing.join(', ')}` : '') +
+    `\nMy BOATs: ${acctFilters.myBoats?.join(', ') || 'none found'}`;
+  const opt = select.querySelector('option[value=boats]');
+  if (opt && acctFilters.myBoats?.length === 1) opt.textContent = `My BOAT: ${acctFilters.myBoats[0]}`;
+  else if (opt && acctFilters.myBoats?.length) opt.textContent = `My BOATs (${acctFilters.myBoats.length})`;
+}
+
+async function loadAcctPrefs() {
+  try {
+    const p = await api('/prefs/accounts');
+    if (['mine', 'boats', 'all'].includes(p.scope)) acctScope = p.scope;
+    else if (typeof p.mine === 'boolean') acctScope = p.mine ? 'mine' : 'all';
+    boatFilter = p.boat || ''; seFilter = p.se || ''; repFilter = p.rep || ''; savedRepName = p.repName || '';
+    sortRecent = !!p.sortRecent; groupByRep = !!p.groupByRep; showHiddenAccts = !!p.showHidden;
+  } catch { /* first run or offline: keep the defaults */ }
+}
+function saveAcctPrefs() {
+  const repName = repFilter ? ([...acctOwners.values()].find((r) => r.id === repFilter)?.name
+    || boatPeople?.reps.find((r) => r.value === repFilter)?.label || savedRepName) : '';
+  api('/prefs/accounts', { method: 'PUT', body: { scope: acctScope, boat: boatFilter, se: seFilter, rep: repFilter, repName,
+    sortRecent, groupByRep, showHidden: showHiddenAccts } }).catch(() => {});
+}
 const acctOwners = new Map(); // account Id -> { id, name } of its owner, for every account loaded this session
 
 // Hidden records live in the local database (never in Salesforce). Lists leave them out
@@ -502,29 +555,34 @@ function showMain() {
   current = null;
   const app = document.getElementById('app');
   const search = el('input', { type: 'search', placeholder: 'Search accounts…' });
-  const mine = el('input', { type: 'checkbox', checked: leadSeOnly });
+  const mine = scopeSelect(() => loadAccounts());
+  mine.id = 'mineSelect';
+  const boat = el('select', { 'aria-label': 'SailPoint BOAT', id: 'boatSelect', disabled: true },
+    el('option', { value: '' }, 'SailPoint BOAT: All'));
+  const se = el('select', { 'aria-label': 'SE', id: 'seSelect', disabled: true }, el('option', { value: '' }, 'All SEs'));
   const rep = el('select', { 'aria-label': 'Sales rep', id: 'repSelect' });
   const group = el('input', { type: 'checkbox', checked: groupByRep });
   const sort = el('select', { 'aria-label': 'Sort accounts' },
     el('option', { value: 'name' }, 'Sort: Name A–Z'), el('option', { value: 'recent' }, 'Sort: Recently modified'));
   sort.value = sortRecent ? 'recent' : 'name';
-  sort.addEventListener('change', () => { sortRecent = sort.value === 'recent'; loadAccounts(); });
+  sort.addEventListener('change', () => { sortRecent = sort.value === 'recent'; saveAcctPrefs(); loadAccounts(); });
   let timer;
-  rep.addEventListener('change', () => { repFilter = rep.value; loadAccounts(); });
-  group.addEventListener('change', () => { groupByRep = group.checked; renderList(); });
+  rep.addEventListener('change', () => { repFilter = rep.value; saveAcctPrefs(); loadAccounts(); });
+  group.addEventListener('change', () => { groupByRep = group.checked; saveAcctPrefs(); renderList(); });
   search.addEventListener('input', () => { clearTimeout(timer); timer = setTimeout(loadAccounts, 300); });
-  mine.addEventListener('change', () => {
-    leadSeOnly = mine.checked;
+  boat.addEventListener('change', async () => {
+    boatFilter = boat.value;
+    await loadBoatPeople();
+    saveAcctPrefs();
     loadAccounts();
-    if (current) openAccount(current.account.Id);
   });
+  se.addEventListener('change', () => { seFilter = se.value; saveAcctPrefs(); loadAccounts(); });
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
-  showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; renderList(); });
+  showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; saveAcctPrefs(); renderList(); });
 
   app.replaceChildren(el('main', {},
     el('div', { id: 'list' },
-      el('div', { class: 'controls' }, search, rep, sort,
-        el('label', {}, mine, "Only where I'm Lead SE"),
+      el('div', { class: 'controls' }, search, mine, boat, se, rep, sort,
         el('label', {}, group, 'Group by sales rep'),
         el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden')),
         el('div', { class: 'selbar', id: 'acctSelbar', hidden: true })),
@@ -534,17 +592,74 @@ function showMain() {
   ));
 
   async function loadAccounts() {
-    const params = new URLSearchParams({ q: search.value.trim(), leadse: leadSeOnly ? '1' : '0' });
+    const params = new URLSearchParams({ q: search.value.trim(), scope: acctScope });
+    if (boatFilter) params.set('boat', boatFilter);
+    if (seFilter) params.set('se', seFilter);
     if (repFilter) params.set('owner', repFilter);
     if (sortRecent) params.set('sort', 'recent');
     try {
       accounts = await api('/accounts?' + params);
+      acctPage = 0;
       for (const a of accounts) if (a.OwnerId) acctOwners.set(a.Id, { id: a.OwnerId, name: a.Owner?.Name || a.OwnerId });
       renderList();
     } catch (e) { toast(e.message, 'err'); }
   }
   renderReps();
+  renderAcctFilters();
   loadAccounts();
+}
+
+// SE choices: everyone who is Lead SE on some account, or only those with accounts in the picked BOAT.
+function renderSes() {
+  const select = document.getElementById('seSelect');
+  const s = acctFilters?.se;
+  if (!select || !acctFilters) return;
+  if (!s) { select.title = 'No "Lead SE" field found on Account.'; return; }
+  const options = boatPeople ? boatPeople.se : s.options;
+  select.title = `${s.label} (${s.name})`;
+  select.replaceChildren(el('option', { value: '' }, 'All SEs'), ...options.map((o) => el('option', { value: o.value }, o.label)));
+  if (seFilter && !options.some((o) => o.value === seFilter)) seFilter = '';
+  select.value = seFilter;
+  select.disabled = false;
+}
+
+// Look up who has accounts in the picked BOAT (or forget it when the BOAT is cleared), then redraw
+// the SE and sales rep dropdowns; a picked SE or rep with no accounts there goes back to All.
+async function loadBoatPeople() {
+  boatPeople = null;
+  if (boatFilter) {
+    try { boatPeople = await api('/account-filters/people?' + new URLSearchParams({ boat: boatFilter })); }
+    catch (e) { toast(e.message, 'err'); }
+  }
+  renderSes();
+  renderReps();
+}
+
+// Fill the SailPoint BOAT choices and say which fields My Accounts checks, once per session.
+async function renderAcctFilters() {
+  if (!acctFilters) {
+    try { acctFilters = await api('/account-filters'); } catch (e) { return toast(e.message, 'err'); }
+  }
+  const boat = document.getElementById('boatSelect');
+  const mine = document.getElementById('mineSelect');
+  const se = document.getElementById('seSelect');
+  if (!boat || !mine || !se) return;
+  renderSes();
+  scopeTitle(mine);
+  const b = acctFilters.boat;
+  if (!b) {
+    boat.title = 'No "SailPoint BOAT" field found on Account. Set SF_BOAT_FIELD in .env to its API name.';
+    boat.firstChild.textContent = 'SailPoint BOAT: not found';
+    return;
+  }
+  boat.title = `${b.label} (${b.name})`;
+  boat.replaceChildren(el('option', { value: '' }, 'SailPoint BOAT: All'),
+    ...b.options.map((o) => el('option', { value: o.value }, `SailPoint BOAT: ${o.label}`)),
+    el('option', { value: '__blank__' }, 'SailPoint BOAT: (blank)'));
+  if (boatFilter && ![...boat.options].some((o) => o.value === boatFilter)) boatFilter = '';
+  boat.value = boatFilter;
+  boat.disabled = false;
+  if (boatFilter && !boatPeople) loadBoatPeople();
 }
 
 function renderList() {
@@ -574,16 +689,28 @@ function renderList() {
       ),
     );
   };
-  if (!groupByRep) return box.replaceChildren(...shown.map(row));
-  // Group by sales rep (account owner), reps A–Z, each group keeping the list's order.
-  const groups = new Map();
-  for (const a of shown) {
-    const rep = a.Owner?.Name || 'No owner';
-    if (!groups.has(rep)) groups.set(rep, []);
-    groups.get(rep).push(a);
-  }
-  box.replaceChildren(...[...groups].sort((x, y) => x[0].localeCompare(y[0])).flatMap(([rep, list]) =>
-    [el('div', { class: 'group' }, `${rep} (${list.length})`), ...list.map(row)]));
+  // Page through long lists: Previous / Next above and below this page's rows.
+  // Grouped by sales rep: reps A–Z across the whole list (each keeping the list's order), then paged.
+  const repOf = (a) => a.Owner?.Name || 'No owner';
+  const ordered = groupByRep ? [...shown].sort((x, y) => repOf(x).localeCompare(repOf(y))) : shown;
+  const pages = Math.ceil(ordered.length / ACCT_PAGE);
+  acctPage = Math.min(acctPage, pages - 1);
+  const pageRows = ordered.slice(acctPage * ACCT_PAGE, (acctPage + 1) * ACCT_PAGE);
+  const pager = () => pages > 1 ? el('div', { class: 'pager' },
+    el('button', { disabled: acctPage === 0, onclick: () => { acctPage--; renderList(); box.scrollTop = 0; } }, '‹ Prev'),
+    el('span', {}, `${(acctPage * ACCT_PAGE + 1).toLocaleString()}–${(acctPage * ACCT_PAGE + pageRows.length).toLocaleString()} of ` +
+      `${shown.length.toLocaleString()}${accounts.length >= ACCT_MAX ? '+' : ''}`),
+    el('button', { disabled: acctPage >= pages - 1, onclick: () => { acctPage++; renderList(); box.scrollTop = 0; } }, 'Next ›')) : null;
+  if (!groupByRep) return box.replaceChildren(...[pager(), ...pageRows.map(row), pager()].filter(Boolean));
+  // A heading before each rep's rows on this page, with the rep's count across all pages.
+  const total = new Map();
+  for (const a of shown) total.set(repOf(a), (total.get(repOf(a)) || 0) + 1);
+  const out = [];
+  pageRows.forEach((a, i) => {
+    if (i === 0 || repOf(pageRows[i - 1]) !== repOf(a)) out.push(el('div', { class: 'group' }, `${repOf(a)} (${total.get(repOf(a))})`));
+    out.push(row(a));
+  });
+  box.replaceChildren(...[pager(), ...out, pager()].filter(Boolean));
 }
 
 // Sales rep choices: owners of the accounts seen this session that aren't hidden (all of them while
@@ -592,8 +719,14 @@ function renderReps() {
   const select = document.getElementById('repSelect');
   if (!select) return;
   const byId = new Map();
-  for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
-  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || repFilter);
+  if (boatPeople) {
+    // A BOAT is picked: only reps with accounts in it, and drop a rep who has none there.
+    for (const r of boatPeople.reps) byId.set(r.value, r.label);
+    if (repFilter && !byId.has(repFilter)) repFilter = '';
+  } else {
+    for (const [acctId, r] of acctOwners) if (showHiddenAccts || !isHidden(acctId)) byId.set(r.id, r.name);
+  }
+  if (repFilter && !byId.has(repFilter)) byId.set(repFilter, [...acctOwners.values()].find((r) => r.id === repFilter)?.name || savedRepName || repFilter);
   select.replaceChildren(el('option', { value: '' }, 'All sales reps'),
     ...[...byId].sort((x, y) => x[1].localeCompare(y[1])).map(([id, name]) => el('option', { value: id }, name)));
   select.value = repFilter;
@@ -631,7 +764,7 @@ async function openAccount(id) {
   const detail = document.getElementById('detail');
   detail.replaceChildren(el('div', { class: 'empty' }, 'Loading…'));
   try {
-    current = await api('/accounts/' + id + (leadSeOnly ? '?leadse=1' : ''));
+    current = await api('/accounts/' + id);
     renderList();
     renderDetail();
     document.querySelector('main')?.classList.add('has-detail');
@@ -1233,7 +1366,7 @@ const FY_START = 1; // month index (0 = January)
 const MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
 const fyName = (fy) => 'FY' + String(fy % 100).padStart(2, '0');
 // Forecast categories, bottom of the stack first, with their series colors.
-const FORECAST = [['Commit', 'var(--s1)'], ['Best Case', 'var(--s2)'], ['Pipeline', 'var(--s3)'], ['Omitted', 'var(--s4)']];
+const FORECAST = [['Commit'], ['Best Case'], ['Pipeline'], ['Omitted']];
 
 function fiscal(date) { // 'YYYY-MM-DD' -> { y, m, fy, q }
   const y = Number(date.slice(0, 4)), m = Number(date.slice(5, 7)) - 1;
@@ -1254,12 +1387,14 @@ const dash = { all: [], view: 'month', fy: null, pick: null };
 async function showDashboard() {
   setNav('dash');
   current = null;
-  const mine = el('input', { type: 'checkbox', checked: leadSeOnly });
-  mine.addEventListener('change', () => { leadSeOnly = mine.checked; loadDashboard(); });
+  // The same My Accounts / All accounts choice as the Accounts tab (and saved with it).
+  const mine = scopeSelect(loadDashboard);
+  // The hover text needs the filter fields, which the Accounts tab may not have loaded yet.
+  if (!acctFilters) api('/account-filters').then((f) => { acctFilters = f; scopeTitle(mine); }).catch(() => {});
   document.getElementById('app').replaceChildren(el('div', { class: 'dash' },
     el('div', { class: 'dash-head' },
       el('h2', {}, 'Pipeline'),
-      el('label', {}, mine, "Only where I'm Lead SE"),
+      mine,
       el('span', { class: 'spacer', style: 'flex:1' }),
       el('button', { onclick: loadDashboard }, 'Reload'),
     ),
@@ -1271,7 +1406,7 @@ async function showDashboard() {
 
 async function loadDashboard() {
   try {
-    const { opportunities } = await api('/pipeline?leadse=' + (leadSeOnly ? '1' : '0'));
+    const { opportunities } = await api('/pipeline?scope=' + acctScope);
     dash.all = opportunities.filter((o) => o.CloseDate);
     if (document.getElementById('dashBody')) renderDashboard();
   } catch (e) {
@@ -1287,7 +1422,7 @@ function renderDashboard() {
   const today = todayStr(), now = fiscal(today);
   dash.fy ??= now.fy;
   document.getElementById('dashSub').textContent =
-    `${plural(opps.length, 'open opportunity', 'open opportunities')}${leadSeOnly ? " where you're Lead SE" : ''}` +
+    `${plural(opps.length, 'open opportunity', 'open opportunities')}${acctScope === 'mine' ? ' on your accounts' : acctScope === 'boats' ? ` in ${acctFilters?.myBoats?.length === 1 ? acctFilters.myBoats[0] : 'your BOATs'}` : ''}` +
     (hiddenCount ? `, not counting ${hiddenCount} hidden` : '') +
     ` · Fiscal years start Feb 1 and are named for the year they end in (${fyName(now.fy)} = Feb ${now.fy - 1} – Jan ${now.fy})`;
 
@@ -1374,11 +1509,12 @@ function renderForecastChart(opps, now, today) {
   for (const o of opps) byKey.get(periodKey(view, fiscal(o.CloseDate)))?.push(o);
   const nowKey = periodKey(view, now);
 
-  // Stack by forecast category when the org returns it, else one series.
-  const useCats = opps.some((o) => o.ForecastCategoryName);
-  const cats = useCats ? FORECAST.filter(([c]) => opps.some((o) => o.ForecastCategoryName === c)) : [['Amount', 'var(--s1)']];
-  if (useCats && opps.some((o) => !FORECAST.some(([c]) => c === o.ForecastCategoryName))) cats.push(['Other', 'var(--s4)']);
-  const catOf = (o) => !useCats ? 'Amount' : FORECAST.some(([c]) => c === o.ForecastCategoryName) ? o.ForecastCategoryName : 'Other';
+  // One series in the same blue as the other charts; the tooltip still splits it by forecast category.
+  const cats = [['Amount', 'var(--s1)']];
+  const catOf = () => 'Amount';
+  const byCat = (list) => [...FORECAST.map(([c]) => c), 'Other'].map((c) => [c,
+    sum(list.filter((o) => (FORECAST.some(([f]) => f === o.ForecastCategoryName) ? o.ForecastCategoryName : 'Other') === c))])
+    .filter(([c, v]) => v > 0 && (c !== 'Other' || list.some((o) => o.ForecastCategoryName)));
 
   const seg = el('div', { class: 'seg' }, [['month', 'Month'], ['quarter', 'Quarter'], ['year', 'Year']].map(([v, t]) =>
     el('button', { class: view === v ? 'on' : null, onclick: () => { dash.view = v; dash.pick = null; renderDashboard(); } }, t)));
@@ -1429,7 +1565,7 @@ function renderForecastChart(opps, now, today) {
       renderDashboard();
     });
     hover(hit, () => tipHtml(p.long + (p.key === nowKey ? ' · now' : ''), [
-      ...(cats.length > 1 ? parts.map(([c, color, v]) => [c, money(v), color]) : []),
+      ...(list.some((o) => o.ForecastCategoryName) ? byCat(list).map(([c, v]) => [c, money(v)]) : []),
       ['Total', money(totals[i])], ['Weighted', money(weighted(list))], ['Opportunities', list.length]]));
     g.append(hit);
   });
@@ -2575,6 +2711,7 @@ function renderOutlookPane(e, reload) {
     document.getElementById('logout').hidden = false;
     meta = await api('/meta');
     await loadHidden();
+    await loadAcctPrefs();
     showDashboard();
   } catch (e) {
     if (e.status !== 401) toast(e.message, 'err');
