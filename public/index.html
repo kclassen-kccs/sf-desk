@@ -387,7 +387,7 @@ const ACCT_PAGE = 200, ACCT_MAX = 5000;
 let acctPage = 0;
 let savedRepName = ''; // the picked rep's name from the saved filters, until the rep choices load
 
-// Each launch starts on My BOAT (All BOATs if mine can't be found), My Accounts and All sales reps
+// Each launch starts on My BOAT(s) (All BOATs if mine can't be found), My Accounts and All sales reps
 // (and My Time on the My Time tab); the picks then carry across the tabs. The sort, grouping and "Show hidden" are kept in SF Desk's local
 // database, so they survive a restart.
 async function loadAcctPrefs() {
@@ -424,7 +424,7 @@ const filterQuery = () => ({ boat: boatFilter, team: teamFilter });
 // The three filter dropdowns, in order: SailPoint BOAT, team, sales rep. `time` makes the team
 // dropdown pick whose time (My Time / My Team / a member); otherwise it picks whose accounts.
 function filterSelects({ onBoat, onTeam, onRep, time = false }) {
-  const boat = el('select', { 'aria-label': 'SailPoint BOAT' }, el('option', { value: 'mine' }, 'My BOAT'), el('option', { value: 'all' }, 'All BOATs'));
+  const boat = el('select', { 'aria-label': 'SailPoint BOAT' }, el('option', { value: 'mine' }, 'My BOAT(s)'), el('option', { value: 'all' }, 'All BOATs'));
   const team = el('select', { 'aria-label': time ? 'Whose time' : 'Whose accounts' });
   const rep = el('select', { 'aria-label': 'Sales rep' }, el('option', { value: '' }, 'All sales reps'));
   boat.addEventListener('change', () => { boatFilter = boat.value; saveAcctPrefs(); onBoat(); });
@@ -438,7 +438,7 @@ function filterSelects({ onBoat, onTeam, onRep, time = false }) {
   return f;
 }
 
-// BOAT choices: My BOAT, All BOATs, then every BOAT A–Z (and accounts with none).
+// BOAT choices: My BOAT(s) (every BOAT of my accounts), All BOATs, then every BOAT A–Z (and accounts with none).
 function fillBoatSelect(f) {
   const b = acctFilters?.boat, mine = acctFilters?.myBoats || [];
   if (acctFilters && !b) {
@@ -448,13 +448,13 @@ function fillBoatSelect(f) {
     return;
   }
   f.boat.replaceChildren(
-    el('option', { value: 'mine' }, mine.length === 1 ? `My BOAT: ${mine[0]}` : mine.length ? `My BOATs (${mine.length})` : 'My BOAT'),
+    el('option', { value: 'mine' }, 'My BOAT(s)'),
     el('option', { value: 'all' }, 'All BOATs'),
     ...(b?.options || []).map((o) => el('option', { value: o.value }, o.label)),
     b ? el('option', { value: '__blank__' }, '(No BOAT)') : null);
   if (acctFilters && ![...f.boat.options].some((o) => o.value === boatFilter)) boatFilter = 'mine';
   f.boat.value = boatFilter;
-  f.boat.title = b ? `${b.label} (${b.name})\nMy BOAT: the BOAT of your accounts (${mine.join(', ') || 'none found, so all BOATs'})` : '';
+  f.boat.title = b ? `${b.label} (${b.name})\nMy BOAT(s): every BOAT you have accounts in (${mine.join(', ') || 'none found, so all BOATs'})` : '';
 }
 
 // Team choices: My Accounts (or My Time), My Team, each team member A–Z, and All accounts.
@@ -491,7 +491,7 @@ async function loadRepChoices() {
   return repChoices;
 }
 
-// "My Accounts · My BOAT: X · Sales rep: Y", for the lines under the headings.
+// "My Accounts · My BOAT(s) · Sales rep: Y", for the lines under the headings.
 function filterText(f) {
   const t = (s) => s.options[s.selectedIndex]?.textContent || '';
   return [t(f.team), t(f.boat), repFilter ? `Sales rep: ${t(f.rep)}` : ''].filter(Boolean).join(' · ');
@@ -2150,7 +2150,7 @@ function timeEntries() {
 }
 
 // Whether a time entry's account is in the picked BOAT (see boatFilter). Without a BOAT field, or
-// with no BOAT on any of my accounts for My BOAT, every entry is.
+// with no BOAT on any of my accounts for My BOAT(s), every entry is.
 function inBoat(e) {
   if (!time.data.boatField || boatFilter === 'all') return true;
   const has = (v) => String(e.boat ?? '').toLowerCase().split(';').includes(String(v).toLowerCase());
