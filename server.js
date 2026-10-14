@@ -1456,16 +1456,15 @@ async function findMyTeam(req) {
   return team;
 }
 
-// Every Deal Support where the chosen user field is me (or my team, or one of them), across all
+// Every Deal Support where any of the user fields is me (or my team, or one of them), across all
 // opportunities, newest first. The page does the totals by week, period and opportunity.
 api.get('/my-time', wrap(async (req, res) => {
   const userId = sfId(req.session.sf.user.id);
   const who = String(req.query.who || 'me').slice(0, 20);
-  // Saved per user field and person, so the last copy can be shown when Salesforce can't be reached.
-  const kind = 'myTime:' + String(req.query.by || 'default').slice(0, 80) + (who === 'me' ? '' : ':' + who);
+  // Saved per person, so the last copy can be shown when Salesforce can't be reached.
+  const kind = 'myTime:all' + (who === 'me' ? '' : ':' + who);
   res.json(await withCacheFallback(req, res, async () => {
     const tm = await timeMeta(req);
-    const by = tm.userFields.find((f) => f.name === req.query.by) || tm.userFields[0];
     const team = await myTeam(req).catch(() => ({ source: null, members: [] }));
     const af = await accountFilters(req).catch(() => null);
     const people = who === 'me' ? [userId]
@@ -1475,12 +1474,13 @@ api.get('/my-time', wrap(async (req, res) => {
       ...(tm.oppRel ? [`${tm.oppRel}.Name`, `${tm.oppRel}.AccountId`, `${tm.oppRel}.Account.Name`, `${tm.oppRel}.StageName`,
         // For the page's BOAT and sales rep filters.
         `${tm.oppRel}.Account.OwnerId`, `${tm.oppRel}.Account.Owner.Name`, ...(af?.boat ? [`${tm.oppRel}.Account.${af.boat.name}`] : [])] : []),
-      ...(tm.roleField ? [tm.roleField] : []), by.name, ...(by.rel ? [`${by.rel}.Name`] : [])]
+      ...(tm.roleField ? [tm.roleField] : []), ...tm.userFields.flatMap((f) => [f.name, ...(f.rel ? [`${f.rel}.Name`] : [])])]
       .filter((f, i, all) => all.indexOf(f) === i);
     const records = await query(req, `SELECT ${fields.join(', ')} FROM ${tm.object} ` +
-      `WHERE ${by.name} IN (${people.map((id) => `'${sfId(id)}'`).join(', ')}) ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`,
+      // A record counts when the person is in any of the user fields (Assigned SE, Owner...).
+      `WHERE (${tm.userFields.map((f) => `${f.name} IN (${people.map((id) => `'${sfId(id)}'`).join(', ')})`).join(' OR ')}) ORDER BY ${tm.dateFields[0].name} DESC NULLS LAST`,
       10000 * people.length);
-    const out = { ...tm, by: by.name, byRel: by.rel, boatField: af?.boat?.name || null, who: people.length > 1 ? 'team' : people[0] === userId ? 'me' : people[0],
+    const out = { ...tm, people, boatField: af?.boat?.name || null, who: people.length > 1 ? 'team' : people[0] === userId ? 'me' : people[0],
       team, records };
     store.saveSetting(orgOf(req), kind, out);
     return out;

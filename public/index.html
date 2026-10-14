@@ -345,7 +345,7 @@
   <button id="navToggle" aria-label="Menu" aria-expanded="false" aria-controls="nav" hidden>☰</button>
   <nav id="nav" hidden>
     <button id="navDash" onclick="showDashboard()">Deals</button>
-    <button id="navTime" onclick="showTime()">My Time</button>
+    <button id="navTime" onclick="showTime()">DS Time</button>
     <button id="navCal" onclick="showCalendar()">Time Entry</button>
     <button id="navAccts" onclick="showMain()">Accounts</button>
   <div class="hdr-right">
@@ -2127,12 +2127,15 @@ function parseDuration(v) {
 }
 
 // The fields the hours, date and "mine" come from: the saved choice if still offered, else the server's pick.
+// "A, B or C"
+const listOr = (xs) => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1)}`;
+
 function timeChoice() {
   const d = time.data, p = timePrefs();
   const hoursOpts = d.hoursFields.flatMap((f) => f.unit === 'text' ? [{ ...f, key: f.name + '|text' }]
     : [{ ...f, key: `${f.name}|${f.unit}` }, { ...f, unit: f.unit === 'hours' ? 'minutes' : 'hours', key: `${f.name}|${f.unit === 'hours' ? 'minutes' : 'hours'}` }]);
   const hours = hoursOpts.find((o) => o.key === p.hours) || hoursOpts[0];
-  const date = d.dateFields.find((f) => f.name === p.date) || d.dateFields[0];
+  const date = d.dateFields[0];
   return { hoursOpts, hours, date };
 }
 
@@ -2146,7 +2149,8 @@ function timeEntries() {
       name: r.Name,
       date: !dv ? null : String(dv).length > 10 ? ymd(new Date(String(dv).replace(/\+0000$/, 'Z'))) : String(dv).slice(0, 10),
       hours: raw == null || raw === '' ? 0 : hours.unit === 'text' ? parseDuration(raw) : hours.unit === 'minutes' ? Number(raw) / 60 : Number(raw) || 0,
-      person: (d.byRel ? r[d.byRel]?.Name : null) || '',
+      // Who: the first user field (Assigned SE, Owner...) holding one of the people shown.
+      person: (() => { const f = d.userFields.find((u) => d.people?.includes(r[u.name])); return (f?.rel ? r[f.rel]?.Name : null) || ''; })(),
       oppId: r[d.oppField] || null,
       oppName: opp?.Name || (r[d.oppField] ? 'Opportunity' : 'No opportunity'),
       accountId: opp?.AccountId || null,
@@ -2197,7 +2201,7 @@ async function showTime() {
   current = null;
   document.getElementById('app').replaceChildren(el('div', { class: 'dash' },
     el('div', { class: 'dash-head' },
-      el('h2', { id: 'timeTitle' }, 'My Time'),
+      el('h2', { id: 'timeTitle' }, 'Deal Support Time'),
       el('span', { id: 'timePicks', class: 'picks' }),
       el('span', { class: 'spacer', style: 'flex:1' }),
       el('button', { onclick: loadTime }, 'Reload'),
@@ -2210,8 +2214,8 @@ async function showTime() {
 
 async function loadTime() {
   try {
-    const { by, who } = timePrefs();
-    const q = new URLSearchParams({ ...(by ? { by } : {}), ...(who ? { who } : {}) }).toString();
+    const { who } = timePrefs();
+    const q = new URLSearchParams(who ? { who } : {}).toString();
     [time.data] = await Promise.all([api('/my-time' + (q ? '?' + q : '')),
       dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {}),
       // The BOAT choices and my BOATs, for the BOAT filter.
@@ -2227,13 +2231,10 @@ function renderTime() {
   document.getElementById('tip').style.display = 'none';
   const d = time.data, today = todayStr(), now = fiscal(today);
   const { hoursOpts, hours, date } = timeChoice();
-  const by = d.userFields.find((f) => f.name === d.by) || d.userFields[0];
   // Whose time: mine, my whole team's, or one team member's.
   const members = d.team?.members || [];
-  const whoName = d.who === 'me' ? 'you' : d.who === 'team' ? 'you or your team'
+  const whoName = d.who === 'me' ? 'you' : d.who === 'team' ? 'you or someone on your team'
     : members.find((m) => m.id === d.who)?.name || 'them';
-  document.getElementById('timeTitle').textContent = d.who === 'me' ? 'My Time' : d.who === 'team' ? 'My Team'
-    : `${members.find((m) => m.id === d.who)?.name || 'Team member'}'s Time`;
 
   // Which fields count: picked here, remembered on this machine. Each shows how many of your records fill it.
   // "Total Time (Hours)" needs no "(hours)"; only say the unit when the label doesn't, or when reading it the other way.
@@ -2256,19 +2257,15 @@ function renderTime() {
   fillRepSelect(filters, [...repsHere].map(([value, label]) => ({ value, label })));
   if (repFilter !== before) saveAcctPrefs();
   document.getElementById('timePicks').replaceChildren(...[filters.boat, filters.team, filters.rep,
-    pick('Mine by', d.userFields.map((f) => [f.name, f.label + counted(f)]), by.name,
-      (v) => { saveTimePrefs('by', v, d.userFields[0].name); loadTime(); }),
     pick('Hours from', hoursOpts.map((o) => [o.key, unitLabel(o) + counted(o)]), hours.key,
       (v) => { saveTimePrefs('hours', v, hoursOpts[0].key); renderTime(); }),
-    d.dateFields.length > 1 ? pick('Date', d.dateFields.map((f) => [f.name, f.label]), date.name,
-      (v) => { saveTimePrefs('date', v, d.dateFields[0].name); renderTime(); }) : null,
   ].filter(Boolean));
 
   const all = boatEntries.filter((e) => !repFilter || e.ownerId === repFilter);
   const left = inTeam.length - all.length;
   const undated = all.filter((e) => !e.date).length;
   document.getElementById('timeSub').textContent =
-    `${plural(all.length, d.label, d.labelPlural)} where ${by.label} is ${whoName} · ${filterText(filters).replace(/^[^·]*· /, '')}` +
+    `${plural(all.length, d.label, d.labelPlural)} where ${whoName === 'you' ? 'you are' : whoName + ' is'} ${listOr(d.userFields.map((f) => f.label))} · ${filterText(filters).replace(/^[^·]*· /, '')}` +
     (left ? ` (${left.toLocaleString()} more outside these filters)` : '') + ` · hours from ${hours.label}` +
     `, dated by ${date.label}${undated ? ` (${undated} undated, counted only in All time)` : ''}` +
     ` · Weeks start Monday · ${fyName(now.fy)} = Feb ${now.fy - 1} – Jan ${now.fy}`;
@@ -2379,7 +2376,7 @@ function exportTime(list, showRole, what, showPerson) {
   ];
   const rows = list.map((e) => [e.date, ...(showPerson ? [e.person] : []), e.oppName, e.accountName, ...(showRole ? [e.role] : []), e.name, e.hours,
     `${me.instanceUrl}/${e.id}`]);
-  downloadXlsx(`${document.getElementById('timeTitle')?.textContent || 'My Time'} - ${what} - ${todayStr()}.xlsx`, 'My Time', cols, rows, { totals: true })
+  downloadXlsx(`${document.getElementById('timeTitle')?.textContent || 'Deal Support Time'} - ${what} - ${todayStr()}.xlsx`, 'My Time', cols, rows, { totals: true })
     .catch((e) => toast("Couldn't build the Excel file: " + e.message, 'err'));
 }
 
