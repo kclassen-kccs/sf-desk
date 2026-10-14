@@ -350,7 +350,7 @@ function findLeadSe(describe) {
   const f = describe.fields.find((x) => LEAD_SE_FIELD
     ? x.name.toLowerCase() === LEAD_SE_FIELD.toLowerCase()
     : /^lead\s*se$/i.test(x.label.trim()));
-  return f ? { name: f.name, isUser: f.type === 'reference' } : null;
+  return f ? { name: f.name, isUser: f.type === 'reference', rel: f.relationshipName || null } : null;
 }
 
 // Look up (once per session, falling back to the saved copy offline) which fields are Lead SE.
@@ -728,6 +728,147 @@ api.post('/opportunities', wrap(async (req, res) => {
   const [rec] = await query(req, `SELECT ${oppRead(await knownLeadSeFields(req)).join(', ')} FROM Opportunity WHERE Id = '${sfId(created.id)}'`);
   store.saveOpportunities(orgOf(req), [rec]);
   res.status(201).json(rec);
+}));
+
+// ---------- Account team (Lead SE, CSM, ATS, DSR, Services Manager) ----------
+
+// The people shown in the Account block and on an opportunity. Account fields are the My Accounts role
+// fields; an opportunity uses its own field with the same label when it has one, else the account's.
+const TEAM_ROLES = ['Lead SE', 'CSM', 'ATS', 'DSR', 'Services Manager'];
+const teamKey = (s) => roleKey(s).replace(/^opportunity /, '').replace(/^opp /, '');
+const teamRead = (f) => (f.isUser && f.relationshipName ? `${f.relationshipName}.Name` : f.name);
+const teamName = (rec, f) => {
+  const v = teamRead(f).split('.').reduce((x, k) => x?.[k], rec);
+  return v == null || v === '' ? null : String(v);
+};
+
+async function teamFields(req) {
+  if (!req.session.teamFields) {
+    const af = await accountFilters(req);
+    const account = Object.fromEntries(TEAM_ROLES.map((r) => [r, (af.mine || []).find((m) => m.role === r) || null]));
+    const describe = await sf(req, 'GET', `/services/data/${API}/sobjects/Opportunity/describe`);
+    const opportunity = Object.fromEntries(TEAM_ROLES.map((r) => {
+      const f = describe.fields.filter((x) => (teamKey(x.label) === teamKey(r) || teamKey(x.name) === teamKey(r)) && (isUserRef(x) || x.type === 'string'))
+        .sort((a, b) => isUserRef(b) - isUserRef(a))[0];
+      return [r, f ? asFilterField(f, r) : null];
+    }));
+    req.session.teamFields = { account, opportunity };
+  }
+  return req.session.teamFields;
+}
+
+api.get('/accounts/:id/team', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const tf = await teamFields(req);
+  const cols = (side) => [...new Set(Object.values(side).filter(Boolean).map(teamRead))];
+  const acctCols = cols(tf.account), oppCols = cols(tf.opportunity);
+  const [acct] = acctCols.length ? await query(req, `SELECT Id, ${acctCols.join(', ')} FROM Account WHERE Id = '${id}'`) : [{}];
+  const opps = oppCols.length ? await query(req, `SELECT Id, ${oppCols.join(', ')} FROM Opportunity WHERE AccountId = '${id}'`) : [];
+  const account = Object.fromEntries(TEAM_ROLES.map((r) => [r, tf.account[r] && acct ? teamName(acct, tf.account[r]) : null]));
+  res.json({
+    roles: TEAM_ROLES,
+    account,
+    accountFields: Object.fromEntries(TEAM_ROLES.map((r) => [r, tf.account[r]?.name || null])),
+    // Per opportunity: its own value where it has the field, else the account's (marked fromAccount).
+    opportunities: Object.fromEntries(opps.map((o) => [o.Id, Object.fromEntries(TEAM_ROLES.map((r) => [r,
+      tf.opportunity[r] ? { name: teamName(o, tf.opportunity[r]) } : { name: account[r], fromAccount: true }]))])),
+    opportunityFields: Object.fromEntries(TEAM_ROLES.map((r) => [r, tf.opportunity[r]?.name || null])),
+  });
+}));
+
+// ---------- Change Rep / Change SE ----------
+
+// Active Salesforce users whose name matches, for the Change Rep and Change SE pickers.
+api.get('/users', wrap(async (req, res) => {
+  const q = String(req.query.q || '').trim().slice(0, 80);
+  if (q.length < 2) return res.json([]);
+  res.json(await query(req, `SELECT Id, Name, Title, Email FROM User WHERE IsActive = true AND UserType = 'Standard' ` +
+    `AND Name LIKE '%${soqlLike(q)}%' ORDER BY Name LIMIT 25`, 25));
+}));
+
+// The field each role sets on Account and Opportunity: the owner for the sales rep, the Lead SE fields for the SE.
+// `name` reads the current person's name (a lookup's related Name, else the field's own text).
+async function reassignFields(req, role) {
+  if (role === 'rep') {
+    const owner = { name: 'OwnerId', isUser: true, read: 'Owner.Name' };
+    return { label: 'Sales rep', Account: owner, Opportunity: owner };
+  }
+  if (role !== 'se') throw new HttpError(400, 'Unknown role');
+  const lse = { ...(await leadSeFields(req)) };
+  // The account's Lead SE is often labelled "Account Lead SE" (Account_Lead_SE__c), which the Lead SE
+  // filter's exact "Lead SE" match misses; the My Accounts role lookup finds it.
+  if (!lse.Account) {
+    const f = (await accountFilters(req)).mine?.find((m) => m.role === 'Lead SE');
+    if (f) lse.Account = { name: f.name, isUser: f.isUser, rel: f.relationshipName };
+  }
+  const side = (f) => f && {
+    name: f.name, isUser: f.isUser,
+    read: f.isUser ? `${f.rel || (f.name.endsWith('__c') ? f.name.slice(0, -3) + '__r' : f.name.replace(/Id$/, ''))}.Name` : f.name,
+  };
+  return { label: 'Lead SE', Account: side(lse.Account), Opportunity: side(lse.Opportunity) };
+}
+const readName = (rec, f) => f.read.split('.').reduce((v, k) => v?.[k], rec) ?? null;
+
+// The account and its open opportunities, each with who holds the role now.
+async function reassignTargets(req, id, f) {
+  const [account] = await query(req, `SELECT Id, Name${f.Account ? `, ${f.Account.name}, ${f.Account.read}` : ''} FROM Account WHERE Id = '${id}'`);
+  if (!account) throw new HttpError(404, 'Account not found');
+  const opps = await query(req, `SELECT Id, Name, StageName, CloseDate${f.Opportunity ? `, ${f.Opportunity.name}, ${f.Opportunity.read}` : ''} ` +
+    `FROM Opportunity WHERE AccountId = '${id}' AND IsClosed = false ORDER BY CloseDate ASC`);
+  return { account, opps };
+}
+
+api.get('/accounts/:id/reassign', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const f = await reassignFields(req, req.query.role);
+  const { account, opps } = await reassignTargets(req, id, f);
+  const [closed] = await query(req, `SELECT COUNT(Id) n FROM Opportunity WHERE AccountId = '${id}' AND IsClosed = true`);
+  // `value` is what the field holds now (a User Id, or a name for a text field), so the page can tell
+  // which records already have the person picked.
+  res.json({
+    label: f.label,
+    account: { Id: account.Id, Name: account.Name, current: f.Account ? readName(account, f.Account) : null,
+      value: f.Account ? account[f.Account.name] ?? null : null },
+    accountField: !!f.Account,
+    accountIsUser: !!f.Account?.isUser,
+    opportunities: f.Opportunity
+      ? opps.map((o) => ({ Id: o.Id, Name: o.Name, StageName: o.StageName, CloseDate: o.CloseDate,
+        current: readName(o, f.Opportunity), value: o[f.Opportunity.name] ?? null }))
+      : [],
+    oppField: !!f.Opportunity,
+    oppIsUser: !!f.Opportunity?.isUser,
+    closedCount: Number(closed?.n ?? closed?.expr0 ?? 0),
+  });
+}));
+
+// Set the role to the picked user on the account and every open opportunity on it, record by record,
+// re-reading the open opportunities here so nothing the page didn't list is touched. Records that
+// already have that user are left alone; per-record failures (e.g. no edit access) are reported.
+api.post('/accounts/:id/reassign', wrap(async (req, res) => {
+  const id = sfId(req.params.id);
+  const f = await reassignFields(req, req.body?.role);
+  const [user] = await query(req, `SELECT Id, Name FROM User WHERE Id = '${sfId(req.body?.userId)}' AND IsActive = true`);
+  if (!user) throw new HttpError(400, 'That user was not found or is inactive.');
+  const { account, opps } = await reassignTargets(req, id, f);
+  const asked = Array.isArray(req.body?.oppIds) ? new Set(req.body.oppIds.map(sfId)) : null;
+  const jobs = [];
+  if (f.Account) jobs.push({ sobject: 'Account', rec: account, field: f.Account });
+  if (f.Opportunity) for (const o of opps) if (!asked || asked.has(o.Id)) jobs.push({ sobject: 'Opportunity', rec: o, field: f.Opportunity });
+  const updated = [], unchanged = [], failed = [];
+  for (const { sobject, rec, field } of jobs) {
+    const value = field.isUser ? user.Id : user.Name;
+    const item = { type: sobject, Id: rec.Id, Name: rec.Name };
+    const now = String(rec[field.name] || '');
+    if (field.isUser ? now.slice(0, 15) === value.slice(0, 15) : now.toLowerCase() === value.toLowerCase()) { unchanged.push(item); continue; }
+    try {
+      await sf(req, 'PATCH', `/services/data/${API}/sobjects/${sobject}/${rec.Id}`, { body: { [field.name]: value } });
+      updated.push(item);
+    } catch (err) {
+      if (err.status === 401) throw err;
+      failed.push({ ...item, error: err.message });
+    }
+  }
+  res.json({ label: f.label, user: { Id: user.Id, Name: user.Name }, updated, unchanged, failed });
 }));
 
 // ---------- Deal Support ----------
