@@ -271,6 +271,42 @@ selected.
 If you dismissed the prompt or clicked Don't Allow: open **System Settings > Privacy & Security >
 Calendars**, turn on **Terminal**, then stop SF Desk with Ctrl+C, run `npm start` again and reload the page.
 
+## Windows
+
+SF Desk for Windows comes as `SF-Desk-windows.zip` for Intel and AMD PCs, or `SF-Desk-windows-arm64.zip` for ARM PCs
+(Snapdragon; **Settings > System > About** shows which). You need Windows 10 or 11 (64-bit), Microsoft Edge (built
+in) and **classic Outlook** signed in to your SailPoint mailbox; the new Outlook doesn't let other apps read its
+calendar, so turn off the **New Outlook** toggle if it's on.
+
+1. Right-click the zip > **Extract All...**, open the extracted folder and double-click **Install SF Desk**.
+   If SmartScreen warns, click **More info > Run anyway**. It installs into `%LOCALAPPDATA%\Programs\SF Desk`
+   (no admin rights) and adds SF Desk to the Start menu and the Desktop.
+2. SF Desk starts. The first time it offers to download the Salesforce CLI (unless one is installed) and opens
+   your browser to sign in to `sailpoint.my.salesforce.com`.
+3. Click **Connect**, open **Time Entry** and pick a calendar at the top. With the **new Outlook**, choose
+   **Sign in to read your Microsoft 365 calendar**: SF Desk shows a code and opens microsoft.com/devicelogin,
+   where you enter it and sign in with your work account. It reads your calendar through Microsoft Graph with
+   Microsoft's own "Microsoft Graph Command Line Tools" sign-in (Calendars.Read), keeps the sign-in in
+   `%LOCALAPPDATA%\SF Desk\data\graph-token.json`, and the same list has **Sign out of Microsoft 365**. If your
+   organization requires an administrator to approve that sign-in, SF Desk says so. With classic Outlook, pick
+   your mailbox's **Calendar**. If Outlook asks
+   whether to allow a program to access its data, choose **Allow** (this happens when Windows doesn't report
+   an up-to-date antivirus).
+
+Closing the window keeps SF Desk running; the SF Desk icon by the clock reopens it and has **Edit Settings...**,
+**Restart Server**, **Show Server Log**, **Show Data Folder** and **Quit SF Desk**. Settings and data are in
+`%LOCALAPPDATA%\SF Desk`; running **Install SF Desk** from a newer zip updates the app and keeps them.
+
+If Time Entry says PowerShell's policy stops SF Desk from reading Outlook, your PC only allows signed scripts;
+ask IT, or use Salesforce events. If it says Outlook and SF Desk run with different permissions, start Outlook
+normally (not as administrator).
+
+### Building the Windows download
+
+Anywhere npm and nodejs.org are reachable (e.g. in the cloud), `scripts/build-windows-package.sh` writes
+`dist/SF-Desk-windows.zip`; with `--arch arm64` it writes `dist/SF-Desk-windows-arm64.zip`. Running from a Git checkout on Windows also works: `npm start` uses Outlook the
+same way, with `sf` from your PATH.
+
 ## Optional: the Outlook add-in
 
 SF Desk can also put a **Create Deal Support** button on meetings in Outlook. It needs a one-time HTTPS

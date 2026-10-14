@@ -1,0 +1,28 @@
+SF Desk for Windows
+===================
+
+You need:
+  - Windows 10 or 11, 64-bit. SF-Desk-windows.zip is for Intel and AMD PCs, SF-Desk-windows-arm64.zip
+    for ARM PCs (Snapdragon, e.g. Surface Pro or Copilot+ PCs). Settings > System > About shows which.
+  - For your meetings in Time Entry, one of:
+      - Microsoft 365: works with the new Outlook. Pick "Sign in to read your Microsoft 365 calendar"
+        in Time Entry's calendar list, open the page it shows and enter the code. Your organization may
+        need to approve "Microsoft Graph Command Line Tools" first; SF Desk says so if it does.
+      - Classic Outlook signed in to your SailPoint mailbox (the "New Outlook" toggle switched off).
+      - Salesforce events, which need nothing else.
+  - Microsoft Edge (it comes with Windows). SF Desk opens in an Edge window of its own.
+
+To install:
+  1. Right-click the zip > Extract All..., then open the extracted folder.
+  2. Double-click "Install SF Desk". If Windows SmartScreen warns about it, click More info > Run anyway.
+  3. SF Desk starts. The first time it offers to download the Salesforce CLI (no admin rights
+     needed) and opens your browser to sign in to Salesforce with SSO.
+  4. Click Connect, then open Time Entry and pick your calendar at the top. With classic Outlook,
+     Outlook may ask whether to allow access to its data; choose Allow.
+
+SF Desk is then in the Start menu and on the Desktop. Closing its window keeps it running; the SF Desk
+icon by the clock reopens it, opens its settings and log, or quits it.
+
+To update, run the new "Install SF Desk" the same way. Your settings and data are kept.
+To uninstall, quit SF Desk and delete %LOCALAPPDATA%\Programs\SF Desk, %LOCALAPPDATA%\SF Desk and the
+two SF Desk shortcuts.
