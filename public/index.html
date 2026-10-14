@@ -397,7 +397,6 @@ let savedRepName = ''; // the picked rep's name from the saved filters, until th
 // database, so they survive a restart.
 async function loadAcctPrefs() {
   boatFilter = 'mine'; teamFilter = 'mine'; repFilter = ''; savedRepName = '';
-  saveTimePrefs('who', 'me', 'me');
   // When my BOAT can't be found (no BOAT field, none of my accounts has one, or Salesforce can't be
   // reached), start on All BOATs instead.
   try {
@@ -434,10 +433,16 @@ function filterSelects({ onBoat, onTeam, onRep, time = false }) {
   const rep = el('select', { 'aria-label': 'Sales rep' }, el('option', { value: '' }, 'All sales reps'));
   boat.addEventListener('change', () => { boatFilter = boat.value; saveAcctPrefs(); onBoat(); });
   team.addEventListener('change', () => {
-    if (time) saveTimePrefs('who', team.value, 'me'); else { teamFilter = team.value; saveAcctPrefs(); }
+    // One team pick for every tab: DS Time's "My Time" is My Accounts' "mine".
+    teamFilter = time && team.value === 'me' ? 'mine' : team.value;
+    saveAcctPrefs();
     onTeam();
   });
-  rep.addEventListener('change', () => { repFilter = rep.value; saveAcctPrefs(); onRep(); });
+  rep.addEventListener('change', () => {
+    repFilter = rep.value;
+    savedRepName = repFilter ? rep.options[rep.selectedIndex]?.textContent || '' : '';
+    saveAcctPrefs(); onRep();
+  });
   const f = { boat, team, rep, time };
   fillBoatSelect(f); fillTeamSelect(f);
   return f;
@@ -465,7 +470,7 @@ function fillBoatSelect(f) {
 // Team choices: My Accounts (or My Time), My Team, each team member A–Z, and All accounts.
 function fillTeamSelect(f) {
   const members = [...(f.time ? time.data?.team?.members : acctFilters?.team) || []].sort((a, b) => a.name.localeCompare(b.name));
-  const value = f.time ? (time.data?.who || timePrefs().who || 'me') : teamFilter;
+  const value = f.time ? timeWho() : teamFilter;
   f.team.replaceChildren(
     el('option', { value: f.time ? 'me' : 'mine' }, f.time ? 'My Time' : 'My Accounts'),
     el('option', { value: 'team' }, 'My Team'),
@@ -479,10 +484,13 @@ function fillTeamSelect(f) {
     `${roles.join(', ') || '…'}` + (acctFilters.missing.length ? `\nNot found on Account: ${acctFilters.missing.join(', ')}` : '');
 }
 
-// Sales rep choices, A–Z; a picked rep who isn't among them goes back to All sales reps.
-function fillRepSelect(f, reps) {
+// Sales rep choices, A–Z; a picked rep who isn't among them goes back to All sales reps, unless
+// `keep` (DS Time, whose list is only the reps with time logged) lists them anyway.
+function fillRepSelect(f, reps, keep = false) {
   const list = [...reps].sort((a, b) => a.label.localeCompare(b.label));
-  if (repFilter && !list.some((r) => r.value === repFilter)) repFilter = '';
+  if (repFilter && !list.some((r) => r.value === repFilter)) {
+    if (keep) list.push({ value: repFilter, label: savedRepName || repFilter }); else repFilter = '';
+  }
   f.rep.replaceChildren(el('option', { value: '' }, 'All sales reps'), ...list.map((r) => el('option', { value: r.value }, r.label)));
   f.rep.value = repFilter;
 }
@@ -2127,6 +2135,10 @@ function parseDuration(v) {
 }
 
 // The fields the hours, date and "mine" come from: the saved choice if still offered, else the server's pick.
+// DS Time's whose-time pick from the shared team filter: My Accounts is My Time, and All accounts
+// (which DS Time can't list) shows My Team.
+const timeWho = () => (teamFilter === 'mine' ? 'me' : teamFilter === 'all' ? 'team' : teamFilter);
+
 // "A, B or C"
 const listOr = (xs) => xs.length < 2 ? xs.join('') : `${xs.slice(0, -1).join(', ')} or ${xs.at(-1)}`;
 
@@ -2214,8 +2226,8 @@ async function showTime() {
 
 async function loadTime() {
   try {
-    const { who } = timePrefs();
-    const q = new URLSearchParams(who ? { who } : {}).toString();
+    const who = timeWho();
+    const q = new URLSearchParams(who === 'me' ? {} : { who }).toString();
     [time.data] = await Promise.all([api('/my-time' + (q ? '?' + q : '')),
       dsMeta ? null : api('/deal-supports/meta').then((m) => { dsMeta = m; }, () => {}),
       // The BOAT choices and my BOATs, for the BOAT filter.
@@ -2253,9 +2265,7 @@ function renderTime() {
     onTeam: () => { time.opp = null; document.getElementById('timeSub').textContent = 'Loading…'; loadTime(); } });
   const inTeam = timeEntries(), boatEntries = inTeam.filter(inBoat);
   const repsHere = new Map(boatEntries.filter((e) => e.ownerId).map((e) => [e.ownerId, e.ownerName]));
-  const before = repFilter;
-  fillRepSelect(filters, [...repsHere].map(([value, label]) => ({ value, label })));
-  if (repFilter !== before) saveAcctPrefs();
+  fillRepSelect(filters, [...repsHere].map(([value, label]) => ({ value, label })), true);
   document.getElementById('timePicks').replaceChildren(...[filters.boat, filters.team, filters.rep,
     pick('Hours from', hoursOpts.map((o) => [o.key, unitLabel(o) + counted(o)]), hours.key,
       (v) => { saveTimePrefs('hours', v, hoursOpts[0].key); renderTime(); }),
