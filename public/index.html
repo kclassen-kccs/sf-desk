@@ -884,21 +884,26 @@ async function changeRole(a, role) {
   const plan = (u) => {
     const acctChanges = d.accountField && !has(d.account.value, d.accountIsUser, u);
     const oppChanges = opps.filter((o) => !has(o.value, d.oppIsUser, u));
-    const already = (d.accountField && !acctChanges ? 1 : 0) + (opps.length - oppChanges.length);
-    const change = [acctChanges ? '1 account' : null,
-      oppChanges.length ? plural(oppChanges.length, 'open opportunity', 'open opportunities') : null].filter(Boolean).join(' and ');
-    const ignored = [already ? `${plural(already, 'record already has', 'records already have')} ${u.Name} and will be skipped.` : null,
-      d.closedCount ? `${plural(d.closedCount, 'closed opportunity', 'closed opportunities')} will be left alone.` : null].filter(Boolean).join(' ');
+    const oppHave = opps.length - oppChanges.length;
+    // Always say what happens to the account first, then the opportunities.
+    const acct = !d.accountField ? `The account has no ${who} field, so it stays as it is.`
+      : acctChanges ? `The account ${d.account.Name} will change from ${d.account.current || 'nobody'} to ${u.Name}.`
+      : `The account ${d.account.Name} already has ${u.Name} and stays as it is.`;
+    const oppParts = [
+      d.oppField ? `${plural(oppChanges.length, 'open opportunity', 'open opportunities')} will change to ${u.Name}.` : null,
+      oppHave ? `${plural(oppHave, 'open opportunity already has', 'open opportunities already have')} ${u.Name} and will be skipped.` : null,
+      d.closedCount ? `${plural(d.closedCount, 'closed opportunity', 'closed opportunities')} will be left alone.` : null,
+    ].filter(Boolean);
     const changing = [acctChanges ? `Account: ${d.account.Name} (now ${d.account.current || 'nobody'})` : null,
       ...oppChanges.map((o) => `${o.Name} (now ${o.current || 'nobody'})`)].filter(Boolean);
-    return { count: (acctChanges ? 1 : 0) + oppChanges.length, change, ignored, changing };
+    return { count: (acctChanges ? 1 : 0) + oppChanges.length, acct, opps: oppParts.join(' '), changing };
   };
   const summary = el('div', { class: 'sub', style: 'margin:8px 0 0' });
   const showPlan = () => {
     if (!picked) return summary.replaceChildren();
     const p = plan(picked);
-    summary.replaceChildren(el('b', {}, p.count ? `This will change ${p.change}.` : `Nothing to change: everything already has ${picked.Name}.`),
-      p.ignored ? ' ' + p.ignored : '');
+    summary.replaceChildren(el('div', {}, el('b', {}, p.acct)), el('div', {}, p.opps),
+      ...(p.count ? [] : [el('div', {}, `Nothing to change: everything already has ${picked.Name}.`)]));
     go.disabled = !p.count;
   };
   search.addEventListener('input', showPlan);
@@ -910,7 +915,7 @@ async function changeRole(a, role) {
     const p = plan(u);
     if (!p.count) return;
     const shown = p.changing.length > 15 ? [...p.changing.slice(0, 15), `…and ${p.changing.length - 15} more`] : p.changing;
-    if (!confirm(`Make ${u.Name} the ${who}?\n\nThis will change ${p.change}.` + (p.ignored ? `\n${p.ignored}` : '') +
+    if (!confirm(`Make ${u.Name} the ${who}?\n\n${p.acct}\n${p.opps}` +
       `\n\nChanging:\n${shown.join('\n')}`)) return;
     go.disabled = search.disabled = cancel.disabled = true;
     try {
