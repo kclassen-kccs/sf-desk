@@ -132,10 +132,21 @@ Open http://localhost:3000 and click **Connect**.
 
 Sandbox? Set `SF_LOGIN_URL=https://test.salesforce.com`. Using a My Domain login? Use that URL.
 
+## Accounts filters
+
+The Accounts tab shows **My Accounts** by default: accounts where you are in any of these Account
+fields: Account Owner, Lead SE, Lead SE Manager, ATS, DSR, CSM, CSM Manager or Services Manager. The
+app finds each by its label (with or without an "Account " prefix); hover over the dropdown to see
+which fields it found. If some are labelled differently, set `SF_MY_ACCOUNT_FIELDS` in `.env` to the
+full comma-separated list of API names. A user lookup field is matched against your Salesforce user;
+a text field is matched against your full name. Pick **All accounts** to see everything.
+
+The **SailPoint BOAT** dropdown filters on the Account field labelled "SailPoint BOAT" (set
+`SF_BOAT_FIELD` to its API name if it isn't found).
+
 ## Lead SE filter
 
-By default the app only shows accounts and opportunities where you are the **Lead SE**. An account
-counts if you are its Lead SE, or the Lead SE on any of its opportunities. The app finds the field by
+The Deals tab only shows opportunities where you are the **Lead SE**. The app finds the field by
 its label "Lead SE" on Account and Opportunity. If yours is labelled differently, set
 `SF_LEAD_SE_FIELD` in `.env` to its API name (e.g. `Lead_SE__c`). A user lookup field is matched
 against your Salesforce user; a text or picklist field is matched against your full name.
