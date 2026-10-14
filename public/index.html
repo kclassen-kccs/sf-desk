@@ -39,6 +39,10 @@
 
   main { display: grid; grid-template-columns: clamp(280px, 20vw, 380px) minmax(0, 1fr); height: calc(100vh - var(--chrome)); height: calc(100dvh - var(--chrome)); }
   #list { background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; min-height: 0; }
+  /* Accounts: the filter bar above the list and detail panes, which share the rest of the height. */
+  .acct-page { display: flex; flex-direction: column; height: calc(100vh - var(--chrome)); height: calc(100dvh - var(--chrome)); }
+  .acct-page main { height: auto; flex: 1; min-height: 0; }
+  .acct-bar { padding: 10px 16px; margin: 0; background: var(--panel); border-bottom: 1px solid var(--line); }
   #list .controls { padding: 10px; border-bottom: 1px solid var(--line); display: grid; gap: 8px; }
   #list .controls label { display: flex; gap: 6px; align-items: center; color: var(--muted); font-size: 13px; }
   #list .controls input[type=checkbox] { width: auto; }
@@ -272,7 +276,8 @@
       margin: 0; padding: 8px 12px 12px; background: var(--panel); border-bottom: 1px solid var(--line); box-shadow: 0 8px 20px rgba(0,0,0,.12); }
     header.menu-open nav button { text-align: left; padding: 10px 12px; }
     .hdr-right { margin: 8px 0 0; padding-top: 10px; border-top: 1px solid var(--line); justify-content: space-between; }
-    .dash, .cal, main, #detail { height: auto; overflow: visible; }
+    .dash, .cal, main, #detail, .acct-page { height: auto; overflow: visible; }
+    .acct-bar { padding: 10px 12px; }
     .dash, .cal, #detail { padding: 14px 12px 32px; }
     main { grid-template-columns: minmax(0, 1fr); }
     #list { border-right: 0; }
@@ -683,16 +688,22 @@ function showMain() {
   const showHidden = el('input', { type: 'checkbox', checked: showHiddenAccts, id: 'showHiddenAccts' });
   showHidden.addEventListener('change', () => { showHiddenAccts = showHidden.checked; saveAcctPrefs(); renderList(); });
 
-  app.replaceChildren(el('main', {},
-    el('div', { id: 'list' },
-      el('div', { class: 'controls' }, search, filters.boat, filters.team, filters.rep, sort,
-        el('label', {}, group, 'Group by sales rep'),
-        el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden'))),
-      el('div', { class: 'acct-tools', id: 'acctTools' }),
-      el('div', { id: 'accounts' }, el('div', { class: 'empty' }, 'Loading…')),
-    ),
-    el('div', { id: 'detail' }, el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.')),
-  ));
+  // The filters sit in a bar across the top, as on Deals and My Time; the search and the
+  // selected-accounts controls stay at the top of the list.
+  app.replaceChildren(el('div', { class: 'acct-page' },
+    el('div', { class: 'dash-head acct-bar' },
+      el('h2', {}, 'Accounts'),
+      el('span', { class: 'picks' }, filters.boat, filters.team, filters.rep, sort),
+      el('label', {}, group, 'Group by sales rep'),
+      el('label', {}, showHidden, el('span', { id: 'hiddenAcctLabel' }, 'Show hidden'))),
+    el('main', {},
+      el('div', { id: 'list' },
+        el('div', { class: 'controls' }, search),
+        el('div', { class: 'acct-tools', id: 'acctTools' }),
+        el('div', { id: 'accounts' }, el('div', { class: 'empty' }, 'Loading…')),
+      ),
+      el('div', { id: 'detail' }, el('div', { class: 'empty' }, 'Pick an account to see its details and opportunities.')),
+    )));
 
   async function loadAccounts() {
     const params = new URLSearchParams({ q: search.value.trim(), ...filterQuery() });
